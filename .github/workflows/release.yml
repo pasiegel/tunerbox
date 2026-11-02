@@ -108,8 +108,16 @@ jobs:
         run: python -m pip install -r requirements.txt pyinstaller
       - name: Get a static ffmpeg
         run: |
-          curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ
-          FF=$(ls -d "$PWD"/ffmpeg-*-amd64-static/ffmpeg | head -1)
+          # BtbN's builds are hosted on GitHub (reliable from Actions); johnvansickle.com as a fallback
+          mkdir -p ff
+          if curl -fsSL --retry 3 -o ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz              && tar xJf ff.tar.xz -C ff; then
+            FF=$(ls -d "$PWD"/ff/ffmpeg-*/bin/ffmpeg | head -1)
+          else
+            echo "::warning::BtbN download failed, trying johnvansickle.com"
+            curl -fsSL --retry 3 -o ff.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+            tar xJf ff.tar.xz -C ff
+            FF=$(ls -d "$PWD"/ff/ffmpeg-*-amd64-static/ffmpeg | head -1)
+          fi
           "$FF" -hide_banner -version | head -1
           echo "FFMPEG=$FF" >> "$GITHUB_ENV"
       - name: Build
