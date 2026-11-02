@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>TunerBox</title>
+<link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<!-- iPad / iPhone: Share > Add to Home Screen opens it full screen like an app -->
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TunerBox">
+<link rel="stylesheet" href="/static/tv.css">
+</head>
+<body>
+<div id="tv">
+  <video id="video" playsinline></video>
+  <div id="static" class="hidden"><canvas id="noise" width="160" height="90"></canvas>
+    <div class="nosig"><div id="nosig-num"></div><div id="nosig-msg">No Signal</div><div id="nosig-sub"></div></div>
+  </div>
+
+  <div id="power" class="screen">
+    <div class="power-box">
+      <div class="logo">Tuner<span>Box</span></div>
+      <div class="power-msg">Press any key or click to turn on</div>
+    </div>
+  </div>
+
+  <!-- channel banner -->
+  <div id="banner" class="hidden">
+    <div class="b-chan">
+      <div id="b-num"></div>
+      <img id="b-logo" alt="">
+      <div id="b-name"></div>
+    </div>
+    <div class="b-prog">
+      <div class="b-now"><span id="b-title"></span> <span id="b-flags"></span></div>
+      <div class="b-sub" id="b-sub"></div>
+      <div class="b-time"><span id="b-time"></span><div class="b-bar"><div id="b-progress"></div></div></div>
+      <div class="b-desc" id="b-desc"></div>
+      <div class="b-next">Next: <span id="b-next"></span></div>
+    </div>
+    <div class="b-clock"><div id="b-clock"></div><div id="b-date"></div></div>
+  </div>
+
+  <div id="digits" class="hidden"></div>
+  <div id="toast" class="hidden"></div>
+  <div id="stillthere" class="hidden">
+    <div class="st-box">
+      <div class="st-title">Are you still watching?</div>
+      <div class="st-sub">No buttons have been pressed for a while. TunerBox will turn off in <b id="st-count">2:00</b> to stop streaming.</div>
+      <div class="st-hint">Press any button to keep watching</div>
+    </div>
+  </div>
+  <div id="saver" class="hidden"><div id="saver-box"><div id="saver-time"></div><div id="saver-date"></div><div class="saver-logo">Tuner<span>Box</span></div></div></div>
+  <div id="buffering" class="hidden"><span class="spin"></span> <span id="buf-text">Buffering…</span></div>
+  <div id="tapplay" class="hidden"><div>&#9654;</div>Tap to watch</div>
+
+  <!-- guide -->
+  <div id="guide" class="hidden">
+    <div class="g-top">
+      <div id="g-pip"></div>
+      <div id="g-info">
+        <div id="gi-title"></div>
+        <div id="gi-sub"></div>
+        <div id="gi-meta"></div>
+        <div id="gi-desc"></div>
+      </div>
+      <div class="g-clock"><div id="g-clock"></div><div id="g-date"></div></div>
+    </div>
+    <div class="g-head">
+      <div class="g-day" id="g-day"></div>
+      <div class="g-times" id="g-times"></div>
+    </div>
+    <div id="g-rows"></div>
+    <div class="g-foot">
+      <span><b>OK</b> Watch / Options</span><span><b>R</b> Record</span><span><b>/</b> Search</span><span><b>T</b> Sports</span><span><b>PgUp/PgDn</b> Page</span>
+      <span><b>&#9664;&#9654;</b> Time</span><span><b>Ch #</b> Jump</span><span><b>G</b> Exit</span>
+    </div>
+  </div>
+
+  <!-- menu -->
+  <div id="menu" class="panel hidden">
+    <div class="p-title">Main Menu</div>
+    <ul class="list" id="menu-list"></ul>
+  </div>
+
+  <!-- dvr -->
+  <div id="dvr" class="panel wide hidden">
+    <div class="p-title">My Recordings <span id="dvr-space"></span></div>
+    <ul class="list" id="dvr-list"></ul>
+    <div class="p-foot"><b>OK</b> Play / Options &nbsp; <b>Esc</b> Back</div>
+  </div>
+
+  <!-- remote control mapping -->
+  <div id="remotecfg" class="panel wide hidden">
+    <div class="p-title">Remote Control Setup</div>
+    <div class="p-sub">Pick an action and press OK, then press the button on your remote, keyboard or controller.
+Settings are saved on this device. Arrow keys, Enter and Esc always work on this screen.</div>
+    <ul class="list" id="remote-list"></ul>
+    <div class="p-foot" id="remote-last">Press any button to see what your remote sends.</div>
+  </div>
+  <div id="learn" class="hidden">
+    <div class="learn-box">Press the button for<div id="learn-action"></div><small>Waiting… <span id="learn-count"></span>s (click to cancel)</small></div>
+  </div>
+
+  <!-- search -->
+  <div id="search" class="panel xwide hidden">
+    <div class="p-title">Search <span id="s-count"></span></div>
+    <input id="s-input" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+           enterkeyhint="search" placeholder="Channel, show, team or event">
+    <div class="s-body">
+      <div id="s-kb"></div>
+      <ul class="list" id="s-list"></ul>
+    </div>
+    <div class="p-foot"><b>OK</b> Watch / Options &nbsp; <b>&#9664; &#9654;</b> Keyboard / Results &nbsp; <b>Esc</b> Close</div>
+  </div>
+
+  <!-- sports & PPV -->
+  <div id="sports" class="panel xwide hidden">
+    <div class="p-title">Sports &amp; PPV <span id="sp-status"></span></div>
+    <div class="tabs" id="sp-tabs"></div>
+    <ul class="list" id="sp-list"></ul>
+    <div class="p-foot" id="sp-foot"></div>
+  </div>
+
+  <!-- dialog -->
+  <div id="dialog" class="panel hidden">
+    <div class="p-title" id="dlg-title"></div>
+    <div class="p-sub" id="dlg-sub"></div>
+    <img id="dlg-img" class="hidden" alt="">
+    <ul class="list" id="dlg-list"></ul>
+  </div>
+
+  <!-- on-screen remote for mouse / touch -->
+  <div id="remote" class="hidden">
+    <button data-k="ChannelUp">CH &#9650;</button><button data-k="ChannelDown">CH &#9660;</button>
+    <button data-k="g">GUIDE</button><button data-k="i">INFO</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button><button data-k="t">SPORTS</button>
+    <button data-k="m">MENU</button><button data-k="l">LAST</button><button data-k="u">MUTE</button>
+    <button data-k="f">FULL</button>
+  </div>
+
+  <div id="playback" class="hidden">
+    <div id="pb-title"></div>
+    <div class="pb-bar"><div id="pb-progress"></div></div>
+    <div id="pb-time"></div>
+  </div>
+</div>
+<script src="/static/vendor/mpegts.js"></script>
+<script src="/static/tv.js"></script>
+</body>
+</html>

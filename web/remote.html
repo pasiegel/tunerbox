@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b1220">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TB Remote">
+<title>TunerBox Remote</title>
+<link rel="manifest" href="/static/remote.webmanifest">
+<link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="stylesheet" href="/static/remote.css">
+</head>
+<body>
+<header>
+  <select id="tv" aria-label="TV screen"></select>
+  <a class="hbtn" href="/setup#sources" title="Playlists and setup">&#9881;</a>
+</header>
+<div id="now"><b id="now-num"></b> <span id="now-name">Looking for TVs…</span><div id="now-title" class="muted"></div></div>
+
+<nav id="tabs">
+  <button data-tab="pad" class="on">Remote</button>
+  <button data-tab="chan">Channels</button>
+  <button data-tab="find">Search</button>
+  <button data-tab="sport">Sports</button>
+</nav>
+
+<section id="tab-pad">
+  <div class="row r4">
+    <button data-k="Power" class="power">&#9211;</button>
+    <button data-k="g">Guide</button>
+    <button data-k="m">Menu</button>
+    <button data-k="i">Info</button>
+  </div>
+  <div class="dpad">
+    <button data-k="ArrowUp" class="up rep">&#9650;</button>
+    <button data-k="ArrowLeft" class="left rep">&#9664;</button>
+    <button data-k="Enter" class="ok">OK</button>
+    <button data-k="ArrowRight" class="right rep">&#9654;</button>
+    <button data-k="ArrowDown" class="down rep">&#9660;</button>
+  </div>
+  <div class="row r2">
+    <button data-k="Back">Back</button>
+    <button data-k="l">Last</button>
+  </div>
+  <div class="rockers">
+    <div class="rocker"><button data-k="VolUp" class="rep">+</button><span>VOL</span><button data-k="VolDown" class="rep">&minus;</button></div>
+    <div class="mid">
+      <button data-k="u">Mute</button>
+      <button data-k=" ">&#9199;</button>
+      <button data-k="r" class="rec">&#9679; Rec</button>
+    </div>
+    <div class="rocker"><button data-k="ChannelUp" class="rep">&#9650;</button><span>CH</span><button data-k="ChannelDown" class="rep">&#9660;</button></div>
+  </div>
+  <div class="row r3">
+    <button data-k="d">DVR</button>
+    <button data-k="t">Sports</button>
+    <button data-k="f">Full screen</button>
+  </div>
+  <div class="keypad">
+    <button data-n="1">1</button><button data-n="2">2</button><button data-n="3">3</button>
+    <button data-n="4">4</button><button data-n="5">5</button><button data-n="6">6</button>
+    <button data-n="7">7</button><button data-n="8">8</button><button data-n="9">9</button>
+    <button data-n="clr" class="dim">Clear</button><button data-n="0">0</button><button data-n="go" class="go">Go</button>
+  </div>
+  <div id="typed" class="muted">&nbsp;</div>
+</section>
+
+<section id="tab-chan" class="hidden">
+  <input id="ch-q" type="search" placeholder="Filter channels…" autocomplete="off">
+  <ul id="ch-list" class="list"></ul>
+</section>
+
+<section id="tab-find" class="hidden">
+  <input id="s-q" type="search" placeholder="Channel, show, team or event…" autocomplete="off">
+  <ul id="s-list" class="list"></ul>
+</section>
+
+<section id="tab-sport" class="hidden">
+  <ul id="sp-list" class="list"></ul>
+</section>
+
+<footer>
+  <a href="/setup#sources">Manage playlists</a> · <a href="/setup">Setup</a> · <a href="#" id="forget">Unpair this phone</a>
+</footer>
+<div id="toast" class="hidden"></div>
+<script src="/static/remote.js"></script>
+</body>
+</html>

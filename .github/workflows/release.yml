@@ -1,0 +1,148 @@
+# Builds TunerBox for Windows, macOS and Linux.
+#   * Push a tag like v1.4.1  -> builds all three with that version and publishes a GitHub Release.
+#   * Actions tab > "Build & release" > Run workflow -> builds all three (downloadable artifacts, no release).
+# No secrets needed. See RELEASING.md.
+name: Build & release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  # ------------------------------------------------------------------ Windows: installer + portable zip
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Set version from tag
+        if: env.IS_TAG == 'true'
+        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Get ffmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ff
+          $exe = (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName
+          & $exe -hide_banner -version | Select-Object -First 1
+          "FFMPEG=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build
+        shell: pwsh
+        run: python packaging/build.py --ffmpeg "$env:FFMPEG"
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $v = python packaging/set_version.py --check
+          Compress-Archive -Path dist/TunerBox/* -DestinationPath "dist/TunerBox-$v-windows-portable.zip"
+          Get-ChildItem dist -File | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/TunerBox-Setup-*.exe
+            dist/TunerBox-*-windows-portable.zip
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ macOS (Apple Silicon): .app in a .dmg
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Set version from tag
+        if: env.IS_TAG == 'true'
+        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt pyinstaller pillow
+      - name: Get a static ffmpeg
+        run: |
+          # static build, so the app works on Macs without Homebrew
+          if curl -fsSL -o ff.zip https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip \
+             && unzip -o -q ff.zip -d ff && chmod +x ff/ffmpeg && ff/ffmpeg -hide_banner -version | head -1; then
+            echo "FFARG=--ffmpeg=$PWD/ff/ffmpeg" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Couldn't download a static ffmpeg; the Mac app will use one installed with Homebrew"
+            echo "FFARG=--no-ffmpeg" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        run: python packaging/build.py "$FFARG"
+      - name: Make the .dmg
+        run: |
+          V=$(python packaging/set_version.py --check)
+          hdiutil create -volname TunerBox -srcfolder dist/TunerBox.app -ov -format UDZO "dist/TunerBox-$V-macos-arm64.dmg"
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/TunerBox-*-macos-arm64.dmg
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ Linux x64: folder in a .tar.gz
+  linux:
+    runs-on: ubuntu-22.04          # older glibc = runs on more distributions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Set version from tag
+        if: env.IS_TAG == 'true'
+        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Get a static ffmpeg
+        run: |
+          curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ
+          FF=$(ls -d "$PWD"/ffmpeg-*-amd64-static/ffmpeg | head -1)
+          "$FF" -hide_banner -version | head -1
+          echo "FFMPEG=$FF" >> "$GITHUB_ENV"
+      - name: Build
+        run: python packaging/build.py --ffmpeg "$FFMPEG"
+      - name: Pack
+        run: |
+          V=$(python packaging/set_version.py --check)
+          tar -czf "dist/TunerBox-$V-linux-x64.tar.gz" -C dist TunerBox
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/TunerBox-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------ publish (tags only)
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: List files
+        run: ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          body_path: .github/release-notes.md
+          fail_on_unmatched_files: true

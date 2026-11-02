@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+rapidfuzz>=3.6
+qrcode>=7.4
+numpy>=1.26
+# desktop app window (Linux also needs GTK or Qt: see pywebview docs)
+pywebview>=5.0

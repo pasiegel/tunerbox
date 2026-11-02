@@ -1,0 +1,38 @@
+# Quick checks on every push and pull request (seconds, not the full builds).
+name: Checks
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install packages
+        run: python -m pip install -r requirements.txt
+      - name: Python compiles and the server imports
+        env:
+          TUNERBOX_DATA: ${{ runner.temp }}/tbdata
+        run: |
+          python -m compileall -q tunerbox packaging
+          python -c "import tunerbox.api; print('server imports OK')"
+      - name: Server starts and answers
+        env:
+          TUNERBOX_DATA: ${{ runner.temp }}/tbdata
+        run: |
+          python -m tunerbox --server --port 8642 &
+          for i in $(seq 30); do curl -fs localhost:8642/api/me && break; sleep 1; done
+          curl -fs localhost:8642/api/channels > /dev/null
+          curl -fs localhost:8642/ | grep -q TunerBox
+          echo "server OK"
+      - name: JavaScript syntax
+        run: for f in web/*.js; do node --check "$f"; done
+      - name: Version number is valid
+        run: python packaging/set_version.py --check | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'

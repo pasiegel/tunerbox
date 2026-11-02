@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# build output
+build/
+dist/
+*.spec
+
+# your data: settings (may hold playlist logins), database, logs, caches
+data/*
+!data/channels.csv
+
+# never commit signing keys or secrets
+*.keystore
+*.jks
+*.pfx
+*.p12
+.env
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
