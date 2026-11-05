@@ -59,7 +59,7 @@ jobs:
 
   # ------------------------------------------------------------------ macOS (Apple Silicon): .app in a .dmg
   macos:
-    runs-on: macos-14
+    runs-on: macos-15             # Apple Silicon (GitHub retires older images over time)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
