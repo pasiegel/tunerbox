@@ -61,7 +61,7 @@ Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno
 1. With no channels, the screen says **No channels yet**. Press Enter or click it to open **Setup** (also Menu › Channel Setup).
 2. Outside Grand Rapids (or not on Xfinity)? Go to **Guide**, enter your ZIP or postal code and press **Find providers**. Choose your provider (for example *Xfinity - Digital*, *DIRECTV* or *Local Over the Air Broadcast* for an antenna) and press **Save**. Its channel numbers become your lineup.
 3. Go to **Playlists** and add your M3U URL or file, or your Xtream server, username and password.
-4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. Pick a country in the filter and press **Only keep listed** to keep just that country.
+4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. **Check all** / **Uncheck all** apply to the groups listed, so after picking a country or typing a search they only change those groups (the buttons then show the count, e.g. *Uncheck 93 listed*). **Only keep listed** keeps the listed groups and hides every other one.
    * Hidden groups are removed straight away. Ticking one again rescans the playlist to bring it back.
 5. Press **Scan playlists now**. The scan loads the playlist, checks which streams work, matches channels to your lineup, numbers the leftovers, and downloads the guides. The first scan takes a few minutes.
 6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans.
@@ -78,6 +78,8 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | Enter | info banner | watch, or record options |
 | G | guide | close guide |
 | I | full info | |
+| * (or A) | add / remove channel in Favorites | add / remove highlighted channel |
+| V | Favorites guide | switch Favorites only / all channels |
 | R | record current show | record options |
 | L / Backspace | last channel | back |
 | D | recordings | |
@@ -90,6 +92,14 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 **Using a real remote:** open **Menu › Remote control setup** on the device the remote is paired with. Highlight an action, press OK, then press the remote button. Any key a remote sends works, including odd codes, media keys and color buttons. Game controllers and gamepad-style Bluetooth remotes work too. Mappings are saved per device; **Save as default for all devices** stores them on the server. Arrow keys, Enter and Esc always work on that screen, so you can't lock yourself out.
 
 Mouse and touch also work. Click the video for the banner, move the mouse for an on-screen remote, and swipe up/down to change channel.
+
+**Watching a recording:** Space/OK pause, ← → skip back 10 s / ahead 30 s, PgUp/PgDn 5 minutes. **I** shows the recording's info (episode, when it was recorded, description, how much you've watched), **G** opens the guide over it (closing the guide goes back to the recording, picking a channel switches to live TV), Back hides the info or stops, **S** stops.
+
+## Favorites
+Star the channels you watch most, then see just those in the guide.
+* **Add or remove:** press **\*** (or **A**) on live TV or on a channel in the guide, click the ☆ next to a channel number in the guide, use **Menu › Add to Favorites**, or the *Add to Favorites* line when you press OK on a future show.
+* **See them:** **V** or **Menu › ★ Favorites guide** opens the guide with only favorites; **V** in the guide switches between favorites and all channels. Typing a number in the Favorites guide jumps to that channel among all channels if it isn't a favorite.
+* Favorites are kept on the TunerBox PC, so every TV, tablet and the phone remote share them. On the phone remote, favorites are listed first in Channels with a ★ to add or remove.
 
 ## Local channels (your own videos)
 Turn folders of videos into channels that play around the clock, like ErsatzTV or dizqueTV. Open **Setup › Local channels**:

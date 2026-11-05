@@ -53,6 +53,20 @@ def api_channels(all: int = 0):
             for c in guide.channels(bool(all) or None)]
 
 
+@app.get("/api/favorites")
+def api_favorites():
+    return sorted({int(n) for n in config.get("favorites") or []})
+
+
+@app.post("/api/favorites")
+def api_set_favorite(number: int = Body(...), on: bool = Body(True)):
+    """Star / unstar a channel. Open to every screen on the network, like watching (not a setup change)."""
+    favs = {int(n) for n in config.get("favorites") or []}
+    (favs.add if on else favs.discard)(number)
+    config.update({"favorites": sorted(favs)})
+    return sorted(favs)
+
+
 @app.get("/api/guide")
 def api_guide(start: int, stop: int, numbers: str = ""):
     nums = {int(n) for n in numbers.split(",") if n.strip().lstrip("-").isdigit()}

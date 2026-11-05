@@ -12,6 +12,7 @@ const S = {
   layer: [],              // overlay stack: guide, menu, dvr, dialog
   digits: "", digitTimer: null, bannerTimer: null, watchdog: null,
   nowCache: new Map(), settings: {},
+  favs: new Set(),        // favorite channel numbers (shared by every screen, stored on the server)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -52,6 +53,18 @@ function flags(p) {
 async function loadChannels() {
   S.channels = await api("/api/channels");
   S.byNum = new Map(S.channels.map((c, i) => [c.number, i]));
+}
+async function loadFavs() {
+  try { S.favs = new Set(await api("/api/favorites")); } catch (_) {}
+}
+// star / unstar a channel; the guide's Favorites view updates straight away
+async function toggleFav(ch) {
+  if (!ch || ch.feed || ch.number === "" || ch.number === undefined) { toast("Only numbered channels can be favorites"); return; }
+  const on = !S.favs.has(ch.number);
+  try { S.favs = new Set(await api("/api/favorites", { method: "POST", body: { number: ch.number, on } })); }
+  catch (e) { toast(`Can't change favorites: ${e.message}`); return; }
+  toast(on ? `★ ${ch.number} ${ch.name} added to Favorites` : `${ch.number} ${ch.name} removed from Favorites`);
+  if (top() === "guide") G.refresh();
 }
 function nearestIdx(num) {
   if (S.byNum.has(num)) return S.byNum.get(num);
@@ -249,7 +262,7 @@ function peekBanner(ch) {
   const logo = $("b-logo");
   if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
   $("b-title").textContent = ch.name; $("b-sub").textContent = ""; $("b-flags").innerHTML = "";
-  $("b-time").textContent = ""; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";
+  $("b-time").textContent = ""; $("b-next-l").textContent = "Next:"; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";
   $("banner").classList.remove("full"); $("banner").classList.remove("hidden");
   clearTimeout(S.bannerTimer);
   S.bannerTimer = setTimeout(hideBanner, 6000);
@@ -272,7 +285,7 @@ async function showBanner(full = false) {
   if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
   logo.onerror = () => (logo.style.display = "none");
   $("b-title").textContent = ch.epg ? "…" : ch.name; $("b-sub").textContent = ""; $("b-flags").innerHTML = "";
-  $("b-time").textContent = ""; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";
+  $("b-time").textContent = ""; $("b-next-l").textContent = "Next:"; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";
   b.classList.toggle("full", full); b.classList.remove("hidden");
   clearTimeout(S.bannerTimer);
   S.bannerTimer = setTimeout(() => b.classList.add("hidden"), full ? 12000 : 6000);
@@ -326,19 +339,59 @@ function commitDigits() {
 const G = {
   rows: 8, top: 0, row: 0, win: 0, span: 7200, focusT: 0,
   cache: new Map(), cacheT: 0, loading: new Set(),
+  favOnly: false, list: [],       // rows = indexes into S.channels (every channel, or favorites only)
 
-  open() {
+  build() {
+    this.list = [];
+    S.channels.forEach((c, i) => { if (!this.favOnly || S.favs.has(c.number)) this.list.push(i); });
+  },
+  ch(row) { return S.channels[this.list[row]]; },
+  rowOf(idx) { return this.list.indexOf(idx); },
+
+  open(favs = false) {
     if (!S.channels.length) { toast("No channels yet - open Menu › Channel Setup"); return; }
+    if (favs && !S.channels.some((c) => S.favs.has(c.number))) {
+      toast("No favorites yet: highlight a channel in the guide and press * (or Menu › Add to Favorites)", 5000);
+      favs = false;
+    }
     if (Date.now() - this.cacheT > 5 * 60000) { this.cache.clear(); this.cacheT = Date.now(); }
-    S.layer.push("guide");
-    hideBanner();
+    if (top() !== "guide") S.layer.push("guide");
+    hideBanner(); $("playback").classList.add("hidden");
     $("guide").classList.remove("hidden");
     video.classList.add("pip");
     this.rows = window.innerHeight < window.innerWidth ? 8 : 9;
     this.win = Math.floor(now() / HALF) * HALF;
     this.focusT = now();
-    this.row = Math.max(0, S.idx);
-    this.top = Math.max(0, Math.min(this.row - 2, S.channels.length - this.rows));
+    this.favOnly = favs; this.build();
+    // a phone may have changed the favorites: pick that up
+    loadFavs().then(() => top() === "guide" && this.refresh());
+    this.row = Math.max(0, this.rowOf(S.idx));
+    this.top = Math.max(0, Math.min(this.row - 2, this.list.length - this.rows));
+    this.render();
+  },
+  // switch between every channel and favorites only, staying on the same channel if it's in both
+  toggleView() {
+    const cur = this.list[this.row];
+    if (!this.favOnly && !S.channels.some((c) => S.favs.has(c.number))) {
+      toast("No favorites yet: highlight a channel and press * to add it", 4000); return;
+    }
+    this.favOnly = !this.favOnly; this.build();
+    const r = this.rowOf(cur);
+    this.row = r >= 0 ? r : 0;
+    this.top = Math.max(0, Math.min(this.row - 2, this.list.length - this.rows));
+    toast(this.favOnly ? "★ Favorites only" : "All channels");
+    this.render();
+  },
+  // favorites changed while the guide is open
+  refresh() {
+    const cur = this.list[this.row];
+    this.build();
+    if (!this.list.length) { this.favOnly = false; this.build(); toast("No favorites left - showing all channels"); }
+    const r = this.rowOf(cur);
+    this.row = r >= 0 ? r : Math.min(this.row, this.list.length - 1);
+    this.top = Math.max(0, Math.min(this.top, this.list.length - this.rows));
+    if (this.row < this.top) this.top = this.row;
+    if (this.row >= this.top + this.rows) this.top = this.row - this.rows + 1;
     this.render();
   },
   close() {
@@ -411,7 +464,7 @@ const G = {
     return [];
   },
   selected() {
-    const ch = S.channels[this.row];
+    const ch = this.ch(this.row);
     const t = Math.max(this.focusT, this.win);
     const cells = this.cells(ch.number);
     return cells.find((c) => c.start <= t && t < c.stop) || cells[0];
@@ -419,14 +472,13 @@ const G = {
 
   render() {
     const rowsEl = $("g-rows");
-    const nums = [];
-    for (let i = this.top; i < Math.min(S.channels.length, this.top + this.rows); i++) nums.push(S.channels[i].number);
+    const n = this.list.length;
     // prefetch this page + next page
     const pre = [];
-    for (let i = Math.max(0, this.top - this.rows); i < Math.min(S.channels.length, this.top + this.rows * 2); i++) pre.push(S.channels[i].number);
+    for (let i = Math.max(0, this.top - this.rows); i < Math.min(n, this.top + this.rows * 2); i++) pre.push(this.ch(i).number);
     this.ensure(pre, this.win, this.win + this.span).then((changed) => changed && top() === "guide" && this.render()).catch(() => {});
 
-    $("g-day").textContent = fmtDay(this.win);
+    $("g-day").textContent = (this.favOnly ? "★ " : "") + fmtDay(this.win);
     const tEl = $("g-times"); tEl.innerHTML = "";
     for (let i = 0; i < this.span / HALF; i++) {
       const d = document.createElement("div");
@@ -437,10 +489,10 @@ const G = {
     const sel = this.selected();
     const n0 = now();
     let html = "";
-    for (let i = this.top; i < Math.min(S.channels.length, this.top + this.rows); i++) {
-      const ch = S.channels[i];
-      const cls = ["g-row", i === this.row ? "sel" : "", i === S.idx ? "playing" : ""].join(" ");
-      html += `<div class="${cls}" data-i="${i}"><div class="g-ch"><span class="n">${ch.number}</span>`
+    for (let i = this.top; i < Math.min(n, this.top + this.rows); i++) {
+      const ch = this.ch(i), fav = S.favs.has(ch.number);
+      const cls = ["g-row", i === this.row ? "sel" : "", this.list[i] === S.idx ? "playing" : ""].join(" ");
+      html += `<div class="${cls}" data-i="${i}"><div class="g-ch"><span class="g-fav${fav ? " on" : ""}" title="${fav ? "Remove from" : "Add to"} Favorites">${fav ? "★" : "☆"}</span><span class="n">${ch.number}</span>`
         + (ch.logo ? `<img src="${esc(ch.logo)}" onerror="this.remove()" alt="">` : "")
         + `<span class="l">${esc(ch.label || ch.name)}</span></div><div class="g-progs">`;
       for (const p of this.cells(ch.number)) {
@@ -461,7 +513,7 @@ const G = {
     this.info(sel);
   },
   info(p) {
-    const ch = S.channels[this.row];
+    const ch = this.ch(this.row);
     if (!p || p.empty) {
       $("gi-title").textContent = ch.name; $("gi-sub").textContent = p && p.title === "Loading…" ? "Loading…" : "No information available";
       $("gi-meta").textContent = `Channel ${ch.number}`; $("gi-desc").textContent = ""; return;
@@ -472,7 +524,7 @@ const G = {
     $("gi-desc").textContent = p.descr || "";
   },
   move(dr) {
-    const n = S.channels.length;
+    const n = this.list.length;
     this.row = (this.row + dr + n) % n;
     if (this.row < this.top) this.top = this.row;
     if (this.row >= this.top + this.rows) this.top = this.row - this.rows + 1;
@@ -480,7 +532,7 @@ const G = {
     this.render();
   },
   page(d) {
-    const n = S.channels.length;
+    const n = this.list.length;
     if (d > 0 && this.top + this.rows >= n) { this.top = 0; this.row = 0; }
     else if (d < 0 && this.top === 0) { this.top = Math.max(0, n - this.rows); this.row = n - 1; }
     else {
@@ -507,22 +559,24 @@ const G = {
     this.render();
   },
   jump(num) {
-    const i = nearestIdx(num);
+    let i = this.list.findIndex((ci) => S.channels[ci].number >= num);
+    if (i < 0 && this.favOnly) { this.favOnly = false; this.build(); i = this.list.findIndex((ci) => S.channels[ci].number >= num); }
     if (i < 0) { toast(`Channel ${num} is not available`); return; }
-    this.row = i; this.top = Math.max(0, Math.min(i, S.channels.length - this.rows)); this.render();
+    this.row = i; this.top = Math.max(0, Math.min(i, this.list.length - this.rows)); this.render();
   },
   ok() {
-    const p = this.selected(); const ch = S.channels[this.row];
+    const p = this.selected(); const ch = this.ch(this.row);
     const n0 = now();
     if (!p || p.empty || (p.start <= n0 && n0 < p.stop)) {
-      if (this.row !== S.idx) tune(this.row);
+      if (this.list[this.row] !== S.idx || S.mode !== "live") tune(this.list[this.row]);
       this.close();
       return;
     }
     programDialog(ch, p);
   },
+  fav() { toggleFav(this.ch(this.row)); },
   record() {
-    const p = this.selected(); const ch = S.channels[this.row];
+    const p = this.selected(); const ch = this.ch(this.row);
     if (!p || p.empty) { toast("No guide information to record"); return; }
     programDialog(ch, p);
   },
@@ -615,6 +669,8 @@ function programDialog(ch, p) {
   }
   entries.push({ label: "Record series (this channel)", act: () => rec({ series: true }, `Series recording set: ${p.title}`) });
   entries.push({ label: "Record series (new episodes, any channel)", act: () => rec({ series: true, new_only: true, any_channel: true }, `Series recording set: ${p.title}`) });
+  entries.push({ label: S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`,
+                 act: () => { closeDialog(); toggleFav(ch); } });
   entries.push({ label: "Close", act: closeDialog });
   openDialog(p.title, sub, entries);
 }
@@ -622,6 +678,13 @@ function programDialog(ch, p) {
 // menu
 const MENU = [
   { label: "TV Guide", act: () => { closeMenu(); G.open(); } },
+  { label: "★ Favorites guide", act: () => { closeMenu(); G.open(true); } },
+  { get label() {
+      const ch = S.mode === "live" && curCh();
+      if (!ch || ch.feed) return "Add to Favorites (tune to a channel first)";
+      return S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`;
+    },
+    act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
   { label: "Search", act: () => { closeMenu(); openSearch(); } },
   { label: "Sports & PPV", act: () => { closeMenu(); openSports(); } },
   { label: "My Recordings (DVR)", act: () => { closeMenu(); openDvr(); } },
@@ -709,10 +772,31 @@ function playRecording(r) {
     video.src = `/api/recordings/${r.id}/file`; video.play().catch(() => {});
   }
   $("pb-title").textContent = r.title + (r.subtitle ? ` · ${r.subtitle}` : "");
+  S.rec = r;
   showPlaybackBar();
+}
+// Info on a recording: the banner, filled from the recording instead of the live guide
+function recInfo(full = false) {
+  const r = S.rec; if (!r) return;
+  const ch = S.channels[S.byNum.get(r.number)] || {};
+  $("b-num").textContent = r.number; $("b-name").textContent = r.channel_name || ch.name || "";
+  const logo = $("b-logo");
+  if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
+  $("b-title").textContent = r.title || "Recording";
+  $("b-flags").innerHTML = '<span class="flag rec">RECORDING</span>';
+  $("b-sub").textContent = [r.episode, r.subtitle].filter(Boolean).join("  ·  ");
+  $("b-time").textContent = `Recorded ${fmtDay(r.start)}  ${fmtTime(r.start)} – ${fmtTime(r.stop)}`;
+  const d = video.duration || 0;
+  $("b-progress").style.width = d ? `${video.currentTime / d * 100}%` : "0";
+  $("b-desc").textContent = r.descr || "";
+  $("b-next-l").textContent = "Watched:";
+  $("b-next").textContent = d ? `${fmtDur(video.currentTime)} of ${fmtDur(d)}` : "—";
+  const b = $("banner"); b.classList.toggle("full", full); b.classList.remove("hidden");
+  clearTimeout(S.bannerTimer); S.bannerTimer = setTimeout(hideBanner, full ? 12000 : 6000);
 }
 let pbTimer;
 function showPlaybackBar() {
+  hideBanner();                 // the bar and the info banner share the bottom of the screen
   $("playback").classList.remove("hidden");
   clearTimeout(pbTimer); pbTimer = setTimeout(() => $("playback").classList.add("hidden"), 4000);
 }
@@ -724,7 +808,7 @@ video.addEventListener("timeupdate", () => {
   $("pb-time").textContent = `${fmtDur(video.currentTime)} / ${fmtDur(d)}${video.paused ? "   ❚❚ Paused" : ""}`;
 });
 video.addEventListener("ended", () => { if (S.mode === "playback") backToLive(); });
-function backToLive() { $("playback").classList.add("hidden"); destroyPlayer(); if (S.idx >= 0) tune(S.idx); }
+function backToLive() { $("playback").classList.add("hidden"); hideBanner(); S.rec = null; destroyPlayer(); if (S.idx >= 0) tune(S.idx); }
 
 // ---------------------------------------------------------------- shared by search + sports
 function fmtWhen(t) {
@@ -1053,6 +1137,7 @@ async function powerOn() {
   $("power").classList.add("hidden");
   video.volume = parseFloat(localStorage.getItem("tb.vol") || "0.8");
   try { await loadChannels(); } catch (e) { toast("Can't reach TunerBox server"); return; }
+  await loadFavs();
   if (!S.channels.length) {
     S.mode = "empty";
     showStatic("", "No channels yet", "Press OK (Enter) or click here to add a playlist");
@@ -1073,6 +1158,7 @@ const ACTIONS = [
   ["Enter", "OK / Select"], ["Back", "Back / Exit"],
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
+  ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"],
   ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & PPV"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
@@ -1091,6 +1177,7 @@ const DEFAULT_BINDINGS = {
   l: "l", LastNumberRedial: "l", ColorF2Yellow: "l",
   r: "r", MediaRecord: "r", ColorF0Red: "r",
   d: "d", DVR: "d",
+  "*": "*", a: "*", Favorites: "v", v: "v",
   "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t",
   "+": "VolUp", "=": "VolUp", AudioVolumeUp: "VolUp",
   "-": "VolDown", "_": "VolDown", AudioVolumeDown: "VolDown",
@@ -1246,6 +1333,8 @@ function handleKey(k, ev) {
       case "ChannelDown": G.page(1); break;
       case "Enter": G.ok(); break;
       case "r": G.record(); break;
+      case "*": G.fav(); break;
+      case "v": G.toggleView(); break;
       case "g": case "Back": G.close(); break;
       case "m": G.close(); openMenu(); break;
       case "d": G.close(); openDvr(); break;
@@ -1265,7 +1354,18 @@ function handleKey(k, ev) {
       case "ArrowRight": video.currentTime += 30; showPlaybackBar(); break;
       case "ChannelUp": video.currentTime = Math.max(0, video.currentTime - 300); showPlaybackBar(); break;
       case "ChannelDown": video.currentTime += 300; showPlaybackBar(); break;
-      case "Back": case "s": backToLive(); break;
+      case "Back":
+        if (!$("banner").classList.contains("hidden")) hideBanner(); else backToLive();
+        break;
+      case "s": backToLive(); break;
+      case "g": hideBanner(); G.open(); break;
+      case "v": hideBanner(); G.open(true); break;
+      case "i":
+        if (!$("banner").classList.contains("hidden")) { $("banner").classList.toggle("full"); clearTimeout(S.bannerTimer); S.bannerTimer = setTimeout(hideBanner, 12000); }
+        else { $("playback").classList.add("hidden"); recInfo(); }
+        break;
+      case "/": openSearch(); break;
+      case "t": openSports(); break;
       case "d": openDvr(); break;
       case "m": openMenu(); break;
       case "u": toggleMute(); break;
@@ -1288,6 +1388,8 @@ function handleKey(k, ev) {
     case "ArrowUp": case "ChannelUp": chStep(1); break;
     case "ArrowDown": case "ChannelDown": chStep(-1); break;
     case "g": G.open(); break;
+    case "v": G.open(true); break;
+    case "*": toggleFav(curCh()); break;
     case "i": case "Enter":
       if (!$("banner").classList.contains("hidden") && k === "i") { $("banner").classList.toggle("full"); clearTimeout(S.bannerTimer); S.bannerTimer = setTimeout(hideBanner, 12000); }
       else showBanner(k === "i");
@@ -1463,17 +1565,22 @@ $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) handleKey(b.dataset.k); });
 $("learn").addEventListener("click", stopLearn);
-video.addEventListener("click", () => { if (S.mode === "live" && !top()) showBanner(); });
+video.addEventListener("click", () => {
+  if (top()) return;
+  if (S.mode === "live") showBanner();
+  else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
+});
 video.addEventListener("dblclick", toggleFull);
 $("g-rows").addEventListener("click", (e) => {
   const cell = e.target.closest(".g-p"), row = e.target.closest(".g-row");
   if (!row) return;
   const i = +row.dataset.i;
+  if (e.target.closest(".g-fav")) { toggleFav(G.ch(i)); return; }
   if (cell) {
     const s = +cell.dataset.s;
     if (G.row === i && G.selected() && G.selected().start === s) { G.ok(); return; }
     G.row = i; G.focusT = Math.max(s, G.win); G.render();
-  } else { tune(i); G.close(); }
+  } else { tune(G.list[i]); G.close(); }
 });
 $("g-rows").addEventListener("wheel", (e) => { e.preventDefault(); G.move(e.deltaY > 0 ? 1 : -1); }, { passive: false });
 let touchY = null;

@@ -306,6 +306,10 @@ function renderGroups() {
     <td class="gr-n">${g.count ? g.count.toLocaleString() : ""}</td></tr>`).join("")
     || '<tr><td colspan="3" class="muted">No groups match.</td></tr>';
   groupStats(rows.length);
+  // Check/Uncheck all only touch what's listed: say so when a filter narrows the list
+  const n = rows.length < GR.all.length ? ` ${rows.length.toLocaleString()} listed` : " all";
+  $("gr-all-on").textContent = `Check${n}`;
+  $("gr-all-off").textContent = `Uncheck${n}`;
 }
 function groupStats(listed) {
   let gs = 0, cs = 0, ct = 0;
@@ -327,13 +331,9 @@ function closeGroups() { $("groups").classList.add("hidden"); }
 $("gr-search").oninput = renderGroups;
 $("gr-region").onchange = renderGroups;
 $("gr-show").onchange = renderGroups;
-$("gr-on").onclick = () => setListed(true);
-$("gr-off").onclick = () => setListed(false);
+$("gr-all-on").onclick = () => setListed(true);      // only the listed (filtered) groups
+$("gr-all-off").onclick = () => setListed(false);
 $("gr-only").onclick = () => setListed(true, false);
-// every group, ignoring the search/country filters (then tick the ones you want back)
-const setAll = (on) => { for (const g of GR.all) GR.shown.set(g.name, on); renderGroups(); };
-$("gr-all-on").onclick = () => setAll(true);
-$("gr-all-off").onclick = () => setAll(false);
 $("gr-body").addEventListener("change", (e) => {
   const tr = e.target.closest("tr"); if (!tr) return;
   GR.shown.set(tr.dataset.g, e.target.checked);

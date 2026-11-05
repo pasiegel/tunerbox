@@ -102,6 +102,8 @@ DEFAULTS = {
     # Local channels (folders of videos) get numbers from here up; their video is made at this height
     "media_channel_start": 2000,
     "media_resolution": "1080",
+    # Favorite channel numbers, shared by every screen (star them from the guide, the menu or a phone)
+    "favorites": [],
     # Phones paired as remotes: {id, name, hash, created, last_seen} (only token hashes are stored)
     "devices": [],
     # Only this PC and paired phones may change setup (watching stays open to the whole network)

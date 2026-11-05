@@ -108,6 +108,8 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .g-ch img { height: 70%; max-width: 3.4em; object-fit: contain; }
 .g-row.sel .g-ch { background: linear-gradient(90deg, #2c5cc0, #1f4aa0); }
 .g-row.playing .g-ch .n { color: var(--hl); }
+.g-fav { cursor: pointer; color: #5b6f99; font-size: 1.1em; margin-right: .25em; flex: none; }
+.g-fav.on { color: var(--hl); }
 .g-progs { flex: 1; position: relative; }
 .g-p { position: absolute; top: 0; bottom: 0; padding: 0 .7em; display: flex; align-items: center; gap: .4em; background: var(--cell); border-left: 2px solid #06122e;
   white-space: nowrap; overflow: hidden; font-size: 1.12em; font-weight: 600; cursor: pointer; }

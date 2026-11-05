@@ -101,32 +101,44 @@ document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("cli
 
 function listHtml(items) {
   return items.map((it, i) => `<li data-i="${i}">${it.logo ? `<img src="${esc(it.logo)}" alt="" loading="lazy">` : '<span class="nologo"></span>'}
-    <div><b>${esc(it.title)}</b><small>${esc(it.sub || "")}</small></div>${it.badge ? `<span class="badge ${it.live ? "live" : ""}">${esc(it.badge)}</span>` : ""}</li>`).join("");
+    <div><b>${esc(it.title)}</b><small>${esc(it.sub || "")}</small></div>${it.badge ? `<span class="badge ${it.live ? "live" : ""}">${esc(it.badge)}</span>` : ""}`
+    + (it.star !== undefined ? `<button class="star${it.star ? " on" : ""}" title="${it.star ? "Remove from" : "Add to"} Favorites">${it.star ? "★" : "☆"}</button>` : "") + "</li>").join("");
 }
 function bindList(el, items) {
   el.innerHTML = listHtml(items);
   el.onclick = async (e) => {
     const li = e.target.closest("li"); if (!li) return;
     const it = items[+li.dataset.i]; buzz();
+    if (e.target.closest(".star")) { if (it.fav) it.fav(); return; }
     if (it.open) { it.open(); return; }
     if (await send(it.cmd)) { li.classList.add("sent"); setTimeout(() => li.classList.remove("sent"), 600); toast(`Tuning ${it.title}`); }
   };
 }
 
 // channels
-let channels = null;
+let channels = null, favs = new Set();
 async function loadChannels() {
   if (!channels) {
     $("ch-list").innerHTML = '<li class="msg">Loading…</li>';
     try { channels = await api("/api/channels"); } catch (e) { $("ch-list").innerHTML = `<li class="msg">${esc(e.message)}</li>`; return; }
   }
+  try { favs = new Set(await api("/api/favorites")); } catch (_) {}
+  filterChannels();
+}
+// favorites are shared with every TV: starred channels are listed first
+async function toggleFav(c) {
+  const on = !favs.has(c.number);
+  try { favs = new Set(await api("/api/favorites", { method: "POST", body: JSON.stringify({ number: c.number, on }) })); }
+  catch (e) { toast(e.message); return; }
+  toast(on ? `★ ${c.number} added to Favorites` : `${c.number} removed from Favorites`);
   filterChannels();
 }
 function filterChannels() {
   const q = $("ch-q").value.trim().toLowerCase();
   const hits = (channels || []).filter((c) => c.mapped && (!q || String(c.number).startsWith(q) || (c.label || c.name).toLowerCase().includes(q)));
+  hits.sort((a, b) => (favs.has(b.number) - favs.has(a.number)) || (a.number - b.number));
   const items = hits.slice(0, 300).map((c) => ({ title: `${c.number}  ${c.label || c.name}`, sub: c.kind === "lineup" ? "" : (c.group || ""),
-    logo: c.logo, cmd: { type: "tune", number: c.number } }));
+    logo: c.logo, cmd: { type: "tune", number: c.number }, star: favs.has(c.number), fav: () => toggleFav(c) }));
   bindList($("ch-list"), items);
   if (hits.length > 300) $("ch-list").insertAdjacentHTML("beforeend", `<li class="msg">${hits.length - 300} more: type to narrow it down</li>`);
   if (!hits.length) $("ch-list").innerHTML = '<li class="msg">No channels match</li>';
