@@ -34,6 +34,12 @@ const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeri
 const fmtDay = (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const top = () => S.layer[S.layer.length - 1];
+// phones (not iPads/tablets): touch screen and small in at least one direction. Rechecked on rotate.
+const phoneMQ = window.matchMedia && matchMedia("(pointer: coarse) and (max-width: 700px), (pointer: coarse) and (max-height: 500px)");
+const isPhone = () => !!(phoneMQ && phoneMQ.matches);
+function applyPhone() { document.documentElement.classList.toggle("phone", isPhone()); }
+applyPhone();
+if (phoneMQ) (phoneMQ.addEventListener ? phoneMQ.addEventListener("change", applyPhone) : phoneMQ.addListener(applyPhone));
 let toastTimer;
 function toast(msg, ms = 2500) {
   const t = $("toast"); t.textContent = msg; t.classList.remove("hidden");
@@ -691,14 +697,14 @@ const MENU = [
   { label: "Channel Setup (playlists, lineup, guide)", act: openSetup },
   { label: "Rescan channels", act: async () => { await api("/api/jobs/scan", { method: "POST" }); toast("Scanning channels in the background…"); closeMenu(); watchJob(); } },
   { label: "Refresh TV guide", act: async () => { await api("/api/jobs/epg", { method: "POST" }); toast("Updating guide in the background…"); closeMenu(); watchJob(); } },
-  { label: "Open current channel in VLC / mpv", act: async () => {
+  { label: "Open current channel in VLC / mpv", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
     const url = ch.feed ? `${location.origin}/api/feed/stream?key=${encodeURIComponent(ch.feed)}` : `${location.origin}/api/stream/${ch.number}`;
     try { await navigator.clipboard.writeText(url); } catch (_) {}
     toast(`Stream URL copied: ${url}`, 6000); closeMenu();
   } },
-  { label: "Remote control setup", act: () => { closeMenu(); openRemote(); } },
-  { label: "Use a phone as the remote…", act: () => { closeMenu(); pairDialog(); } },
+  { label: "Remote control setup", notPhone: true, act: () => { closeMenu(); openRemote(); } },
+  { label: "Use a phone as the remote…", notPhone: true, act: () => { closeMenu(); pairDialog(); } },
   { get label() { return `Sleep timer & screensaver: ${sleepOn() ? plural(sleepH(), "hour") : "sleep off"} · ${saverOn() ? plural(saverM(), "min") : "saver off"}`; },
     act: () => { closeMenu(); sleepDialog(); } },
   { get label() { const b = bufSecs(); return `Stream cache: ${b ? b + " seconds" : "Off"}${localStorage.getItem("tb.buffer") === null ? " (default)" : " (this screen)"}`; },
@@ -708,13 +714,16 @@ const MENU = [
 ];
 // Android app: switch to another TunerBox PC
 if (window.TunerBoxApp) MENU.splice(MENU.length - 2, 1, { label: "Change TunerBox server", act: () => window.TunerBoxApp.changeServer() });
+// the entries shown right now (phones hide the ones that only make sense on a TV / PC)
+let menuShown = MENU;
 function openMenu() {
   hideBanner();
-  fillList($("menu-list"), MENU);
+  menuShown = isPhone() ? MENU.filter((e) => !e.notPhone) : MENU;
+  fillList($("menu-list"), menuShown);
   S.layer.push("menu"); $("menu").classList.remove("hidden");
 }
 function closeMenu() { S.layer = S.layer.filter((l) => l !== "menu"); $("menu").classList.add("hidden"); }
-$("menu-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) MENU[+li.dataset.i].act(); });
+$("menu-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) menuShown[+li.dataset.i].act(); });
 
 async function watchJob() {
   for (;;) {
@@ -1105,9 +1114,37 @@ window.tbAppResumed = () => {
 function toggleFull() {
   // desktop app: make the real window full screen
   if (window.pywebview && window.pywebview.api) { window.pywebview.api.toggle_fullscreen(); return; }
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => {});
+  const d = document, el = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;   // webkit-: older iPad Safari
+  if (req) {
+    try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+    return;
+  }
+  // iPhone Safari can't make a page full screen, only the video itself (its own player; Done / swipe down exits)
+  if (video.webkitEnterFullscreen) {
+    if (video.webkitDisplayingFullscreen) { video.webkitExitFullscreen(); return; }
+    // (iPhone streams through srcObject / ManagedMediaSource, so currentSrc is empty while playing)
+    if (video.readyState < 1) { toast("Tune to a channel first"); return; }
+    try { video.webkitEnterFullscreen(); } catch (e) { toast(`Full screen isn't available here${e && e.name ? ` (${e.name})` : ""}`); }
+    return;
+  }
+  toast("Full screen isn't available in this browser");
 }
+// leaving the iPhone player can pause the video: keep live TV going
+// The Done button pauses it while the player is still closing; resume as soon as that pause turns out to
+// be the exit (player gone a moment later) instead of waiting for the close animation to finish.
+// A pause tapped inside the full screen player stays paused.
+const resumeLive = () => { if (S.mode === "live" && video.paused) video.play().catch(() => {}); };
+video.addEventListener("pause", () => {
+  if (!video.webkitDisplayingFullscreen) return;
+  let n = 0;
+  const t = setInterval(() => {
+    if (!video.webkitDisplayingFullscreen) { clearInterval(t); resumeLive(); }
+    else if (++n > 15) clearInterval(t);   // still full screen after ~750ms: a real pause
+  }, 50);
+});
+video.addEventListener("webkitendfullscreen", resumeLive);
 // Android / iPad app: keep the device screen on only while TunerBox is on
 function keepAwake(on) {
   try { if (window.TunerBoxApp && window.TunerBoxApp.keepAwake) window.TunerBoxApp.keepAwake(!!on); } catch (_) {}
@@ -1316,7 +1353,7 @@ function handleKey(k, ev) {
   if (layer === "search") { searchKey(k); return true; }
   if (layer === "sports") { sportsKey(k); return true; }
   if (layer === "menu") {
-    if (k === "Back" || k === "m") closeMenu(); else listNav($("menu-list"), k, (_, i) => MENU[i].act());
+    if (k === "Back" || k === "m") closeMenu(); else listNav($("menu-list"), k, (_, i) => menuShown[i].act());
     return true;
   }
   if (layer === "dvr") {
@@ -1552,19 +1589,27 @@ $("stillthere").addEventListener("click", () => wake(true));
 $("tv").addEventListener("touchstart", () => { IDLE.last = Date.now(); }, { passive: true });
 
 // mouse / touch
-let idleTimer;
+let idleTimer, lastTouch = 0;
+function hideRemoteLater(ms) {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { $("tv").classList.add("idle"); $("remote").classList.add("hidden"); }, ms);
+}
 document.addEventListener("mousemove", () => {
   IDLE.last = Date.now();
   if (IDLE.saver) stopSaver();
+  // iOS Safari fires a fake mousemove after every tap; if that changes what's on screen it drops the
+  // tap's click, so touch input manages the remote bar itself (see touchend below)
+  if (Date.now() - lastTouch < 1000) return;
   $("tv").classList.remove("idle");
   if (S.mode !== "off" && !top()) $("remote").classList.remove("hidden");
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { $("tv").classList.add("idle"); $("remote").classList.add("hidden"); }, 3000);
+  hideRemoteLater(3000);
 });
 $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) handleKey(b.dataset.k); });
 $("learn").addEventListener("click", stopLearn);
+$("back").addEventListener("click", () => { if (top()) handleKey("Back"); });
+setInterval(() => { $("back").classList.toggle("hidden", !(isPhone() && top() && top() !== "learn")); }, 250);
 video.addEventListener("click", () => {
   if (top()) return;
   if (S.mode === "live") showBanner();
@@ -1584,12 +1629,20 @@ $("g-rows").addEventListener("click", (e) => {
 });
 $("g-rows").addEventListener("wheel", (e) => { e.preventDefault(); G.move(e.deltaY > 0 ? 1 : -1); }, { passive: false });
 let touchY = null;
-$("tv").addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; }, { passive: true });
+$("tv").addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; lastTouch = Date.now(); }, { passive: true });
 $("tv").addEventListener("touchend", (e) => {
-  if (touchY === null || top()) return;
+  lastTouch = Date.now();
+  if (touchY === null || top()) { touchY = null; return; }
   const dy = e.changedTouches[0].clientY - touchY; touchY = null;
+  // taps on the remote bar (or other tap targets) are clicks for them, not "toggle the bar"
+  if (e.target.closest && e.target.closest("#remote")) { hideRemoteLater(5000); return; }
+  if (e.target.closest && e.target.closest("#power, #tapplay, #saver, #stillthere, #learn")) return;
   if (Math.abs(dy) > 80) chStep(dy < 0 ? 1 : -1);
-  else if (S.mode === "live") $("remote").classList.toggle("hidden");
+  else if (S.mode === "live" || S.mode === "playback") {
+    const r = $("remote");
+    r.classList.toggle("hidden");
+    if (!r.classList.contains("hidden")) hideRemoteLater(5000); else clearTimeout(idleTimer);
+  }
 }, { passive: true });
 
 // ---------------------------------------------------------------- phone remote
