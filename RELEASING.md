@@ -6,7 +6,6 @@ GitHub Actions builds the desktop app for you. No secrets or signing keys are ne
 |---|---|---|
 | **Checks** (`.github/workflows/ci.yml`) | every push and pull request | Python compiles, the server starts and answers, JavaScript syntax, version number. About a minute. |
 | **Build & release** (`.github/workflows/release.yml`) | pushing a tag like `v1.4.1`, or **Actions › Build & release › Run workflow** | Windows installer + portable zip, Mac `.dmg` (Apple Silicon), Linux `.tar.gz`, each with ffmpeg included. With a tag, it publishes them as a GitHub Release. |
-| **Docker image** (`.github/workflows/docker.yml`) | the same `v*.*.*` tag, or **Run workflow** | Multi-arch (amd64 + arm64) server image pushed to `ghcr.io/<you>/tunerbox` as `1.4.1`, `1.4` and `latest` (`edge` for manual runs). |
 
 ## One-time setup
 
