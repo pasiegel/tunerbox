@@ -138,6 +138,11 @@ def video_args(mode=None):
     if mode == "h264":
         return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "22",
                 "-g", "60", "-pix_fmt", "yuv420p", "-vf", "scale=-2:'min(1080,ih)'"]
+    if mode == "roku720":
+        # deinterlace only if the source is interlaced, never upscale, cap bitrate for old Roku sticks
+        return ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-crf", "23",
+                "-maxrate", "8M", "-bufsize", "16M", "-g", "60", "-profile:v", "high",
+                "-pix_fmt", "yuv420p", "-vf", "yadif=0:-1:1,scale=-2:'min(720,ih)'"]
     return ["-c:v", "copy"]
 
 
