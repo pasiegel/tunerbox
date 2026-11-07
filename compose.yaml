@@ -1,0 +1,22 @@
+# docker compose up -d      then open http://<this-machine>:8642/  (Setup is at /setup)
+services:
+  tunerbox:
+    # image: ghcr.io/pasiegel/tunerbox:latest     # replace OWNER, or use "build: ." to build locally
+    build: .
+    container_name: tunerbox
+    restart: unless-stopped
+    ports:
+      - "8642:8642"
+    environment:
+      TZ: America/Detroit                    # guide times and DVR scheduling follow this
+    volumes:
+      - tunerbox-data:/data                  # settings.json, tunerbox.db, recordings/, logs
+      # To keep it as a plain folder you can edit instead:  - ./tunerbox-data:/data
+      # Local channels (your own videos), read-only; then use /media/... as the folder in Setup:
+      # - /path/to/videos:/media:ro
+    # HDHomeRun auto-discovery uses a UDP broadcast, which doesn't cross Docker's bridge network.
+    # On Linux you can use host networking instead of "ports:" (adding a tuner by IP works either way):
+    # network_mode: host
+
+volumes:
+  tunerbox-data:

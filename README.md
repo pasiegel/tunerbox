@@ -165,6 +165,17 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Empty and ended slots ("NO EVENT STREAMING", "ESPN+ 12") are folded away under **Show empty and ended slots**.
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
 
+## Docker
+Server-only image with ffmpeg included. Data (settings, database, recordings, logs, lineup CSV) lives in the `/data` volume.
+
+```sh
+docker compose up -d        # then open http://<host>:8642/ and go to /setup
+```
+
+* HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
+* For Local channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
+* If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
+
 ## How matching works
 * **Locals** (WNBC, KABC, WGN…) match by callsign, including subchannels: a station's DT2 is matched to its second channel on the lineup, and so on. If no local stream exists, the national network feed (NBC, FOX…) is used. You can turn that off in Settings.
 * **Cable networks** match by normalized name plus aliases (CNN = Cable News Network, HGTV, A&E…). The tvg-id only supports a name match, since many playlists set tvg-ids loosely.
