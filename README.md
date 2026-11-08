@@ -55,6 +55,10 @@ The PC running TunerBox does the tuning, guide and DVR, and must be on for the o
 
 iPhone/iPad Safari plays the server's HLS output (`/api/hls/<number>`); other browsers use MPEG-TS over Media Source Extensions.
 
+On a phone the TV screen switches to a touch layout: bigger buttons, panels that fit the screen and a **Close** button to leave the guide or a menu. Tap the picture to show or hide the buttons and swipe up or down to change channel. On an iPhone, **FULL** opens the video in Safari's own player.
+
+Roku and other slow devices: set a playlist's **Video** to *Re-encode to 720p*, or add `?mode=roku720` to a stream URL (`http://<pc-ip>:8642/api/stream/<number>?mode=roku720`). It deinterlaces, caps the picture at 720p and the bitrate at 8 Mbps.
+
 Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno Setup 6), macOS (`.app`) or Linux. GitHub Actions does this for every release; see `RELEASING.md`.
 
 ## First-time setup
@@ -172,6 +176,7 @@ Server-only image with ffmpeg included. Data (settings, database, recordings, lo
 docker compose up -d        # then open http://<host>:8642/ and go to /setup
 ```
 
+* Set `TZ` in `compose.yaml` to your time zone: guide times and DVR scheduling follow it.
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
 * For Local channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
 * If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
@@ -193,3 +198,6 @@ docker compose up -d        # then open http://<host>:8642/ and go to /setup
 ## Notes
 * Gracenote is a free public endpoint, not an official API. If it ever breaks, add an XMLTV source for locals instead.
 * Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default, and live TV plus a recording each use one connection.
+
+## Credits
+* Docker image, the 720p (Roku) re-encode mode and the phone / iPhone Safari touch layout by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).

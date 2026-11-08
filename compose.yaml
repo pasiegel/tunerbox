@@ -1,7 +1,6 @@
 # docker compose up -d      then open http://<this-machine>:8642/  (Setup is at /setup)
 services:
   tunerbox:
-    # image: ghcr.io/pasiegel/tunerbox:latest     # replace OWNER, or use "build: ." to build locally
     build: .
     container_name: tunerbox
     restart: unless-stopped

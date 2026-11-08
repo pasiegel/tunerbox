@@ -221,7 +221,8 @@ loaders.sources = async () => {
       <div class="row"><span class="muted small">Video:</span><select data-a="video" class="small">
         <option value="" ${!s.video_mode ? "selected" : ""}>Default (Settings)</option>
         <option value="copy" ${s.video_mode === "copy" ? "selected" : ""}>Original</option>
-        <option value="h264" ${s.video_mode === "h264" ? "selected" : ""}>Re-encode to H.264${s.type === "hdhomerun" ? " (needed for antenna TV)" : ""}</option></select></div>
+        <option value="h264" ${s.video_mode === "h264" ? "selected" : ""}>Re-encode to H.264${s.type === "hdhomerun" ? " (needed for antenna TV)" : ""}</option>
+        <option value="roku720" ${s.video_mode === "roku720" ? "selected" : ""}>Re-encode to 720p (Roku, slow devices)</option></select></div>
       <details class="adv"${s.exclude_groups ? " open" : ""}><summary class="muted small">Skip pattern (advanced)</summary>
       <div class="row"><input data-f="exclude_groups" value="${esc(s.exclude_groups)}" placeholder="regex, e.g. ^(UK|AR)|XXX" style="flex:1">
       <button class="btn small" data-a="save">Save</button></div></details></div>`).join("")
