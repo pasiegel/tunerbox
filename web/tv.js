@@ -366,6 +366,7 @@ const G = {
     $("guide").classList.remove("hidden");
     video.classList.add("pip");
     this.rows = window.innerHeight < window.innerWidth ? 8 : 9;
+    this.span = isPhone() && window.innerHeight > window.innerWidth ? 5400 : 7200;   // phone portrait: 90 min, wider cells
     this.win = Math.floor(now() / HALF) * HALF;
     this.focusT = now();
     this.favOnly = favs; this.build();
@@ -562,6 +563,21 @@ const G = {
       while (this.focusT < this.win && this.win > this.minWin()) this.win -= HALF;
       if (this.focusT < this.win) this.focusT = this.win;
     }
+    this.render();
+  },
+  // touch scrolling: move the visible page / time window, keeping the highlight on screen
+  scrollTo(t) {
+    t = Math.max(0, Math.min(t, this.list.length - this.rows));
+    if (t === this.top) return;
+    this.top = t;
+    this.row = Math.max(t, Math.min(this.row, t + this.rows - 1));
+    this.render();
+  },
+  timeTo(w) {
+    w = Math.max(this.minWin(), Math.min(w, Math.floor((now() + 14 * 86400) / HALF) * HALF - this.span));
+    if (w === this.win) return;
+    this.win = w;
+    this.focusT = Math.max(w, Math.min(this.focusT, w + this.span - 1));
     this.render();
   },
   jump(num) {
@@ -992,7 +1008,7 @@ function spItems() {
   }
   if (id === "up") {
     return d.upcoming.length ? d.upcoming.map((p) => ({
-      html: progHtml(p, `<span class="badge">${esc(fmtWhen(p.start))}</span>`) + (p.is_live ? ' <span class="flag live">LIVE</span>' : ""),
+      html: progHtml(p, `<span class="badge">${esc(fmtWhen(p.start))}</span>`),
       right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}`, act: () => pickProgram(p),
     })) : none("No upcoming sports in the TV guide.");
   }
@@ -1606,14 +1622,31 @@ document.addEventListener("mousemove", () => {
 });
 $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
-$("remote").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) handleKey(b.dataset.k); });
+$("remote").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  // picking an option puts the bar away (CH up/down keep it, for flipping through channels)
+  if (b.dataset.k !== "ChannelUp" && b.dataset.k !== "ChannelDown") { clearTimeout(idleTimer); $("remote").classList.add("hidden"); }
+  handleKey(b.dataset.k);
+});
+// tap / click on the picture while watching: show the button bar and the info banner together,
+// or put both away if either is showing
+function toggleOverlay() {
+  const r = $("remote"), shown = !r.classList.contains("hidden") || !$("banner").classList.contains("hidden");
+  if (shown) {
+    r.classList.add("hidden"); clearTimeout(idleTimer);
+    hideBanner(); clearTimeout(S.bannerTimer); $("playback").classList.add("hidden");
+    return;
+  }
+  r.classList.remove("hidden"); hideRemoteLater(6000);
+  if (S.mode === "live") showBanner();
+  else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
+}
 $("learn").addEventListener("click", stopLearn);
 $("back").addEventListener("click", () => { if (top()) handleKey("Back"); });
 setInterval(() => { $("back").classList.toggle("hidden", !(isPhone() && top() && top() !== "learn")); }, 250);
 video.addEventListener("click", () => {
-  if (top()) return;
-  if (S.mode === "live") showBanner();
-  else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
+  if (top() || Date.now() - lastTouch < 1000) return;     // touch taps are handled in touchend below
+  if (S.mode === "live" || S.mode === "playback") toggleOverlay();
 });
 video.addEventListener("dblclick", toggleFull);
 $("g-rows").addEventListener("click", (e) => {
@@ -1628,6 +1661,28 @@ $("g-rows").addEventListener("click", (e) => {
   } else { tune(G.list[i]); G.close(); }
 });
 $("g-rows").addEventListener("wheel", (e) => { e.preventDefault(); G.move(e.deltaY > 0 ? 1 : -1); }, { passive: false });
+// touch: drag up/down to scroll channels, sideways to scroll time. The move/end listeners go on the
+// touched element itself because render() replaces it, and a detached target no longer bubbles.
+$("g-rows").addEventListener("touchstart", (e) => {
+  const t0 = e.touches[0], el = e.target, rowsEl = $("g-rows");
+  const st = { x: t0.clientX, y: t0.clientY, top: G.top, win: G.win, axis: null };
+  const move = (ev) => {
+    const t = ev.touches[0], dx = t.clientX - st.x, dy = t.clientY - st.y;
+    if (!st.axis) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+      st.axis = Math.abs(dy) >= Math.abs(dx) ? "y" : "x";
+    }
+    ev.preventDefault();
+    if (st.axis === "y") G.scrollTo(st.top - Math.round(dy / (rowsEl.clientHeight / G.rows)));
+    else {
+      const w = (rowsEl.querySelector(".g-progs") || rowsEl).clientWidth;
+      G.timeTo(st.win - Math.round(dx / (w * HALF / G.span)) * HALF);
+    }
+  };
+  const end = () => { el.removeEventListener("touchmove", move); el.removeEventListener("touchend", end); el.removeEventListener("touchcancel", end); };
+  el.addEventListener("touchmove", move, { passive: false });
+  el.addEventListener("touchend", end); el.addEventListener("touchcancel", end);
+}, { passive: true });
 let touchY = null;
 $("tv").addEventListener("touchstart", (e) => { touchY = e.touches[0].clientY; lastTouch = Date.now(); }, { passive: true });
 $("tv").addEventListener("touchend", (e) => {
@@ -1638,11 +1693,7 @@ $("tv").addEventListener("touchend", (e) => {
   if (e.target.closest && e.target.closest("#remote")) { hideRemoteLater(5000); return; }
   if (e.target.closest && e.target.closest("#power, #tapplay, #saver, #stillthere, #learn")) return;
   if (Math.abs(dy) > 80) chStep(dy < 0 ? 1 : -1);
-  else if (S.mode === "live" || S.mode === "playback") {
-    const r = $("remote");
-    r.classList.toggle("hidden");
-    if (!r.classList.contains("hidden")) hideRemoteLater(5000); else clearTimeout(idleTimer);
-  }
+  else if (S.mode === "live" || S.mode === "playback") toggleOverlay();
 }, { passive: true });
 
 // ---------------------------------------------------------------- phone remote
