@@ -111,6 +111,10 @@ DEFAULTS = {
     # Remote-control buttons shared by every device: {"input id": "action"}.
     # Set from the TV screen: Menu > Remote control setup > Save as default.
     "keymap": {},
+    # HDHomeRun emulation (Plex / Emby / Jellyfin). The device id is made once per install;
+    # tuner_count 0 = automatic (your Xtream accounts' connection limits, else 4).
+    "hdhr_device_id": "",
+    "tuner_count": 0,
 }
 
 _lock = threading.Lock()
@@ -127,6 +131,66 @@ def _merge(base, over):
     return out
 
 
+def _read_user():
+    """The user's settings.json. A damaged file (edited by hand, say) is set aside as
+    settings.json.broken and TunerBox starts with defaults instead of refusing to start."""
+    if not SETTINGS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    bad = SETTINGS_FILE.with_name(SETTINGS_FILE.name + ".broken")
+    try:
+        shutil.copy(SETTINGS_FILE, bad)
+        print(f"TunerBox: settings.json is damaged; saved it as {bad.name} and started with defaults", file=sys.stderr)
+    except OSError:
+        pass
+    return {}
+
+
+def _write(data):
+    """Write settings.json atomically: a crash mid-write never leaves a half-written file."""
+    text = json.dumps(data, indent=2)
+    tmp = SETTINGS_FILE.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, SETTINGS_FILE)
+
+
+LEGACY_DEVICE_ID = "12345678"
+
+
+def new_device_id():
+    """A random 8-hex-digit HDHomeRun device id whose check digit is valid (what libhdhomerun and
+    some apps verify)."""
+    import secrets
+    table = [0xA, 0x5, 0xF, 0x6, 0x7, 0xC, 0x1, 0xB, 0x9, 0x2, 0x8, 0xD, 0x4, 0x3, 0xE, 0x0]
+    n = secrets.randbits(28) << 4
+    chk = 0
+    for i, shift in enumerate(range(28, 0, -4)):
+        nib = (n >> shift) & 0xF
+        chk ^= table[nib] if i % 2 == 0 else nib
+    return f"{n | chk:08X}"
+
+
+def valid_device_id(text):
+    try:
+        n = int(text, 16)
+    except (TypeError, ValueError):
+        return False
+    table = [0xA, 0x5, 0xF, 0x6, 0x7, 0xC, 0x1, 0xB, 0x9, 0x2, 0x8, 0xD, 0x4, 0x3, 0xE, 0x0]
+    chk = 0
+    for i, shift in enumerate(range(28, -4, -4)):
+        nib = (n >> shift) & 0xF
+        chk ^= table[nib] if i % 2 == 0 else nib
+    return chk == 0
+
+
 def load():
     global _cache
     with _lock:
@@ -136,11 +200,13 @@ def load():
             default_csv = BUNDLE / "data" / "channels.csv"
             if FROZEN and default_csv.exists() and not (DATA / "channels.csv").exists():
                 shutil.copy(default_csv, DATA / "channels.csv")
-            user = {}
-            if SETTINGS_FILE.exists():
-                user = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            user = _read_user()
             _cache = _merge(DEFAULTS, user)
-            SETTINGS_FILE.write_text(json.dumps(_cache, indent=2), encoding="utf-8")
+            if not _cache.get("hdhr_device_id"):
+                # installs from before this setting already told Plex "12345678": changing it would
+                # make Plex see a new tuner and lose its DVR setup
+                _cache["hdhr_device_id"] = LEGACY_DEVICE_ID if user else new_device_id()
+            _write(_cache)
         return _cache
 
 
@@ -150,11 +216,83 @@ def get(key, default=None):
 
 def update(changes: dict):
     global _cache
-    cur = load()
+    load()
     with _lock:
-        _cache = _merge(cur, changes)
-        SETTINGS_FILE.write_text(json.dumps(_cache, indent=2), encoding="utf-8")
+        # merge into the current cache inside the lock, so two updates at once can't drop each other's changes
+        _cache = _merge(_cache, changes)
+        _write(_cache)
         return _cache
+
+
+# Settings that name a program to run, or a place on disk to read or write: only the PC itself can
+# change them, so another device on the network can't point TunerBox at its own program or folder.
+PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing"}
+# Managed through their own API calls, never through /api/settings
+NOT_SETTABLE = {"devices", "hdhr_device_id"}
+
+
+def _is_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _check_value(key, value, default):
+    """`value` coerced to the type of `default`, or ValueError."""
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+    elif isinstance(default, (int, float)):
+        if isinstance(value, str) and value.strip():
+            try:
+                value = float(value)
+            except ValueError:
+                pass
+        if _is_num(value):
+            return int(value) if isinstance(default, int) and float(value).is_integer() else value
+    elif isinstance(default, str):
+        if isinstance(value, str):
+            return value.strip()
+        if _is_num(value):
+            return str(value)
+    elif isinstance(default, list):
+        if isinstance(value, list):
+            return value
+    elif isinstance(default, dict):
+        if isinstance(value, dict):
+            if key == "keymap":
+                return {str(k): str(v) for k, v in value.items()}
+            unknown = set(value) - set(default)
+            if unknown:
+                raise ValueError(f"{key}: unknown setting {sorted(unknown)[0]}")
+            return {k: _check_value(f"{key}.{k}", v, default[k]) for k, v in value.items()}
+    raise ValueError(f"{key}: expected {type(default).__name__}, got {type(value).__name__}")
+
+
+def clean_changes(changes: dict, from_pc: bool) -> dict:
+    """Check settings sent by a page before saving them. Unknown keys and wrong types are refused
+    (ValueError); PC-only settings from another device are refused if they would change (PermissionError).
+    Unchanged PC-only values are dropped, so a phone can still save the whole Settings form."""
+    cur = load()
+    out = {}
+    for k, v in changes.items():
+        if k in NOT_SETTABLE:
+            continue
+        if k not in DEFAULTS:
+            raise ValueError(f"Unknown setting: {k}")
+        v = _check_value(k, v, DEFAULTS[k])
+        if k == "xmltv_sources":
+            v = [str(u).strip() for u in v if str(u).strip()]
+        elif k == "favorites":
+            v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
+        if k in PC_ONLY and not from_pc:
+            if v == cur.get(k):
+                continue
+            raise PermissionError(f"'{k}' can only be changed on the TunerBox PC")
+        if k == "xmltv_sources" and not from_pc:
+            old = set(cur.get(k) or [])
+            if any(u not in old and not u.lower().startswith(("http://", "https://")) for u in v):
+                raise PermissionError("Guide files on disk can only be added on the TunerBox PC")
+        out[k] = v
+    return out
 
 
 def data_path(p: str) -> Path:

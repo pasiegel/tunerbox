@@ -1,4 +1,5 @@
 """ffmpeg-based live playback: any input (HLS, TS, RTMP...) -> MPEG-TS with AAC audio."""
+import asyncio
 import logging
 import os
 import queue
@@ -177,9 +178,10 @@ def stop_client(client_id):
     kill(p)
 
 
-def _pump(proc, q, stop):
+def _pump(proc, q, stop, wake):
     """Read ffmpeg as fast as it produces, so a viewer that falls behind (Wi-Fi hiccup) is fed from
-    this cache instead of making ffmpeg - and the provider connection - wait."""
+    this cache instead of making ffmpeg - and the provider connection - wait. Runs in its own thread;
+    `wake()` tells the event loop a chunk is ready. b"" marks the end."""
     try:
         while not stop.is_set():
             chunk = proc.stdout.read(65536)
@@ -189,18 +191,37 @@ def _pump(proc, q, stop):
                     break
                 except queue.Full:
                     continue
+            else:
+                break               # viewer gone: nobody is reading any more
+            wake()
             if not chunk:
-                return
-    except (OSError, ValueError):
+                return              # end of stream, already queued
+    except (OSError, ValueError):   # pipe closed under us (ffmpeg killed)
+        pass
+    while not stop.is_set():        # read failed: make sure the reader sees an end, even with a full cache
         try:
-            q.put_nowait(b"")
+            q.put(b"", timeout=0.5)
+            wake()
+            break
         except queue.Full:
+            continue
+
+
+def _waker(loop, event):
+    def wake():
+        try:
+            loop.call_soon_threadsafe(event.set)
+        except RuntimeError:        # event loop already closed (server shutting down)
             pass
+    return wake
 
 
 async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None):
     """Async generator yielding MPEG-TS bytes. Kills ffmpeg when the viewer goes away.
-    `cmd` runs a ready-made ffmpeg command instead (local channel pieces)."""
+    `cmd` runs a ready-made ffmpeg command instead (local channel pieces).
+
+    Waiting for data never holds a worker thread: the reader thread wakes this coroutine through an
+    asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on."""
     if client_id:   # stop this viewer's previous channel first (Xtream allows few connections), off the event loop
         await anyio.to_thread.run_sync(stop_client, client_id)
     buffer = buffer_seconds(buffer)
@@ -219,7 +240,9 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
     # read-ahead cache: about 2 MB normally, up to ~80 MB with the extra cache turned on
     q = queue.Queue(maxsize=32 + buffer * 40)
     stop = threading.Event()
-    threading.Thread(target=_pump, args=(proc, q, stop), daemon=True).start()
+    ready = asyncio.Event()
+    threading.Thread(target=_pump, args=(proc, q, stop, _waker(asyncio.get_running_loop(), ready)),
+                     daemon=True).start()
     sent = 0
     last_check = time.monotonic()
     try:
@@ -227,7 +250,17 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
             try:
                 chunk = q.get_nowait()
             except queue.Empty:
-                chunk = await anyio.to_thread.run_sync(q.get)
+                ready.clear()
+                try:                # re-check after clearing, so a chunk put just before isn't missed
+                    chunk = q.get_nowait()
+                except queue.Empty:
+                    try:
+                        await asyncio.wait_for(ready.wait(), 2)
+                    except asyncio.TimeoutError:
+                        # nothing from the feed for a while: still notice a viewer who left
+                        if request is not None and await request.is_disconnected():
+                            break
+                    continue
             if not chunk:
                 break
             sent += len(chunk)

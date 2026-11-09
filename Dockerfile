@@ -8,9 +8,9 @@ RUN apt-get update \
 WORKDIR /app
 
 # requirements.txt stays the single source of truth; the desktop-window package is dropped here.
-COPY requirements.txt .
+COPY requirements.txt constraints.txt ./
 RUN grep -vi pywebview requirements.txt > /tmp/requirements-server.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-server.txt
+    && pip install --no-cache-dir -r /tmp/requirements-server.txt -c constraints.txt
 
 COPY tunerbox/ tunerbox/
 COPY web/ web/

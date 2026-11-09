@@ -125,6 +125,10 @@ def fetch_xtream(src):
     info = xtream_api(src)
     if isinstance(info, dict) and info.get("user_info", {}).get("auth") == 0:
         raise RuntimeError("Xtream login rejected")
+    try:        # how many streams the account may play at once (advertised to Plex as tuners)
+        db.set_meta(f"xtream_max_{src['id']}", int((info.get("user_info") or {}).get("max_connections") or 0))
+    except (TypeError, ValueError, AttributeError):
+        pass
     cats = {str(c["category_id"]): c.get("category_name", "") for c in xtream_api(src, "get_live_categories") or []}
     streams = xtream_api(src, "get_live_streams") or []
     ext = src.get("xtream_format") or "ts"
@@ -147,7 +151,17 @@ def fetch_xtream(src):
 
 
 # ---------------------------------------------------------------- HDHomeRun
-OWN_DEVICE_ID = "12345678"     # what TunerBox's own HDHomeRun emulation reports
+def tuner_count():
+    """Tuners TunerBox's HDHomeRun emulation offers Plex: the setting, or - when every enabled
+    playlist is an Xtream account that states its connection limit - the sum of those limits."""
+    n = int(config.get("tuner_count") or 0)
+    if n > 0:
+        return n
+    srcs = db.rows("SELECT id, type FROM sources WHERE enabled=1")
+    limits = [int(db.get_meta(f"xtream_max_{s['id']}", 0) or 0) for s in srcs if s["type"] == "xtream"]
+    if srcs and len(limits) == len(srcs) and all(limits):
+        return max(1, sum(limits))
+    return 4
 
 
 def hdhr_base(addr):
@@ -164,7 +178,7 @@ def hdhr_info(addr, timeout=6):
         r = c.get(hdhr_base(addr) + "/discover.json")
         r.raise_for_status()
         d = r.json()
-    if str(d.get("DeviceID")) == OWN_DEVICE_ID and d.get("DeviceAuth") == "tunerbox":
+    if d.get("DeviceAuth") == "tunerbox":
         raise RuntimeError("That address is TunerBox itself, not an HDHomeRun tuner")
     return d
 

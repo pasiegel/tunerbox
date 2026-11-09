@@ -1,6 +1,7 @@
 """DVR: one-off and series recordings, captured with ffmpeg."""
 import logging
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -12,12 +13,20 @@ from .streaming import NO_WINDOW, ffmpeg_bin, kill, play_args, track
 
 log = logging.getLogger("tunerbox.dvr")
 _active = {}  # recording id -> Popen
+MIN_FREE_START = 2_000_000_000      # don't start a recording with less free space than this
+MIN_FREE_RUNNING = 500_000_000      # stop running recordings (keeping what they have) below this
+MIN_KEEP = 200_000                  # smaller captures are treated as "no data"
 
 
 def rec_dir() -> Path:
     p = config.data_path(config.get("recordings_dir", "recordings"))
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def _ext(base: Path, ext):
+    """base + extension. (Path.with_suffix would cut "Mr. Robot (...)" down to "Mr.ts".)"""
+    return base.with_name(base.name + ext)
 
 
 def _safe(s):
@@ -98,6 +107,12 @@ def _start(rec):
     if not streams:
         db.run("UPDATE recordings SET status='failed', error='No stream mapped' WHERE id=?", (rec["id"],))
         return
+    free = _free_bytes()
+    if free is not None and free < MIN_FREE_START:
+        db.run("UPDATE recordings SET status='failed', error=? WHERE id=?",
+               (f"Not enough disk space ({free / 1e9:.1f} GB free)", rec["id"]))
+        log.warning("Recording %s not started: only %.1f GB free", rec["title"], free / 1e9)
+        return
     folder = rec_dir() / _safe(rec["title"])
     folder.mkdir(parents=True, exist_ok=True)
     when = datetime.fromtimestamp(rec["start"]).strftime("%Y-%m-%d %H%M")
@@ -113,7 +128,7 @@ def _start(rec):
 
 def _record(rec, streams, base: Path):
     stop_at = rec["stop"] + int(config.get("dvr_pad_after", 180))
-    ts = base.with_suffix(".ts")
+    ts = _ext(base, ".ts")
     err = ""
     for attempt, s in enumerate(streams * 3):  # cycle through alternates on failure
         remaining = stop_at - int(time.time())
@@ -134,9 +149,19 @@ def _record(rec, streams, base: Path):
             break
         log.warning("Recording %s interrupted (attempt %d): %s", rec["title"], attempt + 1, err)
         time.sleep(3)
-    status = db.one("SELECT status FROM recordings WHERE id=?", (rec["id"],))["status"]
-    if ts.exists() and ts.stat().st_size > 200_000:
-        mp4 = base.with_suffix(".mp4")
+    row = db.one("SELECT status, error FROM recordings WHERE id=?", (rec["id"],))
+    if not row:                     # deleted while recording
+        ts.unlink(missing_ok=True)
+        return
+    _finish_file(rec["id"], base, cancelled=row["status"] == "cancelled", err=err, note=row["error"] or "")
+
+
+def _finish_file(rec_id, base: Path, cancelled=False, err="", note=""):
+    """Turn a finished (or cut-short) capture into an MP4 and set the recording's final status.
+    `note` is kept as the error text of a recording that still has a file (e.g. "stopped early")."""
+    ts = _ext(base, ".ts")
+    if ts.exists() and ts.stat().st_size > MIN_KEEP:
+        mp4 = _ext(base, ".mp4")
         r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y",
                             "-fflags", "+genpts", "-i", str(ts), "-map", "0:v?", "-map", "0:a?", "-c", "copy",
                             "-movflags", "+faststart", str(mp4)],
@@ -146,11 +171,22 @@ def _record(rec, streams, base: Path):
             final = mp4
         else:
             final = ts
-        db.run("UPDATE recordings SET status=?, file=?, error='' WHERE id=?",
-               ("cancelled" if status == "cancelled" else "done", str(final), rec["id"]))
+        db.run("UPDATE recordings SET status=?, file=?, error=? WHERE id=?",
+               ("cancelled" if cancelled else "done", str(final), note, rec_id))
     else:
         ts.unlink(missing_ok=True)
-        db.run("UPDATE recordings SET status='failed', error=? WHERE id=?", (err or "No data", rec["id"]))
+        if cancelled:   # stopped before anything worth keeping was recorded
+            db.run("UPDATE recordings SET status='cancelled', file='', error='' WHERE id=?", (rec_id,))
+        else:
+            db.run("UPDATE recordings SET status='failed', file='', error=? WHERE id=?",
+                   (note or err or "No data", rec_id))
+
+
+def _free_bytes():
+    try:
+        return shutil.disk_usage(rec_dir()).free
+    except OSError:
+        return None
 
 
 def cancel(rec_id, delete_file=False):
@@ -170,6 +206,13 @@ def cancel(rec_id, delete_file=False):
 
 
 def tick():
+    if _active:
+        free = _free_bytes()
+        if free is not None and free < MIN_FREE_RUNNING:
+            for rid in list(_active):
+                log.warning("Disk almost full (%.1f GB free): stopping recording %s", free / 1e9, rid)
+                db.run("UPDATE recordings SET error='Stopped early: disk almost full' WHERE id=?", (rid,))
+                kill(_active.pop(rid, None))
     now = int(time.time())
     pad = int(config.get("dvr_pad_before", 60))
     for rec in db.rows("SELECT * FROM recordings WHERE status='scheduled' AND start-?<=? ORDER BY start", (pad, now)):
@@ -181,5 +224,16 @@ def tick():
 
 
 def recover():
-    """Recordings left 'recording' from a previous run can't be resumed."""
-    db.run("UPDATE recordings SET status='failed', error='Interrupted (app restarted)' WHERE status='recording'")
+    """Recordings left 'recording' from a previous run can't be resumed, but what was captured
+    before TunerBox stopped is kept (in the background: making the MP4 can take a while)."""
+    left = db.rows("SELECT id, file FROM recordings WHERE status='recording'")
+    if not left:
+        return
+
+    def salvage():
+        for r in left:
+            if r["file"]:
+                _finish_file(r["id"], Path(r["file"].removesuffix(".mp4")), note="Partial: TunerBox stopped while recording")
+            else:
+                db.run("UPDATE recordings SET status='failed', error='Interrupted (app restarted)' WHERE id=?", (r["id"],))
+    threading.Thread(target=salvage, daemon=True).start()

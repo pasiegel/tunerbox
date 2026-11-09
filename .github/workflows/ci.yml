@@ -16,7 +16,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install packages
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt -c constraints.txt pytest
+      - name: Tests
+        run: python -m pytest -q
       - name: Python compiles and the server imports
         env:
           TUNERBOX_DATA: ${{ runner.temp }}/tbdata
@@ -33,6 +35,10 @@ jobs:
           curl -fs localhost:8642/ | grep -q TunerBox
           echo "server OK"
       - name: JavaScript syntax
-        run: for f in web/*.js; do node --check "$f"; done
+        env:
+          TUNERBOX_DATA: ${{ runner.temp }}/tbdata
+        run: |
+          for f in web/*.js; do node --check "$f"; done
+          python -m tunerbox.bundle > "$RUNNER_TEMP/tv.js" && node --check "$RUNNER_TEMP/tv.js"
       - name: Version number is valid
         run: python packaging/set_version.py --check | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'

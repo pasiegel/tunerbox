@@ -1,8 +1,11 @@
 """SQLite storage. One short-lived connection per call keeps threads simple."""
+import logging
 import sqlite3
 from contextlib import contextmanager
 
 from . import config
+
+log = logging.getLogger("tunerbox.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -114,8 +117,6 @@ def _connect():
     config.DATA.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(config.DATA / "tunerbox.db", timeout=30, check_same_thread=False)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=30000")
     return con
 
 
@@ -129,14 +130,37 @@ def conn():
         con.close()
 
 
+def _add_column(c, table, column, decl):
+    if column not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+# Schema changes after the first release, in order. The database's PRAGMA user_version is how many have
+# run. Add new ones at the end and never edit or reorder old ones. Each must be safe to run on a database
+# that already has the change: databases from before this list existed are at version 0 whatever they hold.
+MIGRATIONS = [
+    lambda c: _add_column(c, "sources", "hidden_groups", "TEXT DEFAULT '[]'"),   # 1.2
+    lambda c: _add_column(c, "sources", "video_mode", "TEXT DEFAULT ''"),        # 1.4: per-playlist video
+]
+
+
+def migrate(c):
+    ver = c.execute("PRAGMA user_version").fetchone()[0]
+    if ver > len(MIGRATIONS):
+        log.warning("Database is from a newer TunerBox (schema %s, this version knows %s)", ver, len(MIGRATIONS))
+        return
+    for n, step in enumerate(MIGRATIONS[ver:], ver + 1):
+        step(c)
+        c.execute(f"PRAGMA user_version={n}")
+        c.commit()
+        log.info("Database upgraded to schema %s", n)
+
+
 def init():
     with conn() as c:
+        c.execute("PRAGMA journal_mode=WAL")    # stored in the database file: once is enough
         c.executescript(SCHEMA)
-        cols = {r[1] for r in c.execute("PRAGMA table_info(sources)")}
-        if "hidden_groups" not in cols:          # databases from 1.0/1.1
-            c.execute("ALTER TABLE sources ADD COLUMN hidden_groups TEXT DEFAULT '[]'")
-        if "video_mode" not in cols:             # 1.4: per-playlist video (HDHomeRun = re-encode)
-            c.execute("ALTER TABLE sources ADD COLUMN video_mode TEXT DEFAULT ''")
+        migrate(c)
     from . import media
     media.init()
 

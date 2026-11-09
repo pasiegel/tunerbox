@@ -8,7 +8,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (set up 
 * **Manual mapping.** A Tunarr-style picker lets you search every feed, preview it, and pin the one you want.
 * **M3U and Xtream Codes.** Paste an Xtream `get.php` link and it switches to the Xtream API automatically.
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
-* **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4.
+* **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB.
 * **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
 
 ## Getting started
@@ -127,7 +127,7 @@ Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a
 * Antenna TV is MPEG-2, which browsers can't play, so tuner channels are re-encoded to H.264 by default. You can change this per playlist with the **Video** setting on its card.
 * Each TV screen watching an antenna channel uses one tuner. When all tuners are busy, the channel shows No Signal.
 
-This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before.
+This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before. That emulated tuner offers Plex as many tuners as your Xtream accounts allow connections (when every playlist is an Xtream account), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself.
 
 ## Phone remote
 Pair a phone once and use it as the remote for any TunerBox screen (the PC window, a browser on the TV, the iPad), or to manage playlists from the sofa.
@@ -138,7 +138,9 @@ Pair a phone once and use it as the remote for any TunerBox screen (the PC windo
 
 The phone must be on the same Wi-Fi. If several screens are on, pick one at the top. Paired phones are listed under Setup › Phones, where you can rename or remove them. Only a hash of each phone's key is stored.
 
-**Lock setup** (Setup › Phones): only the PC and paired phones can change playlists, channels and settings. Watching TV stays open to every device on the network, so other TVs, tablets and Plex keep working.
+**Lock setup** (Setup › Phones): only the PC and paired phones can change playlists, channels and settings, delete recordings, or see a channel's original stream address (it can contain your provider login). Watching TV and scheduling recordings stay open to every device on the network, so other TVs, tablets and Plex keep working.
+
+Whether or not setup is locked, the settings that name a program or a place on disk (ffmpeg path, recordings folder, lineup CSV, guide files on disk, port) can only be changed on the PC itself.
 
 ## Stream cache
 For streams that stutter or freeze, turn on the stream cache. TunerBox then holds back a few seconds of video before it starts playing, and if the stream hiccups it plays from that cache instead of freezing.
@@ -193,11 +195,17 @@ docker compose up -d        # then open http://<host>:8642/ and go to /setup
 * `data/settings.json`: all settings, also editable in Setup › Settings
 * `data/tunerbox.db`: playlists, mappings, guide, recordings (SQLite)
 * `data/recordings/`: DVR output
-* `data/tunerbox.log`: log
+* `data/tunerbox.log`: log (kept to about 20 MB: older parts roll over to `tunerbox.log.1` to `.3`)
 
 ## Notes
 * Gracenote is a free public endpoint, not an official API. If it ever breaks, add an XMLTV source for locals instead.
 * Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default, and live TV plus a recording each use one connection.
+
+## Development
+* Tests: `pip install pytest`, then `python -m pytest`. They use a temporary data folder, never yours, and need no ffmpeg or network.
+* `constraints.txt` pins exact package versions for CI, release builds and Docker (`pip install -r requirements.txt -c constraints.txt`). Running from source ignores it. Regenerate it after changing `requirements.txt` (the command is at the top of the file).
+* The TV page's script is split into parts in `web/tv/`. The server joins them, in name order, into `/static/tv.js` inside one shared scope, so there is no build step. Code that runs at load time can only use what earlier parts define.
+* Database changes go at the end of `MIGRATIONS` in `tunerbox/db.py`; the database's `user_version` records how many have run.
 
 ## Credits
 * Docker image, the 720p (Roku) re-encode mode and the phone / iPhone Safari touch layout by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).

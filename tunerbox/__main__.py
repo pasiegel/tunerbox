@@ -7,6 +7,7 @@
 """
 import argparse
 import logging
+import logging.handlers
 import os
 import socket
 import subprocess
@@ -157,7 +158,9 @@ def main():
         return
 
     cfg = config.load()
-    handlers = [logging.FileHandler(config.DATA / "tunerbox.log", encoding="utf-8")]
+    # every channel change logs a line or two: keep the log to about 20 MB on a box that's always on
+    handlers = [logging.handlers.RotatingFileHandler(config.DATA / "tunerbox.log", maxBytes=5_000_000, backupCount=3,
+                                                     encoding="utf-8", delay=True)]
     if sys.stdout and sys.stdout.isatty():
         handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", handlers=handlers)

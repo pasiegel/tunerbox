@@ -29,7 +29,7 @@ jobs:
         if: env.IS_TAG == 'true'
         run: python packaging/set_version.py ${{ github.ref_name }}
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt pyinstaller
+        run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller
       - name: Get ffmpeg
         shell: pwsh
         run: |
@@ -69,7 +69,7 @@ jobs:
         if: env.IS_TAG == 'true'
         run: python packaging/set_version.py ${{ github.ref_name }}
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt pyinstaller pillow
+        run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller pillow
       - name: Get a static ffmpeg
         run: |
           # static build, so the app works on Macs without Homebrew
@@ -105,7 +105,7 @@ jobs:
         if: env.IS_TAG == 'true'
         run: python packaging/set_version.py ${{ github.ref_name }}
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt pyinstaller
+        run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller
       - name: Get a static ffmpeg
         run: |
           # BtbN's builds are hosted on GitHub (reliable from Actions); johnvansickle.com as a fallback

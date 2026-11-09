@@ -4,6 +4,7 @@ import logging
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -13,11 +14,31 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, sources, sports
+from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, sources, sports
 from .streaming import ffmpeg_stream, stop_client
 
-app = FastAPI(title="TunerBox")
 log = logging.getLogger("tunerbox.api")
+
+
+def _startup():
+    db.init()
+    if not db.one("SELECT 1 FROM lineup LIMIT 1"):
+        lineup.load_csv()
+    dvr.recover()
+    hls.cleanup_stale()
+    threading.Thread(target=jobs.housekeeping, daemon=True).start()
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    _startup()
+    try:
+        yield
+    finally:
+        hls.stop_all()
+
+
+app = FastAPI(title="TunerBox", lifespan=_lifespan)
 
 
 class LiveResponse(StreamingResponse):
@@ -29,21 +50,6 @@ class LiveResponse(StreamingResponse):
             aclose = getattr(self.body_iterator, "aclose", None)
             if aclose:
                 await aclose()
-
-
-@app.on_event("startup")
-def _startup():
-    db.init()
-    if not db.one("SELECT 1 FROM lineup LIMIT 1"):
-        lineup.load_csv()
-    dvr.recover()
-    hls.cleanup_stale()
-    threading.Thread(target=jobs.housekeeping, daemon=True).start()
-
-
-@app.on_event("shutdown")
-def _shutdown():
-    hls.stop_all()
 
 
 # ------------------------------------------------------------------ channels & guide
@@ -125,10 +131,11 @@ async def api_hls(number: int, alt: int = 0, client: str = "", mode: str = "", b
     c = await anyio.to_thread.run_sync(guide.channel, number)
     if not c or not c["streams"]:
         raise HTTPException(404, "No signal")
-    rows = guide.stream_rows(c["streams"])
+    rows = await anyio.to_thread.run_sync(guide.stream_rows, c["streams"])
     if alt >= len(rows):
         raise HTTPException(404, "No more alternates")
-    sid = hls.start(rows[alt]["url"], client or None, mode or rows[alt].get("video_mode") or None, buf)
+    sid = await anyio.to_thread.run_sync(hls.start, rows[alt]["url"], client or None,
+                                         mode or rows[alt].get("video_mode") or None, buf)
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "No signal")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
@@ -156,15 +163,15 @@ def _feed_row(key):
 @app.get("/api/feed/stream")
 async def api_feed_stream(request: Request, key: str, client: str = "", mode: str = "", audio: str = "aac",
                           buf: int = -1):
-    r = _feed_row(key)
+    r = await anyio.to_thread.run_sync(_feed_row, key)
     return LiveResponse(ffmpeg_stream(r["url"], client or None, mode or r.get("video_mode") or None, audio, request, buf),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/feed/hls")
 async def api_feed_hls(key: str, client: str = "", mode: str = "", buf: int = -1):
-    r = _feed_row(key)
-    sid = hls.start(r["url"], client or None, mode or r.get("video_mode") or None, buf)
+    r = await anyio.to_thread.run_sync(_feed_row, key)
+    sid = await anyio.to_thread.run_sync(hls.start, r["url"], client or None, mode or r.get("video_mode") or None, buf)
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Not live")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
@@ -201,7 +208,7 @@ def api_sports_check_state():
 
 @app.get("/api/preview/{key:path}")
 async def api_preview(request: Request, key: str, client: str = ""):
-    rows = guide.stream_rows([key])
+    rows = await anyio.to_thread.run_sync(guide.stream_rows, [key])
     if not rows:
         raise HTTPException(404)
     return LiveResponse(ffmpeg_stream(rows[0]["url"], client or None, rows[0].get("video_mode") or None, request=request),
@@ -227,8 +234,11 @@ def api_stop(client: str = Body(..., embed=True)):
 
 
 @app.get("/api/direct/{number}")
-def api_direct(number: int, alt: int = 0):
-    """Original stream URL (for 'open in VLC/mpv')."""
+def api_direct(request: Request, number: int, alt: int = 0):
+    """Original stream URL (for 'open in VLC/mpv'). It can hold the provider login, so with the setup
+    lock on only this PC and paired phones get it."""
+    if config.get("require_pairing"):
+        _trusted(request)
     c = guide.channel(number)
     rows = guide.stream_rows(c["streams"]) if c else []
     if alt >= len(rows):
@@ -402,9 +412,12 @@ def api_settings():
 
 @app.post("/api/settings")
 def api_save_settings(request: Request, data: dict = Body(...)):
-    data.pop("devices", None)                 # paired phones are managed only through /api/devices
-    if not remote.is_pc(request):
-        data.pop("require_pairing", None)     # only the PC itself can turn the lock on or off
+    try:
+        data = config.clean_changes(data, from_pc=remote.is_pc(request))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     before = (config.get("gracenote") or {}).get("lineup_id") or ""
     config.update(data)
     after = (config.get("gracenote") or {}).get("lineup_id") or ""
@@ -594,7 +607,9 @@ def api_record_manual(number: int = Body(...), start: int = Body(...), minutes: 
 
 
 @app.delete("/api/recordings/{rid}")
-def api_cancel(rid: int, delete: int = 0):
+def api_cancel(request: Request, rid: int, delete: int = 0):
+    if delete and config.get("require_pairing"):
+        _trusted(request)        # deleting a recorded file is a setup change; cancelling isn't
     dvr.cancel(rid, bool(delete))
     return {"ok": True}
 
@@ -668,8 +683,10 @@ def out_xmltv():
 def hdhr_discover(request: Request):
     base = _base(request)
     return {"FriendlyName": "TunerBox", "Manufacturer": "Silicondust", "ModelNumber": "HDTC-2US",
-            "FirmwareName": "hdhomeruntc_atsc", "FirmwareVersion": "20200101", "DeviceID": "12345678",
-            "DeviceAuth": "tunerbox", "BaseURL": base, "LineupURL": f"{base}/lineup.json", "TunerCount": 4}
+            "FirmwareName": "hdhomeruntc_atsc", "FirmwareVersion": "20200101",
+            "DeviceID": config.get("hdhr_device_id") or config.LEGACY_DEVICE_ID,
+            "DeviceAuth": "tunerbox", "BaseURL": base, "LineupURL": f"{base}/lineup.json",
+            "TunerCount": sources.tuner_count()}
 
 
 @app.get("/lineup_status.json")
@@ -826,9 +843,18 @@ def _page(name):
 
     def stamp(m):
         f = config.WEB / m.group(2)
-        v = int(f.stat().st_mtime) if f.exists() else 0
+        if m.group(2) == "tv.js":
+            v = bundle.version()
+        else:
+            v = int(f.stat().st_mtime) if f.exists() else 0
         return f'{m.group(1)}?v={v}"'
     return HTMLResponse(_ASSET.sub(stamp, html), headers={"Cache-Control": "no-cache"})
+
+
+@app.api_route("/static/tv.js", methods=["GET", "HEAD"])
+def tv_script():
+    """The TV page's script, joined from web/tv/*.js (see bundle.py)."""
+    return Response(bundle.tv_js(), media_type="text/javascript; charset=utf-8")
 
 
 @app.middleware("http")

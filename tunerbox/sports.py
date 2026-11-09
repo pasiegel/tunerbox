@@ -48,6 +48,56 @@ HEADER = re.compile(r"^\W*#{2,}|#{3,}\W*$")              # "####### ESPN+ PPV ##
 COUNTRY_PREFIX = re.compile(r"^\W*([A-Za-z]{2,3})\s*[|:]")
 
 
+# Which sport a guide listing is. The guide category is often just "Sports", so the title decides.
+# First match wins: soccer comes before football so "Premier League Football" counts as soccer.
+SPORT_TYPES = [(name, re.compile(rx, re.I)) for name, rx in [
+    ("Soccer", r"\b(soccer|f[uú]tbol|mls|nwsl|premier league|epl|la ?liga|liga mx|serie a|bundesliga|ligue 1|uefa|"
+               r"champions league|europa league|fifa|world cup|copa|concacaf|fa cup|carabao)\b"),
+    ("Football", r"\b(nfl|ncaaf|cfb|xfl|ufl|cfl|football|super bowl|bowl game)\b"),
+    ("Basketball", r"\b(nba|wnba|ncaab|cbb|basketball|march madness|final four)\b"),
+    ("Baseball", r"\b(mlb|baseball|world series)\b"),
+    ("Softball", r"\bsoftball\b"),
+    ("Hockey", r"\b(nhl|hockey|stanley cup)\b"),
+    ("Golf", r"\b(golf|pga|lpga|liv golf|masters tournament|ryder cup)\b"),
+    ("Tennis", r"\b(tennis|atp|wta|wimbledon|us open tennis)\b"),
+    ("Motorsports", r"\b(nascar|f1|formula 1|formula one|indycar|motogp|imsa|motocross|supercross|"
+                    r"auto racing|motorsports?|grand prix|drag racing)\b"),
+    ("MMA", r"\b(ufc|mma|mixed martial arts|bellator|pfl)\b"),
+    ("Boxing", r"\bboxing\b"),
+    ("Wrestling", r"\b(wrestling|wwe|aew|raw|smackdown|nxt)\b"),
+    ("Volleyball", r"\bvolleyball\b"),
+    ("Lacrosse", r"\blacrosse\b"),
+    ("Rugby", r"\brugby\b"),
+    ("Cricket", r"\bcricket\b"),
+    ("Horse Racing", r"\b(horse racing|thoroughbred|kentucky derby|preakness|belmont stakes|breeders' cup)\b"),
+    ("Cycling", r"\b(cycling|tour de france)\b"),
+    ("Track & Field", r"\b(track and field|athletics|marathon)\b"),
+    ("Skiing", r"\b(skiing|snowboarding)\b"),
+    ("Figure Skating", r"\bfigure skating\b"),
+    ("Gymnastics", r"\bgymnastics\b"),
+    ("Swimming", r"\b(swimming|diving)\b"),
+    ("Bowling", r"\bbowling\b"),
+    ("Darts", r"\bdarts\b"),
+    ("Billiards", r"\b(billiards|snooker|pool)\b"),
+    ("Rodeo", r"\b(rodeo|bull riding|pbr)\b"),
+    ("Curling", r"\bcurling\b"),
+    ("Poker", r"\bpoker\b"),
+]]
+_GENERIC_SPORT = re.compile(r"^(sports?|sports? events?|sporting events?|multi-sport event|action sports|"
+                            r"extreme sports|sports? non-event|sports talk)$", re.I)
+
+
+def sport_type(p):
+    """'Basketball', 'Football'... for a guide listing, or '' when it can't tell."""
+    cat = (p.get("category") or "").strip()
+    # title first: UK-style guides file soccer under "Football"
+    for text in (p.get("title") or "", (cat if not _GENERIC_SPORT.match(cat) else ""), p.get("subtitle") or ""):
+        for name, rx in SPORT_TYPES:
+            if text and rx.search(text):
+                return name
+    return ""
+
+
 def _natural(s):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s or "")]
 
@@ -162,7 +212,11 @@ def overview():
     progs = _dedupe(progs, now)
     on_now = [p for p in progs if p["start"] <= now]
     upcoming = [p for p in progs if p["start"] > now][:200]
-    on_now.sort(key=lambda p: (-p["is_live"], p["ch"]["number"]))
+    for p in on_now:
+        p["sport"] = sport_type(p)
+    # LIVE broadcasts first, then the rest; within each: earliest start, sport (unknown last), name
+    on_now.sort(key=lambda p: (not p["is_live"], p["start"], not p["sport"], p["sport"], _natural(p["title"]),
+                               p["ch"]["number"]))
 
     chans = _sports_channels(guide.channels())
     cur = epg.programs({c["epg"] for c in chans if c["epg"]}, now, now + 1)
