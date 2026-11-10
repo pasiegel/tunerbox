@@ -76,6 +76,8 @@ def refresh_epg():
         n1, n2 = epg.refresh_all(_progress)
         guide.invalidate()
         made = dvr.apply_rules()
+        if not n1 + n2 and (epg.gracenote_ready() or epg.xmltv_urls()):
+            return "Guide update failed: nothing downloaded, keeping the old listings (will retry)"
         return f"Guide updated: {n1} local + {n2} online programs, {made} new recordings scheduled"
     return _run("epg", job)
 
@@ -100,6 +102,9 @@ def media_scan(cid=None):
     return _run("media", job)
 
 
+EPG_RETRY = 30 * 60   # after a guide refresh that downloaded nothing, wait this long before trying again
+
+
 def housekeeping():
     """Runs forever: DVR ticks every 15s, periodic guide/source refreshes."""
     while True:
@@ -112,7 +117,8 @@ def housekeeping():
                 scan_age = now - int(db.get_meta("scan_updated", 0) or 0)
                 if has_sources and scan_age > float(config.get("source_refresh_hours", 24)) * 3600:
                     scan()
-                elif epg_age > float(config.get("epg_refresh_hours", 12)) * 3600:
+                elif (epg_age > float(config.get("epg_refresh_hours", 12)) * 3600
+                      and now - int(db.get_meta("epg_tried", 0) or 0) > EPG_RETRY):
                     refresh_epg()
             # local channels: keep two days of listings ahead
             if now - int(db.get_meta("media_epg", 0) or 0) > 3600:

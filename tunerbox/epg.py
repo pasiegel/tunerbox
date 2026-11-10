@@ -114,18 +114,13 @@ def fetch_gracenote(progress=None):
     hours = int(g.get("hours", 48))
     t0 = int(time.time()) // 1800 * 1800
     steps = list(range(t0, t0 + hours * 3600, 6 * 3600))
-    progs, channels_done = {}, False
+    progs, channels_done, windows = {}, False, []
     with _client(90) as c:
         for i, t in enumerate(steps):
-            params = _grid_params(g, t, 6)
-            try:
-                r = c.get(GN_GRID, params=params,
-                          headers={"Referer": "https://tvlistings.gracenote.com/grid-affiliates.html?aid=orbebb"})
-                r.raise_for_status()
-                data = json.loads(r.content.decode("utf-8"))
-            except Exception as e:  # noqa: BLE001
-                log.warning("Gracenote block %d failed: %s", i, e)
+            data = _grid_block(c, g, t, i)
+            if data is None:
                 continue
+            windows.append((t, t + 6 * 3600))
             chans = data.get("channels", [])
             if not channels_done and chans:
                 _applied(chans)
@@ -158,9 +153,29 @@ def fetch_gracenote(progress=None):
                 progress(i + 1, len(steps))
             time.sleep(1.0)
     if progs:
-        _store(progs.values(), t0)
+        # Only replace the 6-hour windows that downloaded. A block that failed keeps the listings
+        # from the last refresh instead of leaving a hole (e.g. no "on now" after a timeout).
+        _store(progs.values(), windows)
     log.info("Gracenote: %d programs", len(progs))
     return len(progs)
+
+
+GN_TRIES = 3
+
+
+def _grid_block(c, g, t, i):
+    """One 6-hour Gracenote grid block, retried a few times (read timeouts are common). None if it failed."""
+    for attempt in range(1, GN_TRIES + 1):
+        try:
+            r = c.get(GN_GRID, params=_grid_params(g, t, 6),
+                      headers={"Referer": "https://tvlistings.gracenote.com/grid-affiliates.html?aid=orbebb"})
+            r.raise_for_status()
+            return json.loads(r.content.decode("utf-8"))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Gracenote block %d failed (try %d/%d): %s", i, attempt, GN_TRIES, e)
+            if attempt < GN_TRIES:
+                time.sleep(5 * attempt)
+    return None
 
 
 def _iso(s):
@@ -206,6 +221,8 @@ def fetch_xmltv(progress=None):
     claimed = set()
     total = 0
     urls = xmltv_urls()
+    old_names = [(r["norm"], r["channel"]) for r in db.rows("SELECT norm, channel FROM epg_names")]
+    failed = False
     with db.conn() as c:
         c.execute("DELETE FROM epg_names")
     for n, url in enumerate(urls):
@@ -214,14 +231,21 @@ def fetch_xmltv(progress=None):
         except Exception as e:  # noqa: BLE001
             log.warning("XMLTV %s failed: %s", url, e)
             got = {}
+            failed = True
         if got:
             claimed.update(got.keys())
             rows = [p for lst in got.values() for p in lst]
-            _store(rows, lo, channels=list(got.keys()))
+            _store(rows, [(lo, None)], channels=list(got.keys()))
             total += len(rows)
         if progress:
             progress(n + 1, len(urls))
         log.info("XMLTV %s: %d channels", url, len(got))
+    if failed and old_names:
+        # A guide that didn't download keeps its channel-name matches from last time, so those
+        # channels still show the listings already stored (fresh matches above win).
+        keep = [(nn, ch) for nn, ch in old_names if ch[2:] not in claimed]
+        with db.conn() as c:
+            c.executemany("INSERT OR IGNORE INTO epg_names(norm, channel) VALUES (?,?)", keep)
     return total
 
 
@@ -302,20 +326,31 @@ def _txt(el, tag):
 
 
 # ------------------------------------------------------------------ storage / queries
-def _store(rows, from_ts, channels=None):
+def _store(rows, windows, channels=None):
+    """Replace these channels' programs starting inside each (lo, hi) window (hi None = open-ended)."""
     rows = list(rows)
     chans = channels or sorted({r[0] for r in rows})
     with db.conn() as c:
         c.execute("DELETE FROM programs WHERE stop < ?", (int(time.time()) - 6 * 3600,))
         for ch in chans:
-            c.execute("DELETE FROM programs WHERE channel=? AND start>=?", (ch, from_ts))
+            for lo, hi in windows:
+                if hi is None:
+                    c.execute("DELETE FROM programs WHERE channel=? AND start>=?", (ch, lo))
+                else:
+                    c.execute("DELETE FROM programs WHERE channel=? AND start>=? AND start<?", (ch, lo, hi))
         c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
 
 
 def refresh_all(progress=None):
     n1 = fetch_gracenote(lambda a, b: progress and progress("Local guide (Gracenote)", a, b))
     n2 = fetch_xmltv(lambda a, b: progress and progress("Online guides (XMLTV)", a, b))
-    db.set_meta("epg_updated", int(time.time()))
+    now = int(time.time())
+    db.set_meta("epg_tried", now)
+    # "Updated" means listings actually came in (or there is nothing set up to download).
+    if n1 + n2 or not (gracenote_ready() or xmltv_urls()):
+        db.set_meta("epg_updated", now)
+    else:
+        log.warning("Guide refresh downloaded nothing; keeping the old listings")
     return n1, n2
 
 
