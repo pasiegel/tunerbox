@@ -1,4 +1,5 @@
 """Fuzzy-matches playlist streams to the local lineup and numbers the leftovers."""
+import hashlib
 import json
 import logging
 import re
@@ -199,12 +200,36 @@ def load_streams():
     return [r for r in rows if r["status"] != "dead" and r["norm"]]
 
 
+def _fingerprint(streams, lineup, existing):
+    """Everything the matching pass reads. Same fingerprint = same result, so the pass can be skipped."""
+    h = hashlib.sha1()
+    h.update(repr((config.get("match_threshold", 86), config.get("network_fallback", True))).encode())
+    for ch in lineup:
+        h.update(repr(sorted(ch.items())).encode())
+    for num in sorted(existing):
+        m = existing[num]
+        if m["mode"] in ("manual", "none"):
+            h.update(repr((num, m["mode"], m["stream_key"])).encode())
+    for s in streams:
+        h.update(f"\x00{s['key']}\x01{s['name']}\x01{s['norm']}\x01{s['tvg_id']}\x01{s['status']}\x01{s['url']}".encode())
+    return h.hexdigest()
+
+
 # ------------------------------------------------------------------ main pass
-def match_all(progress=None):
+def match_all(progress=None, force=True):
+    """Map playlist streams to the lineup, then renumber the extras. With force=False the fuzzy pass is
+    skipped when nothing it reads has changed since the last run (the extras are still rebuilt)."""
     threshold = int(config.get("match_threshold", 86))
     streams = load_streams()
     lineup = db.rows("SELECT * FROM lineup ORDER BY number")
     existing = {m["number"]: m for m in db.rows("SELECT * FROM mappings")}
+    fp = _fingerprint(streams, lineup, existing)
+    if not force and db.get_meta("match_fp") == fp:
+        mapped = db.one("""SELECT count(*) n FROM mappings WHERE stream_key IS NOT NULL
+                           AND number IN (SELECT number FROM lineup)""")["n"]
+        log.info("Matching skipped: playlists and lineup unchanged (%d / %d mapped)", mapped, len(lineup))
+        rebuild_extras(streams)
+        return mapped, len(lineup)
     by_key = {s["key"]: s for s in streams}
 
     # choice string -> stream indexes
@@ -316,6 +341,7 @@ def match_all(progress=None):
             else:
                 c.execute("DELETE FROM mappings WHERE number=? AND mode='auto'", (num,))
     mapped = sum(1 for p, _ in results.values() if p)
+    db.set_meta("match_fp", fp)
     log.info("Matched %d / %d lineup channels", mapped, len(lineup))
     rebuild_extras(streams)
     return mapped, len(lineup)
@@ -358,9 +384,7 @@ def rebuild_extras(streams=None):
                  key=lambda s: (s["source_id"], (s["grp"] or "~").lower(), s["norm"]))
     with db.conn() as c:
         c.execute("UPDATE extras SET active=0")
-        for k in wanted:
-            if k in existing:
-                c.execute("UPDATE extras SET active=1 WHERE stream_key=?", (k,))
+        c.executemany("UPDATE extras SET active=1 WHERE stream_key=?", [(k,) for k in wanted if k in existing])
         for s in new:
             while nxt in taken or nxt in lineup_nums:
                 nxt += 1

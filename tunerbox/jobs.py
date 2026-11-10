@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 import traceback
+from datetime import datetime, timedelta
 
 from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, sources
 
@@ -55,7 +56,7 @@ def scan(force_probe=False):
                 ok, n = probe.probe_streams(todo, lambda d, t: _progress("Checking streams", d, t))
                 probed = f", {ok}/{n} streams working"
         _progress("Matching channels")
-        mapped, total = matcher.match_all(lambda d, t: _progress("Matching channels", d, t))
+        mapped, total = matcher.match_all(lambda d, t: _progress("Matching channels", d, t), force=False)
         guide.invalidate()
         if not db.get_meta("epg_updated"):
             epg.refresh_all(_progress)
@@ -82,6 +83,28 @@ def refresh_epg():
     return _run("epg", job)
 
 
+def quick_refresh():
+    """Re-read the playlists between full scans, so event/PPV feeds pick up tonight's names and the
+    guide picks up their listings. No stream checks; matching and guide parsing only run if something
+    they use changed."""
+    def job():
+        db.set_meta("quick_updated", int(time.time()))
+        srcs = [s for s in sources.enabled_sources() if s["type"] != "hdhomerun"]   # antenna lineups don't change
+        for i, s in enumerate(srcs):
+            _progress(f"Loading {s['name']}", i, len(srcs))
+            sources.refresh_source(s)
+        _progress("Matching channels")
+        mapped, total = matcher.match_all(lambda d, t: _progress("Matching channels", d, t), force=False)
+        guide.invalidate()
+        _progress("Online guides (XMLTV)")
+        epg.fetch_xmltv(lambda d, t: _progress("Online guides (XMLTV)", d, t))
+        guide.invalidate()
+        made = dvr.apply_rules()
+        n_extra = db.one("SELECT count(*) n FROM extras WHERE active=1")["n"]
+        return f"Playlists refreshed: {mapped}/{total} lineup channels mapped, {n_extra} extra channels, {made} new recordings scheduled"
+    return _run("refresh", job)
+
+
 def rematch():
     def job():
         mapped, total = matcher.match_all(lambda d, t: _progress("Matching channels", d, t))
@@ -105,8 +128,27 @@ def media_scan(cid=None):
 EPG_RETRY = 30 * 60   # after a guide refresh that downloaded nothing, wait this long before trying again
 
 
+def scan_due(now, last):
+    """Full scan wanted? Daily at scan_hour (local time) if set, else every source_refresh_hours."""
+    hour = int(config.get("scan_hour", -1))
+    if 0 <= hour <= 23:
+        t = datetime.fromtimestamp(now).replace(hour=hour, minute=0, second=0, microsecond=0)
+        if t.timestamp() > now:
+            t -= timedelta(days=1)
+        return last < t.timestamp()
+    return now - last > float(config.get("source_refresh_hours", 24)) * 3600
+
+
+def quick_due(now):
+    hours = float(config.get("event_refresh_hours", 2) or 0)
+    if hours <= 0:
+        return False
+    last = max(int(db.get_meta("scan_updated", 0) or 0), int(db.get_meta("quick_updated", 0) or 0))
+    return now - last > hours * 3600
+
+
 def housekeeping():
-    """Runs forever: DVR ticks every 15s, periodic guide/source refreshes."""
+    """Runs forever: DVR ticks every 15s, periodic scans, guide refreshes and quick playlist refreshes."""
     while True:
         try:
             dvr.tick()
@@ -114,12 +156,13 @@ def housekeeping():
             if not state["running"]:
                 has_sources = db.one("SELECT count(*) n FROM sources WHERE enabled=1")["n"] > 0
                 epg_age = now - int(db.get_meta("epg_updated", 0) or 0)
-                scan_age = now - int(db.get_meta("scan_updated", 0) or 0)
-                if has_sources and scan_age > float(config.get("source_refresh_hours", 24)) * 3600:
+                if has_sources and scan_due(now, int(db.get_meta("scan_updated", 0) or 0)):
                     scan()
                 elif (epg_age > float(config.get("epg_refresh_hours", 12)) * 3600
                       and now - int(db.get_meta("epg_tried", 0) or 0) > EPG_RETRY):
                     refresh_epg()
+                elif has_sources and quick_due(now):
+                    quick_refresh()
             # local channels: keep two days of listings ahead
             if now - int(db.get_meta("media_epg", 0) or 0) > 3600:
                 media.write_epg()

@@ -4,10 +4,12 @@ import hashlib
 
 import json
 import logging
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
@@ -232,6 +234,14 @@ def fetch_xmltv(progress=None):
             log.warning("XMLTV %s failed: %s", url, e)
             got = {}
             failed = True
+        if isinstance(got, Unchanged):
+            # same file, same channels wanted from it: the listings stored last time still stand
+            claimed.update(got.channels)
+            total += got.count
+            if progress:
+                progress(n + 1, len(urls))
+            log.info("XMLTV %s: unchanged, %d channels kept", url, len(got.channels))
+            continue
         if got:
             claimed.update(got.keys())
             rows = [p for lst in got.values() for p in lst]
@@ -249,49 +259,142 @@ def fetch_xmltv(progress=None):
     return total
 
 
-def _open_stream(url):
-    """Download to data/cache (streamed, so 100MB+ guides don't sit in memory)."""
-    if re.match(r"^https?://", url, re.I):
-        cache = config.DATA / "cache"
-        cache.mkdir(exist_ok=True)
-        path = cache / ("epg_" + hashlib.sha1(url.encode()).hexdigest()[:10])
-        with _client(600) as c, c.stream("GET", url) as r:
-            r.raise_for_status()
-            with open(path, "wb") as f:
-                for chunk in r.iter_bytes(1 << 20):
-                    f.write(chunk)
-    else:
-        path = url
+class Unchanged:
+    """_parse_xmltv's answer when a guide doesn't need reading again."""
+    def __init__(self, channels, count):
+        self.channels, self.count = channels, count
+
+
+REPARSE_AFTER = 20 * 3600   # read an unchanged guide again at least this often (the listing window moves on)
+
+
+def _cache_dir():
+    cache = config.DATA / "cache"
+    cache.mkdir(exist_ok=True)
+    return cache
+
+
+def _url_id(url):
+    return hashlib.sha1(url.encode()).hexdigest()[:10]
+
+
+def _download(url):
+    """(local path, version) of a guide. Web guides go to data/cache (streamed, so 100MB+ guides don't sit
+    in memory) and are asked for only if changed (ETag / Last-Modified); the version is a hash of the file.
+    Files on disk are used in place; their version is their size and modified time."""
+    if not re.match(r"^https?://", url, re.I):
+        st = Path(url).stat()
+        return url, f"{st.st_mtime_ns}:{st.st_size}"
+    path = _cache_dir() / ("epg_" + _url_id(url))
+    mkey = f"xmltv_http_{_url_id(url)}"
+    try:
+        prev = json.loads(db.get_meta(mkey) or "{}")
+    except ValueError:
+        prev = {}
+    headers = {}
+    if path.exists() and prev.get("sha"):
+        if prev.get("etag"):
+            headers["If-None-Match"] = prev["etag"]
+        if prev.get("modified"):
+            headers["If-Modified-Since"] = prev["modified"]
+    tmp = path.with_name(path.name + ".part")
+    with _client(600) as c, c.stream("GET", url, headers=headers) as r:
+        if r.status_code == 304 and headers:
+            return path, prev["sha"]
+        r.raise_for_status()
+        sha = hashlib.sha1()
+        with open(tmp, "wb") as f:   # a half-finished download never replaces the last good copy
+            for chunk in r.iter_bytes(1 << 20):
+                f.write(chunk)
+                sha.update(chunk)
+        etag, modified = r.headers.get("etag", ""), r.headers.get("last-modified", "")
+    os.replace(tmp, path)
+    db.set_meta(mkey, json.dumps({"etag": etag, "modified": modified, "sha": sha.hexdigest()}))
+    return path, sha.hexdigest()
+
+
+def _open_file(path):
     with open(path, "rb") as f:
         magic = f.read(2)
     return gzip.open(path, "rb") if magic == b"\x1f\x8b" else open(path, "rb")
 
 
+def _selection(index, ids, names, claimed):
+    """What _parse_open would take from a guide, worked out from its channel index:
+    (channel ids to keep, display-name matches)."""
+    keep, hits = set(), []
+    for cid, dns in index.items():
+        if cid in claimed:
+            continue
+        if cid in ids:
+            keep.add(cid)
+        for nn in dns:
+            if nn in names:
+                keep.add(cid)
+                hits.append((nn, f"x:{cid}"))
+    return sorted(keep), hits
+
+
 def _parse_xmltv(url, ids, names, claimed, lo, hi):
-    f = _open_stream(url)
+    """{channel id: [program rows]}, or Unchanged when the file and the channels wanted from it are the
+    same as at the last read (less than REPARSE_AFTER ago), so its stored listings still stand."""
+    path, version = _download(url)
+    uid = _url_id(url)
+    idx_file = _cache_dir() / f"epg_{uid}.idx.json"
     try:
-        return _parse_open(f, ids, names, claimed, lo, hi)
+        last = json.loads(db.get_meta(f"xmltv_last_{uid}") or "{}")
+        idx = json.loads(idx_file.read_text(encoding="utf-8")) if idx_file.exists() else {}
+    except (OSError, ValueError):
+        last, idx = {}, {}
+    if (last.get("version") == version == idx.get("version")
+            and time.time() - last.get("t", 0) < REPARSE_AFTER):
+        keep, hits = _selection(idx["index"], ids, names, claimed)
+        if keep == last.get("keep"):
+            if hits:
+                with db.conn() as c:
+                    c.executemany("INSERT OR IGNORE INTO epg_names(norm, channel) VALUES (?,?)", hits)
+            return Unchanged(last.get("channels", []), last.get("count", 0))
+    info = {}
+    f = _open_file(path)
+    try:
+        out = _parse_open(f, ids, names, claimed, lo, hi, info)
     finally:
         f.close()
+    try:
+        idx_file.write_text(json.dumps({"version": version, "index": info["index"]}), encoding="utf-8")
+        keep, _ = _selection(info["index"], ids, names, claimed)
+        db.set_meta(f"xmltv_last_{uid}", json.dumps({
+            "version": version, "t": int(time.time()), "keep": keep, "channels": sorted(out),
+            "count": sum(len(v) for v in out.values())}))
+    except OSError as e:
+        log.info("Couldn't save the guide index for %s: %s", url, e)
+    return out
 
 
-def _parse_open(f, ids, names, claimed, lo, hi):
+def _parse_open(f, ids, names, claimed, lo, hi, info=None):
+    """Programs of the wanted channels. `info`, if given, gets "index": {channel id: [display names]}
+    of every channel in the file, so an unchanged file needn't be read again to know what it holds."""
     keep = {i for i in ids if i not in claimed}
     name_hits = []
     out = {}
+    index = {}
     for _ev, el in ET.iterparse(f, events=("end",)):
         tag = el.tag
         if tag == "channel":
             cid = el.get("id") or ""
+            dns = [norm(dn.text or "") for dn in el.findall("display-name")]
+            if cid:
+                index.setdefault(cid, []).extend(n for n in dns if n)
             if cid and cid not in claimed:
-                for dn in el.findall("display-name"):
-                    nn = norm(dn.text or "")
+                for nn in dns:
                     if nn in names:
                         keep.add(cid)
                         name_hits.append((nn, f"x:{cid}"))
             el.clear()
         elif tag == "programme":
             cid = el.get("channel") or ""
+            if cid and cid not in index:
+                index[cid] = []
             if cid in keep:
                 start, stop = _xmltv_time(el.get("start")), _xmltv_time(el.get("stop"))
                 if stop > lo and start < hi:
@@ -317,6 +420,8 @@ def _parse_open(f, ids, names, claimed, lo, hi):
     if name_hits:
         with db.conn() as c:
             c.executemany("INSERT OR IGNORE INTO epg_names(norm, channel) VALUES (?,?)", name_hits)
+    if info is not None:
+        info["index"] = index
     return out
 
 

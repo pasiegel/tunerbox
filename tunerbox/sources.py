@@ -276,36 +276,58 @@ def refresh_source(src):
     rx = exclude_regex(src)
     hidden = hidden_groups(src)
     now = int(time.time())
-    seen, counts = set(), {}
     all_groups = {}
     for it in items:
         all_groups[it["grp"] or ""] = all_groups.get(it["grp"] or "", 0) + 1
+    kept = [it for it in items if not ((it["grp"] or "") in hidden or (rx and rx.search(it["grp"] or "")))]
+    keys = stream_keys(src, kept)
+    seen = set(keys)
     with db.conn() as c:
         c.execute("DELETE FROM source_groups WHERE source_id=?", (src["id"],))
         c.executemany("INSERT INTO source_groups(source_id, grp, count) VALUES (?,?,?)",
                       [(src["id"], g, n) for g, n in all_groups.items()])
-        for it in items:
-            if (it["grp"] or "") in hidden or (rx and rx.search(it["grp"] or "")):
-                continue
-            if "xid" in it:
-                key = f"{src['id']}:x{it['xid']}"
-            else:
-                base = hashlib.sha1(f"{it['name']}|{it['tvg_id']}|{it['grp']}".encode()).hexdigest()[:12]
-                counts[base] = counts.get(base, 0) + 1
-                key = f"{src['id']}:{base}" + (f"-{counts[base]}" if counts[base] > 1 else "")
-            seen.add(key)
-            c.execute("""INSERT INTO streams(key, source_id, name, url, tvg_id, logo, grp, norm, seen_at)
+        c.executemany("""INSERT INTO streams(key, source_id, name, url, tvg_id, logo, grp, norm, seen_at)
                          VALUES (?,?,?,?,?,?,?,?,?)
                          ON CONFLICT(key) DO UPDATE SET name=excluded.name, url=excluded.url,
                            tvg_id=excluded.tvg_id, logo=excluded.logo, grp=excluded.grp,
                            norm=excluded.norm, seen_at=excluded.seen_at""",
-                      (key, src["id"], it["name"], it["url"], it["tvg_id"], it["logo"], it["grp"],
-                       norm(it["name"]), now))
+                      [(key, src["id"], it["name"], it["url"], it["tvg_id"], it["logo"], it["grp"],
+                        norm(it["name"]), now) for key, it in zip(keys, kept)])
         c.execute("DELETE FROM streams WHERE source_id=? AND seen_at<?", (src["id"], now))
         c.execute("UPDATE sources SET status=?, epg_url=?, updated_at=? WHERE id=?",
                   (f"ok: {len(seen)} channels", epg or "", now, src["id"]))
     log.info("Source %s: %d channels", src["name"], len(seen))
     return len(seen)
+
+
+def stream_keys(src, items):
+    """A stable key per playlist entry, so its extra channel number (and any recording on it) survives
+    refreshes. Xtream/HDHomeRun entries carry their own id. Plain M3U entries are keyed by name, tvg-id and
+    group; when that key is new but the entry's URL belonged to a stream that is now gone, the old key is
+    kept. That way a PPV slot renamed for tonight's event ("PPV 03" -> "PPV 03: UFC 310") keeps its number."""
+    keys, counts = [], {}
+    for it in items:
+        if "xid" in it:
+            keys.append(f"{src['id']}:x{it['xid']}")
+            continue
+        base = hashlib.sha1(f"{it['name']}|{it['tvg_id']}|{it['grp']}".encode()).hexdigest()[:12]
+        counts[base] = counts.get(base, 0) + 1
+        keys.append(f"{src['id']}:{base}" + (f"-{counts[base]}" if counts[base] > 1 else ""))
+    if all("xid" in it for it in items):
+        return keys
+    old_by_url = {}
+    for r in db.rows("SELECT key, url FROM streams WHERE source_id=? ORDER BY rowid", (src["id"],)):
+        old_by_url.setdefault(r["url"], []).append(r["key"])
+    old = {k for ks in old_by_url.values() for k in ks}
+    taken = {k for k in keys if k in old}          # entries whose key is unchanged keep it
+    for i, it in enumerate(items):
+        if "xid" in it or keys[i] in old:
+            continue
+        free = [k for k in old_by_url.get(it["url"], []) if k not in taken]
+        if free:
+            keys[i] = free[0]
+            taken.add(free[0])
+    return keys
 
 
 def exclude_regex(src):

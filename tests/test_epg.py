@@ -1,5 +1,5 @@
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from tunerbox import db, epg
 
@@ -147,3 +147,79 @@ def test_updated_time_only_moves_when_listings_arrive(monkeypatch):
     monkeypatch.setattr(epg, "gracenote_ready", lambda: False)
     epg.refresh_all()
     assert int(db.get_meta("epg_updated")) > 0
+
+
+# ---------------------------------------------------------------- unchanged guides aren't read again
+def _local_guide(tmp_path):
+    p = tmp_path / "guide.xml"
+    p.write_bytes(XMLTV.replace(b"20261109", (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y%m%d").encode()))
+    return str(p)
+
+
+def test_unchanged_guide_is_not_parsed_again(monkeypatch, tmp_path):
+    url = _local_guide(tmp_path)
+    monkeypatch.setattr(epg, "xmltv_urls", lambda: [url])
+    monkeypatch.setattr(epg, "wanted_ids", lambda: ({"cnn.us"}, {"fox news channel"}))
+    first = epg.fetch_xmltv()
+    assert first >= 1
+    parses = []
+    real = epg._parse_open
+    monkeypatch.setattr(epg, "_parse_open", lambda *a, **k: parses.append(1) or real(*a, **k))
+    assert epg.fetch_xmltv() == first                         # same count, so the refresh counts as a success
+    assert parses == []
+    assert {r["channel"] for r in db.rows("SELECT channel FROM epg_names")} == {"x:other.us"}
+    assert db.one("SELECT count(*) n FROM programs WHERE channel='x:cnn.us'")["n"] >= 1
+
+    # a newly wanted name that the file doesn't have: still nothing to read
+    monkeypatch.setattr(epg, "wanted_ids", lambda: ({"cnn.us", "nowhere"}, {"fox news channel", "ppv 01 ufc"}))
+    epg.fetch_xmltv()
+    assert parses == []
+    # a newly wanted channel the file does have: read it again
+    monkeypatch.setattr(epg, "wanted_ids", lambda: ({"cnn.us", "skip.us"}, {"fox news channel"}))
+    epg.fetch_xmltv()
+    assert parses == [1]
+
+
+def test_changed_guide_is_parsed_again(monkeypatch, tmp_path):
+    url = _local_guide(tmp_path)
+    monkeypatch.setattr(epg, "xmltv_urls", lambda: [url])
+    monkeypatch.setattr(epg, "wanted_ids", lambda: ({"cnn.us"}, set()))
+    epg.fetch_xmltv()
+    import os
+    st = os.stat(url)
+    os.utime(url, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    parses = []
+    real = epg._parse_open
+    monkeypatch.setattr(epg, "_parse_open", lambda *a, **k: parses.append(1) or real(*a, **k))
+    epg.fetch_xmltv()
+    assert parses == [1]
+
+
+def test_web_guide_not_modified_reuses_the_cached_copy(monkeypatch):
+    sent = []
+
+    class Resp:
+        def __init__(self, code, body=b"", headers=None):
+            self.status_code, self.body, self.headers = code, body, headers or {}
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(self.status_code)
+        def iter_bytes(self, n): yield self.body
+
+    class Client:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def stream(self, method, url, headers=None):
+            sent.append(headers or {})
+            if headers and headers.get("If-None-Match") == '"v1"':
+                return Resp(304)
+            return Resp(200, XMLTV, {"etag": '"v1"'})
+
+    monkeypatch.setattr(epg, "_client", lambda timeout=90: Client())
+    path, v1 = epg._download("http://guide/x.xml")
+    path2, v2 = epg._download("http://guide/x.xml")
+    assert (path2, v2) == (path, v1)
+    assert sent[1] == {"If-None-Match": '"v1"'}
+    assert open(path, "rb").read() == XMLTV

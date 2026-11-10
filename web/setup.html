@@ -179,6 +179,11 @@
       <label class="chk"><input type="checkbox" name="hide_unmapped"> Hide lineup channels with no feed</label>
       <label class="chk"><input type="checkbox" name="extras_enabled"> Show extra channels</label>
       <label class="chk"><input type="checkbox" name="network_fallback"> Use national network feed when a local station has no stream (e.g. the NBC feed for your local NBC station)</label>
+      <label>Full playlist scan <select name="scan_hour" data-num="1">
+        <option value="-1">Every 24 hours from the last scan</option><option value="0">12:00 AM</option><option value="1">1:00 AM</option><option value="2">2:00 AM</option><option value="3">3:00 AM</option><option value="4">4:00 AM</option><option value="5">5:00 AM</option><option value="6">6:00 AM</option><option value="7">7:00 AM</option><option value="8">8:00 AM</option><option value="9">9:00 AM</option><option value="10">10:00 AM</option><option value="11">11:00 AM</option><option value="12">12:00 PM</option><option value="13">1:00 PM</option><option value="14">2:00 PM</option><option value="15">3:00 PM</option><option value="16">4:00 PM</option><option value="17">5:00 PM</option><option value="18">6:00 PM</option><option value="19">7:00 PM</option><option value="20">8:00 PM</option><option value="21">9:00 PM</option><option value="22">10:00 PM</option><option value="23">11:00 PM</option></select></label>
+      <label>Refresh playlists between scans (PPV &amp; event names) <select name="event_refresh_hours" data-num="1">
+        <option value="0">Off</option><option value="1">Every hour</option><option value="2">Every 2 hours</option>
+        <option value="3">Every 3 hours</option><option value="4">Every 4 hours</option><option value="6">Every 6 hours</option></select></label>
       <label class="chk"><input type="checkbox" name="probe_streams"> Check streams work during scans</label>
       <label class="chk"><input type="checkbox" name="probe_xtream"> Also check Xtream streams (uses provider connections)</label>
       <label>Stream cache (default for every screen) <select name="stream_buffer" data-num="1">

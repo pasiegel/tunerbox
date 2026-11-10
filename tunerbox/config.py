@@ -64,6 +64,11 @@ DEFAULTS = {
     ],
     "epg_refresh_hours": 12,
     "source_refresh_hours": 24,
+    # Full scan once a day at this hour (0-23, local time) instead of every source_refresh_hours (-1)
+    "scan_hour": -1,
+    # Between scans, re-read the playlists this often so event/PPV feeds get their event names and
+    # listings during the day (0 = off). No stream checks; cheap when little has changed.
+    "event_refresh_hours": 2,
     # Playlist channels that don't match the lineup get numbers starting here
     "extra_channel_start": 20000,
     "extras_enabled": True,

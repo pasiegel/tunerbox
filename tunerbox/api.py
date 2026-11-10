@@ -389,7 +389,7 @@ def api_del_source(sid: int):
 # ------------------------------------------------------------------ jobs & settings
 @app.post("/api/jobs/{name}")
 def api_job(name: str, force: int = 0):
-    fn = {"scan": lambda: jobs.scan(bool(force)), "epg": jobs.refresh_epg, "match": jobs.rematch}.get(name)
+    fn = {"scan": lambda: jobs.scan(bool(force)), "epg": jobs.refresh_epg, "match": jobs.rematch, "refresh": jobs.quick_refresh}.get(name)
     if not fn:
         raise HTTPException(404)
     return {"started": fn()}
