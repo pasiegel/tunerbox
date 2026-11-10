@@ -51,3 +51,36 @@ def test_matching_is_skipped_when_nothing_changed(monkeypatch):
     assert matcher.match_all(force=False) == (1, 1)
     assert calls                                         # a name changed: matched again
     assert matcher.match_all() == (1, 1)                 # force (the Re-match button) always runs
+
+
+class _Stop(Exception):
+    pass
+
+
+def _run_housekeeping(monkeypatch, loops=3):
+    """Run the housekeeping loop a few times; returns how often it refreshed the guide."""
+    calls, n = [], {"i": 0}
+    monkeypatch.setattr(jobs, "refresh_epg", lambda: calls.append(1))
+    monkeypatch.setattr(jobs.dvr, "tick", lambda: None)
+    monkeypatch.setattr(jobs.media, "write_epg", lambda: None)
+
+    def sleep(_s):
+        n["i"] += 1
+        if n["i"] >= loops:
+            raise _Stop
+    monkeypatch.setattr(jobs.time, "sleep", sleep)
+    try:
+        jobs.housekeeping()
+    except _Stop:
+        pass
+    return len(calls)
+
+
+def test_guide_refreshes_once_at_startup_when_older_than_half_an_hour(monkeypatch):
+    db.set_meta("epg_updated", int(jobs.time.time()) - 2 * 3600)      # well inside the 12 hour interval
+    assert _run_housekeeping(monkeypatch) == 1
+
+
+def test_fresh_guide_is_not_downloaded_again_on_a_quick_restart(monkeypatch):
+    db.set_meta("epg_updated", int(jobs.time.time()) - 5 * 60)
+    assert _run_housekeeping(monkeypatch) == 0

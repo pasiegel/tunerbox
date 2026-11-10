@@ -11,11 +11,16 @@ AppId={{6F0C7B1E-2C4B-4A57-9D0E-7B54A1C0B0E1}
 AppName=TunerBox
 AppVersion={#AppVersion}
 AppPublisher=TunerBox
-DefaultDirName={localappdata}\Programs\TunerBox
+; All users: C:\Program Files\TunerBox (needs admin). "Install for me only" in the first dialog
+; still puts it in %LOCALAPPDATA%\Programs\TunerBox without admin. Settings and recordings are
+; always in %LOCALAPPDATA%\TunerBox, so they don't move either way.
+DefaultDirName={autopf}\TunerBox
 DefaultGroupName=TunerBox
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+; without this, upgrading a per-user install (1.4.2 and older) would stay per user in AppData
+UsePreviousPrivileges=no
 OutputDir={#Root}\dist
 OutputBaseFilename=TunerBox-Setup-{#AppVersion}
 SetupIconFile={#Root}\build\tunerbox.ico
@@ -39,9 +44,32 @@ Name: "{group}\TunerBox (server only)"; Filename: "{app}\TunerBox.exe"; Paramete
 Name: "{autodesktop}\TunerBox"; Filename: "{app}\TunerBox.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\TunerBox.exe"; Description: "Start TunerBox"; Flags: nowait postinstall skipifsilent
+; runasoriginaluser: an all-users install runs as admin, but TunerBox itself shouldn't
+Filename: "{app}\TunerBox.exe"; Description: "Start TunerBox"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM TunerBox.exe"; Flags: runhidden; RunOnceId: "KillTunerBox"
 
 ; Your channels, settings and recordings stay in %LOCALAPPDATA%\TunerBox after uninstalling.
+
+[Code]
+// Versions up to 1.4.2 installed per user in %LOCALAPPDATA%\Programs\TunerBox. An all-users install
+// removes that copy first, so there aren't two TunerBoxes in the Start menu. (Settings, channels and
+// recordings are in %LOCALAPPDATA%\TunerBox and aren't touched by uninstalling.)
+const
+  UninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F0C7B1E-2C4B-4A57-9D0E-7B54A1C0B0E1}_is1';
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Cmd: String;
+  Code: Integer;
+begin
+  Result := '';
+  if IsAdminInstallMode and RegQueryStringValue(HKCU, UninstKey, 'UninstallString', Cmd) then
+  begin
+    Log('Removing the per-user install: ' + Cmd);
+    if not Exec(RemoveQuotes(Cmd), '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE,
+                ewWaitUntilTerminated, Code) then
+      Log('Could not run the old uninstaller (' + IntToStr(Code) + ')');
+  end;
+end;

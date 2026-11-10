@@ -145,7 +145,10 @@ $("back").addEventListener("click", () => { if (top()) handleKey("Back"); });
 setInterval(() => { $("back").classList.toggle("hidden", !(isPhone() && top() && top() !== "learn")); }, 250);
 video.addEventListener("click", () => {
   if (top() || Date.now() - lastTouch < 1000) return;     // touch taps are handled in touchend below
-  if (S.mode === "live" || S.mode === "playback") toggleOverlay();
+  // mouse: moving it already shows the button bar, so a click toggles just the info banner
+  if (!$("banner").classList.contains("hidden")) { hideBanner(); clearTimeout(S.bannerTimer); return; }
+  if (S.mode === "live") showBanner();
+  else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
 });
 video.addEventListener("dblclick", toggleFull);
 $("g-rows").addEventListener("click", (e) => {

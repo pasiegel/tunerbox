@@ -47,7 +47,7 @@ On Linux the app window needs GTK or Qt (see the pywebview docs); without one it
 ## Installers and other devices
 | Device | How |
 |---|---|
-| Windows, Mac, Linux | Download from the GitHub **Releases** page: Windows installer (`TunerBox-Setup-….exe`, installs per user, no admin) or portable zip, Mac `.dmg`, Linux `.tar.gz`. ffmpeg is included. Data lives in `%LOCALAPPDATA%\TunerBox` (Windows), `~/Library/Application Support/TunerBox` (Mac) or `~/.local/share/TunerBox` (Linux). |
+| Windows, Mac, Linux | Download from the GitHub **Releases** page: Windows installer (`TunerBox-Setup-….exe`, installs to `C:\Program Files\TunerBox`; **Install for me only** needs no admin) or portable zip, Mac `.dmg`, Linux `.tar.gz`. ffmpeg is included. Data lives in `%LOCALAPPDATA%\TunerBox` (Windows), `~/Library/Application Support/TunerBox` (Mac) or `~/.local/share/TunerBox` (Linux). |
 | Android phone/tablet, Android TV, Fire TV | Open `http://<pc-ip>:8642/` in the browser (Chrome, Silk). |
 | iPad (iPadOS 15+) / iPhone | In Safari open `http://<pc-ip>:8642/`, then Share › **Add to Home Screen**. It opens full screen like an app. |
 
@@ -174,9 +174,15 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
 ## Docker
 Server-only image with ffmpeg included. Data (settings, database, recordings, logs, lineup CSV) lives in the `/data` volume.
 
+Each release publishes `ghcr.io/pasiegel/tunerbox` (`:latest`, or a version such as `:1.4.3`) for 64-bit PCs and ARM64 (Raspberry Pi 4/5).
+
 ```sh
 docker compose up -d        # then open http://<host>:8642/ and go to /setup
+# or without compose:
+docker run -d --name tunerbox --restart unless-stopped -p 8642:8642 -v tunerbox-data:/data -e TZ=America/Detroit ghcr.io/pasiegel/tunerbox:latest
 ```
+
+To build the image yourself instead, use `build: .` in `compose.yaml` (or `docker build -t tunerbox .`).
 
 * Set `TZ` in `compose.yaml` to your time zone: guide times and DVR scheduling follow it.
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
@@ -198,6 +204,7 @@ docker compose up -d        # then open http://<host>:8642/ and go to /setup
 * `data/tunerbox.log`: log (kept to about 20 MB: older parts roll over to `tunerbox.log.1` to `.3`)
 
 ## Notes
+* The guide refreshes when TunerBox starts (unless it was updated in the last 30 minutes), then every 12 hours (`epg_refresh_hours`) while it runs. A Gracenote block that times out is retried, and if it still fails the listings from the last refresh are kept for that time slot. Menu › **Refresh TV guide** does it right away.
 * Gracenote is a free public endpoint, not an official API. If it ever breaks, add an XMLTV source for locals instead.
 * Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default, and live TV plus a recording each use one connection.
 
@@ -208,4 +215,4 @@ docker compose up -d        # then open http://<host>:8642/ and go to /setup
 * Database changes go at the end of `MIGRATIONS` in `tunerbox/db.py`; the database's `user_version` records how many have run.
 
 ## Credits
-* Docker image, the 720p (Roku) re-encode mode and the phone / iPhone Safari touch layout by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).
+* Docker image, the 720p (Roku) re-encode mode, the phone / iPhone Safari touch layout, the test suite, Gracenote retries, faster guide downloads, PPV/event playlist refreshes and DVR disk-space safety by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).

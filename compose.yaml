@@ -1,7 +1,8 @@
 # docker compose up -d      then open http://<this-machine>:8642/  (Setup is at /setup)
 services:
   tunerbox:
-    build: .
+    image: ghcr.io/pasiegel/tunerbox:latest   # published with each release (x64 and ARM64)
+    # build: .                               # or build it from this folder instead of pulling
     container_name: tunerbox
     restart: unless-stopped
     ports:

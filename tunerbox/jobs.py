@@ -147,8 +147,12 @@ def quick_due(now):
     return now - last > hours * 3600
 
 
+EPG_ON_START = 30 * 60   # at startup, refresh a guide older than this (a quick restart doesn't download it again)
+
+
 def housekeeping():
     """Runs forever: DVR ticks every 15s, periodic scans, guide refreshes and quick playlist refreshes."""
+    startup = True     # TunerBox just started: refresh the guide once (after a due scan) unless it's fresh
     while True:
         try:
             dvr.tick()
@@ -158,6 +162,10 @@ def housekeeping():
                 epg_age = now - int(db.get_meta("epg_updated", 0) or 0)
                 if has_sources and scan_due(now, int(db.get_meta("scan_updated", 0) or 0)):
                     scan()
+                elif startup:
+                    startup = False
+                    if epg_age > EPG_ON_START:
+                        refresh_epg()
                 elif (epg_age > float(config.get("epg_refresh_hours", 12)) * 3600
                       and now - int(db.get_meta("epg_tried", 0) or 0) > EPG_RETRY):
                     refresh_epg()
