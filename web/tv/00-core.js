@@ -49,6 +49,7 @@ function flags(p) {
   if (p.is_new) f += '<span class="flag">NEW</span>';
   if (p.rating) f += `<span class="flag cc">${esc(p.rating)}</span>`;
   if (p.rec) f += '<span class="flag rec">&#9679; REC</span>';
+  if (p.remind) f += '<span class="flag remind">&#128276;</span>';
   return f;
 }
 

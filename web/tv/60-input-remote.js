@@ -148,6 +148,7 @@ function handleKey(k, ev) {
   const layer = top();
   if (/^[0-9]$/.test(k) && !["dialog", "menu", "dvr", "remotecfg", "search", "sports"].includes(layer) && S.mode === "live") { digit(k); return true; }
   if (S.digits && k === "Enter") { commitDigits(); return true; }
+  if (reminderKey(k)) return true;
 
   if (layer === "dialog") {
     if (k === "Back") closeDialog(); else listNav($("dlg-list"), k, (_, i) => dlg.entries[i].act());

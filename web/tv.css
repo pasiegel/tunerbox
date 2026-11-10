@@ -65,6 +65,22 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .flag.live { background: var(--red); }
 .flag.rec { background: var(--red); }
 .flag.cc { background: #555; }
+.flag.remind { background: #e0a800; color: #1a1300; }
+
+/* reminder pop-up: flashes its border until answered */
+#reminder { position: absolute; right: 3vw; top: 6vh; z-index: 65; width: min(34em, 90vw); background: #0c1f4df7;
+  border: 3px solid #ffd166; border-radius: 10px; padding: 1em 1.3em; font-size: 1.15em; cursor: pointer;
+  box-shadow: 0 0 2em #000a; animation: rm-flash 1s ease-in-out infinite alternate; }
+@keyframes rm-flash { from { border-color: #ffd166; box-shadow: 0 0 .6em #ffd16655, 0 0 2em #000a; }
+                      to { border-color: #ff7b00; box-shadow: 0 0 2.2em #ffd166cc, 0 0 2em #000a; } }
+#reminder .rm-head { color: #ffd166; font-weight: 700; display: flex; align-items: center; gap: .3em; }
+#reminder .rm-close { margin-left: auto; background: none; border: 0; color: #fff9; font-size: 1em; cursor: pointer; }
+#reminder .rm-title { font-size: 1.45em; font-weight: 700; margin: .25em 0 .1em; }
+#reminder .rm-sub { color: #cfd8ee; }
+#reminder .rm-sub:empty { display: none; }
+#reminder .rm-foot { display: flex; justify-content: space-between; gap: 1em; margin-top: .6em; font-size: .85em; color: #cfd8ee; }
+#reminder .rm-ch { font-weight: 700; color: #fff; }
+@media (prefers-reduced-motion: reduce) { #reminder { animation: none; } }
 
 #digits { position: absolute; top: 5vh; right: 4vw; z-index: 40; font-size: 4.2em; font-weight: 800; letter-spacing: .12em; color: var(--hl);
   background: #000b; padding: .1em .5em; border: 2px solid #5b82d6; border-radius: 8px; font-variant-numeric: tabular-nums; }

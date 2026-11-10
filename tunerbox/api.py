@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, sources, sports
 from .streaming import ffmpeg_stream, stop_client
+from . import reminders  # noqa: I001
 
 log = logging.getLogger("tunerbox.api")
 
@@ -83,12 +84,14 @@ def api_guide(start: int, stop: int, numbers: str = ""):
         "SELECT number, start, status FROM recordings WHERE stop > ? AND start < ? AND status IN ('scheduled','recording')",
         (start, stop))}
     rules = {(r["title"].lower(), r["number"]) for r in db.rows("SELECT title, number FROM rules")}
+    reminded = reminders.keys(start, stop)
     out = {}
     for c in chans:
         lst = []
         for p in progs.get(c["epg"], []):
             p = dict(p)
             p["rec"] = recs.get((c["number"], p["start"]), "")
+            p["remind"] = (c["number"], p["start"]) in reminded
             p["series"] = (p["title"].lower(), c["number"]) in rules or (p["title"].lower(), None) in rules
             p.pop("channel", None)
             lst.append(p)
@@ -574,6 +577,27 @@ def api_stats():
         "extras": db.one("SELECT count(*) n FROM extras WHERE active=1")["n"],
         "programs": db.one("SELECT count(*) n FROM programs")["n"],
     }
+
+
+# ------------------------------------------------------------------ reminders
+@app.get("/api/reminders")
+def api_reminders():
+    """Reminders for programs that haven't ended; each TV screen pops one up when its program starts."""
+    return reminders.upcoming()
+
+
+@app.post("/api/reminders")
+def api_remind(number: int = Body(...), start: int = Body(...)):
+    r = reminders.add(number, start)
+    if not r:
+        raise HTTPException(400, "No guide data for that program")
+    return r
+
+
+@app.delete("/api/reminders/{rid}")
+def api_remind_cancel(rid: int):
+    reminders.remove(rid)
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ DVR

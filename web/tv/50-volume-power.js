@@ -83,6 +83,7 @@ async function powerOn() {
   video.volume = parseFloat(localStorage.getItem("tb.vol") || "0.8");
   try { await loadChannels(); } catch (e) { toast("Can't reach TunerBox server"); return; }
   await loadFavs();
+  loadReminders();
   if (!S.channels.length) {
     S.mode = "empty";
     showStatic("", "No channels yet", "Press OK (Enter) or click here to add a playlist");

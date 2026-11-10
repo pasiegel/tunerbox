@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS rules (
     new_only INTEGER DEFAULT 0,
     created INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number INTEGER NOT NULL,
+    channel_name TEXT,
+    title TEXT,
+    subtitle TEXT,
+    start INTEGER NOT NULL,
+    stop INTEGER NOT NULL,
+    created INTEGER DEFAULT 0,
+    UNIQUE (number, start)
+);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS source_groups (   -- every group in the playlist, kept or not
     source_id INTEGER NOT NULL,

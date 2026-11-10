@@ -73,6 +73,11 @@ function programDialog(ch, p) {
     catch (e) { toast(`Can't record: ${e.message}`); }
     closeDialog(); G.forget(ch.number); if (top() === "guide") G.render();
   };
+  if (p.start > n0) {
+    entries.push(findReminder(ch.number, p.start)
+      ? { label: "🔕 Cancel reminder", act: () => { closeDialog(); toggleReminder(ch, p); } }
+      : { label: "🔔 Remind me when it starts", act: () => { closeDialog(); toggleReminder(ch, p); } });
+  }
   if (p.rec) {
     entries.push({ label: "Cancel this recording", act: async () => {
       const recs = await api("/api/recordings");
