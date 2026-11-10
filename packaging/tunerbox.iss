@@ -19,6 +19,8 @@ DefaultGroupName=TunerBox
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+; without this, upgrading a per-user install (1.4.2 and older) would stay per user in AppData
+UsePreviousPrivileges=no
 OutputDir={#Root}\dist
 OutputBaseFilename=TunerBox-Setup-{#AppVersion}
 SetupIconFile={#Root}\build\tunerbox.ico
