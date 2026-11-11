@@ -1,9 +1,9 @@
 # TunerBox
 
-A personal IPTV "cable box": your local cable channel numbers and guide (set up for Xfinity in Grand Rapids, Michigan; pick your own provider in Setup), filled with feeds from your IPTV playlists. Inspired by MythTV's front end, Tunarr's channel mapping and IPTVnator's playlist handling.
+A personal IPTV "cable box": your local cable channel numbers and guide (pick your provider by ZIP or postal code in Setup), filled with feeds from your IPTV playlists. Inspired by MythTV's front end, Tunarr's channel mapping and IPTVnator's playlist handling.
 
-* **Real channel numbers.** Your provider's lineup is the backbone: out of the box the Xfinity Grand Rapids lineup in `channels.csv` (2 HSN, 3 WWMT, 8 WOOD, 42 CNN…), or any US/Canadian provider picked by ZIP/postal code. Playlist channels are fuzzy-matched onto it.
-* **Local guide.** Listings come from Gracenote (the data behind zap2it and TV Guide) for your provider (Xfinity Grand Rapids by default), so the guide matches your numbers. US and Canada.
+* **Real channel numbers.** Your provider's lineup is the backbone: any US or Canadian cable, satellite or antenna lineup picked by ZIP/postal code (a sample cable lineup ships in `channels.csv`). Playlist channels are fuzzy-matched onto it.
+* **Local guide.** Listings come from Gracenote (the data behind zap2it and TV Guide) for your provider, so the guide matches your numbers. US and Canada.
 * **Everything else gets a number too.** Every working playlist channel that isn't on the lineup is numbered from 20000 up, with online XMLTV guides.
 * **Manual mapping.** A Tunarr-style picker lets you search every feed, preview it, and pin the one you want.
 * **M3U and Xtream Codes.** Paste an Xtream `get.php` link and it switches to the Xtream API automatically.
@@ -14,7 +14,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (set up 
 ## Getting started
 1. **Install.** Download the latest build for your computer from the **Releases** page: the Windows `TunerBox-Setup-….exe`, the Mac `.dmg` or the Linux `.tar.gz`. ffmpeg is included, nothing else to install. (Or run from source, below.)
 2. **Open TunerBox.** It shows **No channels yet**; press Enter or click to open **Setup**.
-3. **Pick your area.** It starts with Xfinity in Grand Rapids, MI (ZIP 49503). Anywhere else: Setup › **Guide**, enter your ZIP or postal code, press **Find providers**, choose your cable, satellite or antenna lineup and press **Save**.
+3. **Pick your area.** It starts with a sample cable lineup. To use yours: Setup › **Guide**, enter your ZIP or postal code, press **Find providers**, choose your cable, satellite or antenna lineup and press **Save**.
 4. **Add a playlist.** Setup › **Playlists**: paste your M3U URL or Xtream login (or pick *HDHomeRun* to use an antenna tuner), then **Scan playlists now**. The first scan takes a few minutes.
 5. **Watch.** Press **Watch TV**. Up/down or number keys change channels, **G** opens the guide, **M** the menu.
 6. **Other screens.** Phones, tablets and TV browsers on your network open `http://<this-computer>:8642/`. Setup › **Phones** pairs a phone as a remote.
@@ -63,7 +63,7 @@ Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno
 
 ## First-time setup
 1. With no channels, the screen says **No channels yet**. Press Enter or click it to open **Setup** (also Menu › Channel Setup).
-2. Outside Grand Rapids (or not on Xfinity)? Go to **Guide**, enter your ZIP or postal code and press **Find providers**. Choose your provider (for example *Xfinity - Digital*, *DIRECTV* or *Local Over the Air Broadcast* for an antenna) and press **Save**. Its channel numbers become your lineup.
+2. To use your own provider's channel numbers, go to **Guide**, enter your ZIP or postal code and press **Find providers**. Choose your provider (for example *Xfinity - Digital*, *DIRECTV* or *Local Over the Air Broadcast* for an antenna) and press **Save**. Its channel numbers become your lineup.
 3. Go to **Playlists** and add your M3U URL or file, or your Xtream server, username and password.
 4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. **Check all** / **Uncheck all** apply to the groups listed, so after picking a country or typing a search they only change those groups (the buttons then show the count, e.g. *Uncheck 93 listed*). **Only keep listed** keeps the listed groups and hides every other one.
    * Hidden groups are removed straight away. Ticking one again rescans the playlist to bring it back.
@@ -179,12 +179,12 @@ Each release publishes `ghcr.io/pasiegel/tunerbox` (`:latest`, or a version such
 ```sh
 docker compose up -d        # then open http://<host>:8642/ and go to /setup
 # or without compose:
-docker run -d --name tunerbox --restart unless-stopped -p 8642:8642 -v tunerbox-data:/data -e TZ=America/Detroit ghcr.io/pasiegel/tunerbox:latest
+docker run -d --name tunerbox --restart unless-stopped -p 8642:8642 -v tunerbox-data:/data -e TZ=America/New_York ghcr.io/pasiegel/tunerbox:latest
 ```
 
 To build the image yourself instead, use `build: .` in `compose.yaml` (or `docker build -t tunerbox .`).
 
-* Set `TZ` in `compose.yaml` to your time zone: guide times and DVR scheduling follow it.
+* Set `TZ` (in `compose.yaml`, or `-e TZ=` with `docker run`) to your time zone, e.g. `America/Chicago`: guide times and DVR scheduling follow it.
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
 * For Local channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
 * If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
@@ -197,7 +197,7 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * **Skipped** on purpose: public-access, government-access and PPV slots.
 
 ## Files
-* `data/channels.csv`: the Xfinity Grand Rapids lineup (`Channel Number,Channel Name`), read on every scan. It's skipped when you pick a different provider; to use your own CSV with another provider, set `lineup_csv_lineup` to `""` in `settings.json`
+* `data/channels.csv`: the sample cable lineup (`Channel Number,Channel Name`), read on every scan. It's skipped when you pick a different provider; to use your own CSV with another provider, set `lineup_csv_lineup` to `""` in `settings.json`
 * `data/settings.json`: all settings, also editable in Setup › Settings
 * `data/tunerbox.db`: playlists, mappings, guide, recordings (SQLite)
 * `data/recordings/`: DVR output
