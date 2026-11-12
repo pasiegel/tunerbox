@@ -26,6 +26,8 @@ async function remoteCmd(c) {
     if (S.mode === "off") { await powerOn(); }
     closeOverlays();
     if (!tuneNum(+c.number)) return;
+    // a game from the phone's Sports list: the event feed that has it too, in case of no signal
+    if (c.feed && c.feed.key) S.gameFeed = { idx: S.idx, feed: c.feed, until: +c.until || 0 };
   } else if (c.type === "feed" && c.feed && c.feed.key) {
     if (S.mode === "off") { await powerOn(); }
     closeOverlays(); playFeed(c.feed);

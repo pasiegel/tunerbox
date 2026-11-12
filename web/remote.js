@@ -180,8 +180,16 @@ async function loadSports() {
     ...d.on_now.filter((p) => p.ch || p.feed).map((p) => {
       const score = p.event ? [p.event.score, p.event.detail].filter(Boolean).join(" · ") : "";
       if (!p.ch) return { ...feedRow(p.feed), title: p.title, sub: [score, p.feed.name].filter(Boolean).join(" · "), badge: "ON NOW", live: true };
-      return { title: p.title + (p.event && p.subtitle ? `: ${p.subtitle}` : ""), sub: [`${p.ch.number} ${p.ch.label || p.ch.name}`, score].filter(Boolean).join(" · "),
-               badge: "ON NOW", live: true, logo: p.ch.logo, cmd: { type: "tune", number: p.ch.number } };
+      const chan = `${p.ch.number} ${p.ch.label || p.ch.name}`, f = p.feed;
+      const row = { title: p.title + (p.event && p.subtitle ? `: ${p.subtitle}` : ""), sub: [chan + (f ? ` + ${f.kind === "ppv" ? "PPV" : "feed"}` : ""), score].filter(Boolean).join(" · "),
+                    badge: "ON NOW", live: true, logo: p.ch.logo, cmd: { type: "tune", number: p.ch.number } };
+      if (!f) return row;
+      // on a channel and on an event feed: the guide can't tell which really has it, so ask
+      const fr = feedRow(f);
+      row.cmd = { ...row.cmd, feed: fr.cmd.feed, until: p.stop };
+      const opts = [{ ...row, title: chan, sub: row.title }, { ...fr, sub: [f.group, f.status === "ok" ? "live now" : ""].filter(Boolean).join(" · ") }];
+      if (f.status === "ok") opts.reverse();
+      return { ...row, open: () => { bindList($("sp-list"), [{ title: "‹ Back to Sports", open: loadSports }, ...opts]); window.scrollTo(0, 0); } };
     }),
     ...d.channels.map((c) => ({ title: `${c.number}  ${c.label || c.name}`, sub: c.now ? c.now.title : "Sports channel", logo: c.logo, cmd: { type: "tune", number: c.number } })),
     ...d.groups.filter((g) => g.named).map((g) => ({ title: g.name, sub: `${g.named} event${g.named === 1 ? "" : "s"}${g.live ? ` · ${g.live} live` : ""}`,

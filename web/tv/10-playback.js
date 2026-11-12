@@ -73,6 +73,7 @@ function tune(idx, alt = 0) {
   const ch = S.channels[idx];
   if (S.idx !== idx && S.idx >= 0 && alt === 0 && !S.feedCh) S.lastIdx = S.idx;
   S.feedCh = null;
+  if (S.gameFeed && S.gameFeed.idx !== idx) S.gameFeed = null;
   S.idx = idx; S.alt = alt; S.mode = "live";
   localStorage.setItem("tb.last", ch.number);
   $("playback").classList.add("hidden");
@@ -168,7 +169,11 @@ function failOver(idx, alt) {
   if (S.feedCh || S.idx !== idx || S.alt !== alt) return;
   const ch = S.channels[idx];
   if (alt < (ch.alts || 0)) { toast(`Trying backup feed ${alt + 2}…`); tune(idx, alt + 1); }
-  else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); }
+  else if (S.gameFeed && S.gameFeed.idx === idx && now() < S.gameFeed.until) {
+    // tuned for a game that an event feed carries too (Sports screen): watch it there instead
+    const f = S.gameFeed.feed; S.gameFeed = null;
+    toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); playFeed(f);
+  } else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); }
 }
 video.addEventListener("playing", () => { clearTimeout(S.watchdog); hideStatic(); });
 

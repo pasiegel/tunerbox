@@ -215,7 +215,15 @@ def _one_per_game(progs, now):
     return out, seen
 
 
-def _game_items(evs, taken, now):
+def _feed_finder():
+    """Finds the event feed whose name has both teams of a game; a feed that's live right now first."""
+    feeds = [({**f, "kind": g["kind"]}, scoreboard.candidates(f["name"]))
+             for g in event_groups() for f in g["feeds"] if not f["slot"]]
+    feeds.sort(key=lambda ft: ft[0]["status"] != "ok")
+    return scoreboard.Finder(feeds)
+
+
+def _game_items(evs, taken, now, finder):
     """Scoreboard games with no guide listing: on an event feed if a feed's name has both teams,
     otherwise listed without a channel (unless that's switched off in Settings)."""
     # "pre" long after the start time is a postponed game or a scoreboard that stopped updating
@@ -223,10 +231,6 @@ def _game_items(evs, taken, now):
            and (e["state"] == "in" or (e["state"] == "pre" and e["start"] > now - 3600))]
     if not evs:
         return []
-    feeds = [({**f, "kind": g["kind"]}, scoreboard.candidates(f["name"]))
-             for g in event_groups() for f in g["feeds"] if not f["slot"]]
-    feeds.sort(key=lambda ft: ft[0]["status"] != "ok")          # a feed that's live right now first
-    finder = scoreboard.Finder(feeds)
     show_all = config.get("sports_show_unmatched", True)
     out = []
     for ev in evs:
@@ -280,7 +284,15 @@ def overview():
     progs = _sport_programs(now, now + 2 * 86400, evs)
     progs.sort(key=lambda p: (p["start"] > now, p["start"] if p["start"] > now else 0, p["ch"]["number"]))
     progs, taken = _one_per_game(progs, now)
-    progs = _dedupe(progs, now) + _game_items(evs, taken, now)
+    finder = _feed_finder() if evs else None
+    by_id = {e["id"]: e for e in evs}
+    progs = _dedupe(progs, now)
+    # A game on a channel may be on an event feed too. The guide only says what the channel is
+    # scheduled to show (a blackout or a regional feed looks the same here), so offer both.
+    for p in progs:
+        if p.get("event"):
+            p["feed"] = finder.find(scoreboard.event_keys(by_id[p["event"]["id"]]))
+    progs += _game_items(evs, taken, now, finder)
     on_now = [p for p in progs if p["start"] <= now]
     upcoming = sorted((p for p in progs if p["start"] > now), key=lambda p: (p["start"], _ch_num(p)))[:300]
     for p in progs:

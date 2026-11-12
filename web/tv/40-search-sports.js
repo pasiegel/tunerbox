@@ -18,6 +18,22 @@ function pickProgram(p) {
   if (p.start <= n0 && n0 < p.stop) { closePanels(); tune(i); return; }
   programDialog(S.channels[i], p);
 }
+// A game that's on a channel and on an event feed. The guide can't tell whether the channel really
+// has it (blackouts, regional feeds), so ask; the feed goes first when it was checked and is live.
+const feedLabel = (f) => f.group || (f.kind === "ppv" ? "PPV" : "Event feed");
+function pickGame(p) {
+  const i = S.byNum.get(p.ch.number), n0 = now();
+  if (i === undefined) { closePanels(); playFeed(p.feed); return; }
+  if (!(p.start <= n0 && n0 < p.stop)) { pickProgram(p); return; }
+  const opts = [
+    { label: `Watch on ${p.ch.number} ${p.ch.label || p.ch.name}`,
+      act: () => { closeDialog(); closePanels(); tune(i); S.gameFeed = { idx: i, feed: p.feed, until: p.stop }; } },
+    { label: `Watch on ${feedLabel(p.feed)}${p.feed.status === "ok" ? " · live now" : ""}`,
+      act: () => { closeDialog(); closePanels(); playFeed(p.feed); } },
+  ];
+  if (p.feed.status === "ok") opts.reverse();
+  openDialog(p.event ? p.event.name : p.title, `${p.title}${p.subtitle ? `\n${p.subtitle}` : ""}\nIf one doesn't have the game, try the other.`, opts);
+}
 const progHtml = (p, badge) => `${badge} <span>${esc(p.title)}${p.subtitle ? ` <small>· ${esc(p.subtitle)}</small>` : ""}</span>`;
 function feedBadge(f) {
   if (f.status === "ok") return '<span class="badge live">LIVE</span>';
@@ -168,7 +184,11 @@ function spGame(p, badge, until) {
   const html = `${badge}<span class="sp-main"><span class="sp-t">${esc(p.title)}</span>${p.subtitle ? `<small class="sp-s">${esc(p.subtitle)}</small>` : ""}</span>`
     + (score ? `<small class="score">${esc(score)}</small>` : "");
   const cls = "game";
-  if (p.ch) return { cls, html, right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}${until ? ` · until ${fmtTime(p.stop)}` : ""}`, act: () => pickProgram(p) };
+  if (p.ch) {
+    const also = p.feed ? ` + ${p.feed.kind === "ppv" ? "PPV" : "feed"}` : "";
+    return { cls, html, right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}${also}${until ? ` · until ${fmtTime(p.stop)}` : ""}`,
+             act: () => (p.feed ? pickGame(p) : pickProgram(p)) };
+  }
   if (p.feed) return { cls, html, right: esc(p.feed.group || "Event feed"), act: () => { closePanels(); playFeed(p.feed); } };
   const on = e.on.length ? `on ${e.on.join(", ")}` : "";
   return { cls: "game nochan", html, right: esc(on ? `${on} · no channel` : "no channel"),

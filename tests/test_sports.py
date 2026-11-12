@@ -139,6 +139,8 @@ def test_scoreboard_games_in_overview():
     sid = db.one("SELECT id FROM sources")["id"]
     db.run("INSERT INTO streams(key, source_id, name, url, grp, status) VALUES ('f1', ?, ?, 'http://f', 'US| ESPN+ EVENTS', 'ok')",
            (sid, "ESPN+ 07 | Toronto Raptors vs Philadelphia 76ers"))
+    db.run("INSERT INTO streams(key, source_id, name, url, grp) VALUES ('f2', ?, ?, 'http://f', 'US| NFL PPV')",
+           (sid, "NFL | 01 - 1pm Cowboys @ Eagles"))
     sixers = _team("Philadelphia 76ers", "76ers", "Philadelphia", "PHI", "50")
     raptors = _team("Toronto Raptors", "Raptors", "Toronto", "TOR", "48")
     _store(_game(1, "nfl", now - h, EAGLES, COWBOYS, "in", "3rd 5:21"),
@@ -153,12 +155,13 @@ def test_scoreboard_games_in_overview():
 
     rows = [(p["event"]["id"], p["ch"] and p["ch"]["number"], bool(p.get("feed"))) for p in d["on_now"]]
     assert rows == [("ncaaf:2", 7, False),      # its listing ended, the game didn't: still on channel 7
-                    ("nfl:1", 5, False),        # found by team names though the listing has no category; one row, not two
+                    ("nfl:1", 5, True),         # found by team names though the listing has no category; one row, not two
                     ("nba:4", None, True)]      # no listing: plays from the event feed
     nfl = d["on_now"][1]
     assert (nfl["is_live"], nfl["sport"], nfl["event"]["score"]) == (1, "Football", "DAL 14, PHI 21")
     assert d["on_now"][0]["stop"] > now
     assert d["on_now"][2]["feed"]["key"] == "f1"
+    assert (nfl["feed"]["key"], nfl["feed"]["kind"]) == ("f2", "ppv")    # on channel 5, and on a PPV feed as a second choice
 
     up = [(p["event"]["id"], p["ch"] and p["ch"]["number"]) for p in d["upcoming"]]
     assert up == [("nhl:5", None), ("ncaaf:3", 8)]               # the Bruins game: listed, no channel
