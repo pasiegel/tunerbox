@@ -163,6 +163,12 @@ def test_scoreboard_games_in_overview():
     assert d["on_now"][2]["feed"]["key"] == "f1"
     assert (nfl["feed"]["key"], nfl["feed"]["kind"]) == ("f2", "ppv")    # on channel 5, and on a PPV feed as a second choice
 
+    # one tab at a time gives the same lists
+    same = lambda rows: [{k: v for k, v in p.items() if k != "stop"} for p in rows]     # a game running long ends "now + 30 min"
+    assert same(sports.overview("now")["on_now"]) == same(d["on_now"]) and "upcoming" not in sports.overview("now")
+    assert same(sports.overview("up")["upcoming"]) == same(d["upcoming"]) and "on_now" not in sports.overview("up")
+    assert sports.overview("ch") == {"channels": d["channels"]} and sports.overview("ev") == {"groups": d["groups"]}
+
     up = [(p["event"]["id"], p["ch"] and p["ch"]["number"]) for p in d["upcoming"]]
     assert up == [("nhl:5", None), ("ncaaf:3", 8)]               # the Bruins game: listed, no channel
     assert d["upcoming"][0]["event"]["on"] == ["ESPN+"]

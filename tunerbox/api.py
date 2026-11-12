@@ -187,8 +187,10 @@ def api_search(q: str = ""):
 
 
 @app.get("/api/sports")
-def api_sports():
-    return sports.overview()
+def api_sports(tab: str = ""):
+    if tab not in ("", "now", "up", "ch", "ev"):
+        raise HTTPException(400, "Unknown tab")
+    return sports.overview(tab)
 
 
 @app.get("/api/sports/leagues")

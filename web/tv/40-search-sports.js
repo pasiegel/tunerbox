@@ -154,26 +154,40 @@ $("s-list").addEventListener("click", (e) => {
 });
 
 // ---------------------------------------------------------------- sports & PPV
-const SP_TABS = [["now", "On Now"], ["up", "Coming Up"], ["ch", "Sports Channels"], ["ev", "Events & PPV"]];
-const SP = { tab: 0, data: null, group: null, items: [], poll: null };
+// tab id, label, and the list it shows (a key of SP.data, fetched on its own: /api/sports?tab=id)
+const SP_TABS = [["now", "On Now", "on_now"], ["up", "Coming Up", "upcoming"], ["ch", "Sports Channels", "channels"], ["ev", "Events & PPV", "groups"]];
+const SP = { tab: 0, data: null, group: null, items: [], poll: null, seq: 0 };
 
 async function openSports() {
   hideBanner(); closeMenu(); closeSearch();
   if (top() !== "sports") S.layer.push("sports");
   $("sports").classList.remove("hidden");
   SP.group = null;
-  $("sp-list").innerHTML = "<li>Loading…</li>";
-  try { SP.data = await api("/api/sports"); } catch (e) { $("sp-list").innerHTML = `<li>${esc(e.message)}</li>`; return; }
-  const counts = spCounts();
-  if (!counts[SP.tab]) { const t = counts.findIndex((n) => n > 0); if (t >= 0) SP.tab = t; }
+  // The tab it opens on is fetched first and shown right away; the others follow in the background.
+  const seq = ++SP.seq, first = SP.tab;
+  SP.data = {}; SP.errors = {}; SP.moved = false;
   renderSports(0);
+  for (const t of [first, ...SP_TABS.map((_, i) => i).filter((i) => i !== first)]) {
+    const [id, , key] = SP_TABS[t];
+    try { Object.assign(SP.data, await api(`/api/sports?tab=${id}`)); }
+    catch (e) { if (seq === SP.seq) SP.errors[key] = e.message; }
+    if (seq !== SP.seq) return;                      // closed or opened again meanwhile
+    if (!(key in SP.data) && !SP.errors[key]) SP.errors[key] = "Couldn't load this list";
+    // only the list on screen is redrawn (from the top when it just arrived); the others just get their count
+    if (t === SP.tab && !SP.group) renderSports(0); else renderSports();
+  }
+  // nothing on the tab it opened on: show the first one that has something (unless you've moved already)
+  const counts = spCounts();
+  if (!SP.moved && SP.tab === first && !counts[first]) { const t = counts.findIndex((n) => n > 0); if (t >= 0) { SP.tab = t; renderSports(0); } }
 }
 function closeSports() {
+  SP.seq++;
   S.layer = S.layer.filter((l) => l !== "sports");
   $("sports").classList.add("hidden");
   clearInterval(SP.poll); SP.poll = null;
 }
-const spCounts = () => SP.data ? [SP.data.on_now.length, SP.data.upcoming.length, SP.data.channels.length, SP.data.groups.length] : [0, 0, 0, 0];
+// how many rows each tab has; null while its list is still on the way
+const spCounts = () => SP_TABS.map(([, , key]) => (SP.data && SP.data[key] ? SP.data[key].length : null));
 const ago = (t) => { const m = Math.round((now() - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 
 // A row of On Now / Coming Up. Games from the scoreboard (p.event) carry a score, and may have no
@@ -195,8 +209,9 @@ function spGame(p, badge, until) {
            act: () => toast(`${e.name}: none of your channels or event feeds has it${on ? ` (it's ${on})` : ""}`, 4000) };
 }
 function spItems() {
-  const d = SP.data, n0 = now(), id = SP_TABS[SP.tab][0];
+  const d = SP.data, n0 = now(), [id, , key] = SP_TABS[SP.tab];
   const none = (label) => [{ label }];
+  if (!d[key]) return none(SP.errors[key] || "Loading…");
   if (id === "now") {
     return d.on_now.length ? d.on_now.map((p) =>
       spGame(p, p.is_live ? '<span class="badge live">LIVE</span>' : `<span class="badge${p.ch || p.feed ? "" : " off"}">${p.ch || p.feed ? "ON" : "SOON"}</span>`, true))
@@ -245,7 +260,7 @@ function renderSports(sel) {
   if (!SP.data) return;
   const counts = spCounts();
   $("sp-tabs").innerHTML = SP_TABS.map(([, label], i) =>
-    `<div class="tab${i === SP.tab ? " sel" : ""}" data-t="${i}">${label} <small>${counts[i]}</small></div>`).join("");
+    `<div class="tab${i === SP.tab ? " sel" : ""}" data-t="${i}">${label} <small>${counts[i] ?? ""}</small></div>`).join("");
   SP.items = spItems();
   if (sel === undefined) sel = Math.max(0, selIndex($("sp-list")));
   fillList($("sp-list"), SP.items, Math.min(sel, SP.items.length - 1));
@@ -277,7 +292,7 @@ async function startCheck() {
       clearInterval(SP.poll); SP.poll = null;
       const keep = selIndex($("sp-list"));
       try { SP.group = await api(`/api/sports/group?name=${encodeURIComponent(g.name)}`); } catch (_) {}
-      const gi = SP.data.groups.find((x) => x.name === g.name); if (gi) gi.live = SP.group.live;
+      const gi = (SP.data.groups || []).find((x) => x.name === g.name); if (gi) gi.live = SP.group.live;
       renderSports(keep);
       toast(SP.group.live ? `${SP.group.live} ${g.name} feed${SP.group.live === 1 ? " is" : "s are"} live now` : `Nothing live on ${g.name} right now`);
     } else if (top() === "sports") renderSports();
@@ -288,13 +303,13 @@ function sportsKey(k) {
   if (k === "t") { closeSports(); return; }
   if (k === "ArrowLeft" || k === "ArrowRight") {
     SP.tab = (SP.tab + (k === "ArrowRight" ? 1 : -1) + SP_TABS.length) % SP_TABS.length;
-    SP.group = null; renderSports(0); return;
+    SP.group = null; SP.moved = true; renderSports(0); return;
   }
   listNav($("sp-list"), k, (_, i) => { const it = SP.items[i]; if (it && it.act) it.act(); });
 }
 $("sp-tabs").addEventListener("click", (e) => {
   const t = e.target.closest(".tab"); if (!t) return;
-  SP.tab = +t.dataset.t; SP.group = null; renderSports(0);
+  SP.tab = +t.dataset.t; SP.group = null; SP.moved = true; renderSports(0);
 });
 $("sp-list").addEventListener("click", (e) => {
   const li = e.target.closest("li"); if (!li) return;

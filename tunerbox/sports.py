@@ -9,6 +9,7 @@
 """
 import asyncio
 import functools
+import logging
 import re
 import threading
 import time
@@ -17,6 +18,8 @@ from rapidfuzz import fuzz, process
 
 from . import config, db, epg, guide, probe, scoreboard
 from .text import is_foreign, norm
+
+log = logging.getLogger("tunerbox.sports")
 
 SPORT_CATEGORY = re.compile(
     r"^(sports?|sports? events?|sporting events?|football|american football|basketball|baseball|softball|"
@@ -160,16 +163,19 @@ def _chan_out(c):
     return {"number": c["number"], "name": c["name"], "label": c["label"], "logo": c["logo"]}
 
 
-def _sport_programs(start, stop, evs=()):
+def _sport_programs(start, stop, evs=(), later=True):
     """Guide listings that are sports (by category) or carry one of the scoreboard games `evs`.
-    With games, listings that ended in the last few hours come back too: a game can run long."""
+    With games, listings that ended in the last few hours come back too: a game can run long.
+    later=False leaves out sports that haven't started and aren't one of those games (On Now
+    doesn't show them, and they are most of the listings)."""
     chans = guide.channels()
     by_epg = _channels_by_epg(chans)
     lo = start - OVERRUN if evs else start
     matched = scoreboard.match_programs(evs, by_epg, lo, stop, sport_of=sport_type,
                                         cache_key=(id(_base()), db.get_meta("epg_updated", "")))
     by_id = {e["id"]: e for e in evs}
-    rows = db.rows("SELECT * FROM programs WHERE stop > ? AND start < ? AND category != '' ORDER BY start", (start, stop))
+    rows = db.rows("SELECT * FROM programs WHERE stop > ? AND start < ? AND category != '' ORDER BY start",
+                   (start, stop if later else start + 1))
     have = {(p["channel"], p["start"]) for p in rows}
     with db.conn() as con:          # the matched listings that query left out (no category, or already over)
         for k in matched.keys() - have:
@@ -215,12 +221,19 @@ def _one_per_game(progs, now):
     return out, seen
 
 
+_finder_cache = {"key": None, "finder": None}
+
+
 def _feed_finder():
-    """Finds the event feed whose name has both teams of a game; a feed that's live right now first."""
-    feeds = [({**f, "kind": g["kind"]}, scoreboard.candidates(f["name"]))
-             for g in event_groups() for f in g["feeds"] if not f["slot"]]
-    feeds.sort(key=lambda ft: ft[0]["status"] != "ok")
-    return scoreboard.Finder(feeds)
+    """Finds the event feed whose name has both teams of a game; a feed that's live right now first.
+    Kept until a feed is added, renamed or changes status: indexing thousands of names is slow."""
+    feeds = [{**f, "kind": g["kind"]} for g in event_groups() for f in g["feeds"] if not f["slot"]]
+    key = tuple((f["key"], f["name"], f["status"]) for f in feeds)
+    if _finder_cache["key"] != key:
+        items = [(f, scoreboard.candidates(f["name"])) for f in feeds]
+        items.sort(key=lambda ft: ft[0]["status"] != "ok")
+        _finder_cache.update(key=key, finder=scoreboard.Finder(items))
+    return _finder_cache["finder"]
 
 
 def _game_items(evs, taken, now, finder):
@@ -278,10 +291,10 @@ def _ch_num(p):
     return p["ch"]["number"] if p["ch"] else 10 ** 9
 
 
-def overview():
-    now = int(time.time())
+def _games(now, later=True):
+    """(on now, coming up). later=False: only On Now is wanted, coming up is left incomplete."""
     evs = scoreboard.events(now - 8 * 3600, now + 2 * 86400)
-    progs = _sport_programs(now, now + 2 * 86400, evs)
+    progs = _sport_programs(now, now + 2 * 86400, evs, later)
     progs.sort(key=lambda p: (p["start"] > now, p["start"] if p["start"] > now else 0, p["ch"]["number"]))
     progs, taken = _one_per_game(progs, now)
     finder = _feed_finder() if evs else None
@@ -304,7 +317,10 @@ def overview():
     # earliest start, sport (unknown last), name
     on_now.sort(key=lambda p: (not (p["ch"] or p.get("feed")), not p["is_live"], p["start"], not p["sport"], p["sport"],
                                _natural(p["title"]), _ch_num(p)))
+    return on_now, upcoming
 
+
+def _channels_now(now):
     chans = _sports_channels(guide.channels())
     cur = epg.programs({c["epg"] for c in chans if c["epg"]}, now, now + 1)
     sports_ch = []
@@ -313,9 +329,51 @@ def overview():
         sports_ch.append({**_chan_out(c), "kind": c["kind"],
                           "now": {"title": p["title"], "subtitle": p["subtitle"], "stop": p["stop"],
                                   "is_live": p["is_live"]} if p else None})
-    groups = event_groups()
-    return {"on_now": on_now, "upcoming": upcoming, "channels": sports_ch,
-            "groups": [{k: v for k, v in g.items() if k != "feeds"} for g in groups]}
+    return sports_ch
+
+
+def overview(tab=""):
+    """The Sports screen. `tab` ('now', 'up', 'ch' or 'ev') gives just that tab's list, so the
+    screen can show the tab it opens on first and fetch the others afterwards."""
+    now = int(time.time())
+    out = {}
+    if tab in ("", "now", "up"):
+        on_now, upcoming = _games(now, later=tab != "now")
+        if tab != "up":
+            out["on_now"] = on_now
+        if tab != "now":
+            out["upcoming"] = upcoming
+    if tab in ("", "ch"):
+        out["channels"] = _channels_now(now)
+    if tab in ("", "ev"):
+        out["groups"] = [{k: v for k, v in g.items() if k != "feeds"} for g in event_groups()]
+    return out
+
+
+_warm = {"sig": None, "running": False}
+
+
+def warm(now=None):
+    """Called from the housekeeping loop. Matching games to the guide takes about a second and is
+    redone every ten minutes and after each scoreboard or guide refresh; doing it here, in the
+    background, keeps that wait out of opening the Sports screen."""
+    if not scoreboard.selected():
+        return False
+    now = int(now or time.time())
+    sig = (now // 600, id(_base()), db.get_meta("epg_updated", ""), db.get_meta("sports_quick", ""))
+    if _warm["running"] or _warm["sig"] == sig:
+        return False
+    _warm.update(sig=sig, running=True)
+
+    def work():
+        try:
+            overview()
+        except Exception:  # noqa: BLE001
+            log.exception("sports warm-up")
+        finally:
+            _warm["running"] = False
+    threading.Thread(target=work, daemon=True).start()
+    return True
 
 
 # ------------------------------------------------------------------ event / PPV feeds

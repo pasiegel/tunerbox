@@ -174,7 +174,8 @@ function feedRow(f) {
 // sports
 async function loadSports() {
   $("sp-list").innerHTML = '<li class="msg">Loading…</li>';
-  let d; try { d = await api("/api/sports"); } catch (e) { $("sp-list").innerHTML = `<li class="msg">${esc(e.message)}</li>`; return; }
+  // the three lists shown here, each asked for on its own: Coming Up (most of the data) isn't shown
+  let d; try { d = Object.assign({}, ...await Promise.all(["now", "ch", "ev"].map((t) => api(`/api/sports?tab=${t}`)))); } catch (e) { $("sp-list").innerHTML = `<li class="msg">${esc(e.message)}</li>`; return; }
   const items = [
     // scoreboard games carry a score; ones without a channel play from an event feed, or are left out
     ...d.on_now.filter((p) => p.ch || p.feed).map((p) => {

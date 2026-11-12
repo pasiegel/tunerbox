@@ -63,6 +63,7 @@ def _run_housekeeping(monkeypatch, loops=3):
     monkeypatch.setattr(jobs, "refresh_epg", lambda: calls.append(1))
     monkeypatch.setattr(jobs.dvr, "tick", lambda: None)
     monkeypatch.setattr(jobs.media, "write_epg", lambda: None)
+    monkeypatch.setattr(jobs.sports, "warm", lambda _now: None)      # a background thread that would outlive the test
 
     def sleep(_s):
         n["i"] += 1
