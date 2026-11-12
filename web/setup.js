@@ -415,27 +415,97 @@ document.querySelector("#tab-dvr").addEventListener("click", async (e) => {
 });
 
 // ---------------------------------------------------------------- settings
+// categories on the left; one group of settings is shown at a time (the whole form still saves together)
+const setGroups = [...document.querySelectorAll("#tab-settings .set-group[data-cat]")];
+$("set-nav").innerHTML = setGroups.map((g) =>
+  `<button type="button" data-cat="${g.dataset.cat}">${esc(g.dataset.label)}<i title="Unsaved changes"></i></button>`).join("");
+function showSetCat(cat) {
+  if (!setGroups.some((g) => g.dataset.cat === cat)) cat = setGroups[0].dataset.cat;
+  setGroups.forEach((g) => g.classList.toggle("hidden", g.dataset.cat !== cat));
+  $("set-nav").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.cat === cat));
+  try { localStorage.setItem("tb-set-cat", cat); } catch (_) {}
+}
+$("set-nav").onclick = (e) => { const b = e.target.closest("button"); if (b) showSetCat(b.dataset.cat); };
+let savedCat = null;
+try { savedCat = localStorage.getItem("tb-set-cat"); } catch (_) {}
+showSetCat(savedCat);
+
+const matchWord = (v) => v >= 98 ? "exact" : v >= 90 ? "strict" : v >= 78 ? "balanced" : "loose";
+
 loaders.settings = async () => {
   settings = await api("/api/settings");
   const f = $("set-form");
   for (const el of f.elements) {
     if (!el.name || !(el.name in settings)) continue;
-    if (el.type === "checkbox") el.checked = !!settings[el.name]; else el.value = String(settings[el.name]);
+    const v = settings[el.name];
+    if (el.type === "checkbox") { el.checked = !!v; continue; }
+    const shown = el.dataset.scale ? v / +el.dataset.scale : v;
+    // a value set in settings.json that the list doesn't offer: show it rather than silently saving another
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(shown))) el.add(new Option(String(shown), String(shown)));
+    el.value = String(shown);
   }
+  rememberSaved(); syncSettings();
   $("u-m3u").textContent = location.origin + "/playlist.m3u";
   $("u-epg").textContent = location.origin + "/epg.xml";
   $("u-hdhr").textContent = location.origin;
 };
+// "unsaved" means the form differs from what was last loaded or saved, so undoing a change clears it again
+const setFields = () => [...$("set-form").elements].filter((el) => el.name);
+const fieldVal = (el) => (el.type === "checkbox" ? String(el.checked) : el.value);
+let setSavedVals = {};
+const rememberSaved = () => { setSavedVals = Object.fromEntries(setFields().map((el) => [el.name, fieldVal(el)])); };
+
+// options that only matter when a switch is on are hidden (but still saved) while it's off
+function syncSettings() {
+  const f = $("set-form");
+  const mt = f.elements.match_threshold;
+  $("mt-val").innerHTML = `<b>${esc(mt.value)}</b> · ${matchWord(+mt.value)}`;
+  const changed = setFields().filter((el) => fieldVal(el) !== setSavedVals[el.name]);
+  const dirtyCats = new Set(changed.map((el) => el.closest(".set-group[data-cat]")?.dataset.cat));
+  $("set-nav").querySelectorAll("button").forEach((b) => b.classList.toggle("dirty", dirtyCats.has(b.dataset.cat)));
+  const dirty = changed.length > 0;
+  f.querySelectorAll("[data-needs]").forEach((row) => {
+    const on = f.elements[row.dataset.needs].checked;
+    row.classList.toggle("off", !on);
+    row.querySelectorAll("input, select").forEach((el) => (el.disabled = !on));
+  });
+  document.querySelector(".savebar").classList.toggle("dirty", dirty);
+  $("set-dirty").textContent = dirty ? "Unsaved changes" : "All changes saved";
+}
+$("set-form").addEventListener("input", syncSettings);
+$("set-form").addEventListener("change", syncSettings);
 $("set-form").onsubmit = async (e) => {
   e.preventDefault();
   const out = {};
   for (const el of e.target.elements) {
     if (!el.name) continue;
     out[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.dataset.num ? +el.value : el.value;
+    if (el.dataset.scale) out[el.name] = Math.round(out[el.name] * +el.dataset.scale);
   }
-  await api("/api/settings", { method: "POST", body: out });
-  toast("Settings saved. Re-run auto match if you changed strictness or extra numbering.");
+  try { await api("/api/settings", { method: "POST", body: out }); }
+  catch (err) { toast(err.message); return; }
+  rememberSaved(); syncSettings();
+  toast("Settings saved");
 };
+
+// copy buttons for the links other apps use. navigator.clipboard only exists on https or localhost,
+// so on a plain-http LAN address fall back to the old select-and-copy
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+  ta.remove();
+  return ok;
+}
+document.querySelector(".set-links").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-copy]");
+  if (!b) return;
+  const ok = await copyText($(b.dataset.copy).textContent);
+  b.textContent = ok ? "Copied" : "Copy failed";
+  clearTimeout(b._t); b._t = setTimeout(() => (b.textContent = "Copy"), 1600);
+});
 
 // ---------------------------------------------------------------- local channels
 let mcEditing = null, mcList = [];

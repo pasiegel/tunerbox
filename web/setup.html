@@ -173,48 +173,74 @@
 
   <!-- settings -->
   <section id="tab-settings" class="hidden">
-    <form id="set-form" class="form">
-      <label>First number for extra channels <input name="extra_channel_start" type="number"></label>
-      <label>Auto-match strictness (60-100) <input name="match_threshold" type="number" min="60" max="100"></label>
-      <label class="chk"><input type="checkbox" name="hide_unmapped"> Hide lineup channels with no feed</label>
-      <label class="chk"><input type="checkbox" name="extras_enabled"> Show extra channels</label>
-      <label class="chk"><input type="checkbox" name="network_fallback"> Use national network feed when a local station has no stream (e.g. the NBC feed for your local NBC station)</label>
-      <label>Full playlist scan <select name="scan_hour" data-num="1">
-        <option value="-1">Every 24 hours from the last scan</option><option value="0">12:00 AM</option><option value="1">1:00 AM</option><option value="2">2:00 AM</option><option value="3">3:00 AM</option><option value="4">4:00 AM</option><option value="5">5:00 AM</option><option value="6">6:00 AM</option><option value="7">7:00 AM</option><option value="8">8:00 AM</option><option value="9">9:00 AM</option><option value="10">10:00 AM</option><option value="11">11:00 AM</option><option value="12">12:00 PM</option><option value="13">1:00 PM</option><option value="14">2:00 PM</option><option value="15">3:00 PM</option><option value="16">4:00 PM</option><option value="17">5:00 PM</option><option value="18">6:00 PM</option><option value="19">7:00 PM</option><option value="20">8:00 PM</option><option value="21">9:00 PM</option><option value="22">10:00 PM</option><option value="23">11:00 PM</option></select></label>
-      <label>Refresh playlists between scans (PPV &amp; event names) <select name="event_refresh_hours" data-num="1">
-        <option value="0">Off</option><option value="1">Every hour</option><option value="2">Every 2 hours</option>
-        <option value="3">Every 3 hours</option><option value="4">Every 4 hours</option><option value="6">Every 6 hours</option></select></label>
-      <label class="chk"><input type="checkbox" name="probe_streams"> Check streams work during scans</label>
-      <label class="chk"><input type="checkbox" name="probe_xtream"> Also check Xtream streams (uses provider connections)</label>
-      <label>Stream cache (default for every screen) <select name="stream_buffer" data-num="1">
-        <option value="0">Off: fastest channel changes</option><option value="5">5 seconds</option><option value="10">10 seconds</option>
-        <option value="20">20 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select></label>
-      <label class="chk"><input type="checkbox" name="sleep_enabled"> Sleep timer: turn a TV screen off when nobody presses a button</label>
-      <label>Sleep timer: turn off after <select name="sleep_hours" data-num="1">
-        <option value="1">1 hour</option><option value="2">2 hours</option><option value="3">3 hours</option><option value="4">4 hours</option>
-        <option value="6">6 hours</option><option value="8">8 hours</option><option value="12">12 hours</option></select></label>
-      <label class="chk"><input type="checkbox" name="screensaver_enabled"> Screensaver when a TV screen is off</label>
-      <label>Screensaver starts after <select name="screensaver_minutes" data-num="1">
-        <option value="1">1 minute</option><option value="2">2 minutes</option><option value="5">5 minutes</option><option value="10">10 minutes</option>
-        <option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
-      <label>Local channels picture size <select name="media_resolution">
-        <option value="1080">1080p (best)</option><option value="720">720p (less CPU)</option></select></label>
-      <label>First number for local channels <input name="media_channel_start" type="number"></label>
-      <label>Playback video <select name="video_mode"><option value="copy">Original (fast)</option><option value="h264">Re-encode to H.264 (compatibility)</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
-      <label>Recordings folder <input name="recordings_dir"></label>
-      <label>Start recording early (sec) <input name="dvr_pad_before" type="number"></label>
-      <label>Keep recording after (sec) <input name="dvr_pad_after" type="number"></label>
-      <label>Lineup CSV <input name="lineup_csv"></label>
-      <label>ffmpeg path <input name="ffmpeg"></label>
-      <label>Tuners offered to Plex/Emby/Jellyfin (0 = automatic) <input name="tuner_count" type="number" min="0" max="32"></label>
-      <div class="wide"><button class="btn primary">Save settings</button></div>
+    <div class="set-layout">
+    <nav class="set-nav" id="set-nav" aria-label="Settings categories"></nav>
+    <div class="set-main">
+    <form id="set-form">
+      <div class="set-group" data-cat="channels" data-label="Channels">
+        <h4>Channels &amp; matching</h4>
+        <label class="set-row"><span class="set-text"><b>Auto-match strictness</b><small>How closely a playlist channel's name must match. Re-run auto match after changing.</small></span><span class="range-field"><input name="match_threshold" type="range" min="60" max="100" step="1" data-num="1"><output id="mt-val"></output></span></label>
+        <label class="set-row"><span class="set-text"><b>Hide channels with no feed</b><small>Lineup channels nothing is mapped to stay out of the guide.</small></span><input type="checkbox" class="toggle" name="hide_unmapped"></label>
+        <label class="set-row"><span class="set-text"><b>Show extra channels</b><small>Playlist channels that aren't on your lineup, numbered from the number below.</small></span><input type="checkbox" class="toggle" name="extras_enabled"></label>
+        <label class="set-row" data-needs="extras_enabled"><span class="set-text"><b>First extra channel number</b></span><input name="extra_channel_start" type="number" min="1"></label>
+        <label class="set-row"><span class="set-text"><b>Use national network feeds</b><small>When your local station has no stream, play the national feed (e.g. NBC for your local NBC station).</small></span><input type="checkbox" class="toggle" name="network_fallback"></label>
+        <label class="set-row"><span class="set-text"><b>First local channel number</b><small>Where channels made from your own video folders start.</small></span><input name="media_channel_start" type="number" min="1"></label>
+        <label class="set-row"><span class="set-text"><b>Sports &amp; PPV countries</b><small>Country codes of playlist groups to show: US, or US,CA,UK, or * for all.</small></span><input name="sports_regions" placeholder="US"></label>
+      </div>
+
+      <div class="set-group" data-cat="scanning" data-label="Scanning &amp; guide">
+        <h4>Scanning &amp; guide</h4>
+        <label class="set-row"><span class="set-text"><b>Full playlist scan</b><small>Reloads playlists, checks streams and re-matches channels.</small></span><select name="scan_hour" data-num="1"><option value="-1">Every 24 hours</option><option value="0">Daily at 12:00 AM</option><option value="1">Daily at 1:00 AM</option><option value="2">Daily at 2:00 AM</option><option value="3">Daily at 3:00 AM</option><option value="4">Daily at 4:00 AM</option><option value="5">Daily at 5:00 AM</option><option value="6">Daily at 6:00 AM</option><option value="7">Daily at 7:00 AM</option><option value="8">Daily at 8:00 AM</option><option value="9">Daily at 9:00 AM</option><option value="10">Daily at 10:00 AM</option><option value="11">Daily at 11:00 AM</option><option value="12">Daily at 12:00 PM</option><option value="13">Daily at 1:00 PM</option><option value="14">Daily at 2:00 PM</option><option value="15">Daily at 3:00 PM</option><option value="16">Daily at 4:00 PM</option><option value="17">Daily at 5:00 PM</option><option value="18">Daily at 6:00 PM</option><option value="19">Daily at 7:00 PM</option><option value="20">Daily at 8:00 PM</option><option value="21">Daily at 9:00 PM</option><option value="22">Daily at 10:00 PM</option><option value="23">Daily at 11:00 PM</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Refresh playlists between scans</b><small>Picks up tonight's PPV and event names without a full scan.</small></span><select name="event_refresh_hours" data-num="1"><option value="0">Off</option><option value="1">Every hour</option><option value="2">Every 2 hours</option><option value="3">Every 3 hours</option><option value="4">Every 4 hours</option><option value="6">Every 6 hours</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Refresh the TV guide</b></span><select name="epg_refresh_hours" data-num="1"><option value="6">Every 6 hours</option><option value="12">Every 12 hours</option><option value="24">Once a day</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Check streams during scans</b><small>Marks feeds that don't play, so working backups are used first.</small></span><input type="checkbox" class="toggle" name="probe_streams"></label>
+        <label class="set-row" data-needs="probe_streams"><span class="set-text"><b>Also check Xtream streams</b><small>Uses your provider's connections while it runs.</small></span><input type="checkbox" class="toggle" name="probe_xtream"></label>
+        <label class="set-row" data-needs="probe_streams"><span class="set-text"><b>Streams checked at once</b></span><span class="unit-field"><input name="probe_concurrency" type="number" min="1" max="64"><em>streams</em></span></label>
+        <label class="set-row" data-needs="probe_streams"><span class="set-text"><b>Stream check timeout</b><small>How long to wait before calling a stream dead.</small></span><span class="unit-field"><input name="probe_timeout" type="number" min="3" max="60"><em>sec</em></span></label>
+      </div>
+
+      <div class="set-group" data-cat="playback" data-label="Playback">
+        <h4>Playback</h4>
+        <label class="set-row"><span class="set-text"><b>Video</b><small>Re-encoding helps older TVs and Roku but uses more CPU. Each playlist can override this.</small></span><select name="video_mode"><option value="copy">Original (fast)</option><option value="h264">Re-encode to H.264</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Stream cache</b><small>Seconds of video buffered before playing. Each screen can change its own in the Menu.</small></span><select name="stream_buffer" data-num="1"><option value="0">Off (fastest changes)</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Local channels picture size</b></span><select name="media_resolution"><option value="1080">1080p (best)</option><option value="720">720p (less CPU)</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Tuners offered to Plex / Emby / Jellyfin</b><small>0 = automatic.</small></span><span class="unit-field"><input name="tuner_count" type="number" min="0" max="32"><em>tuners</em></span></label>
+      </div>
+
+      <div class="set-group" data-cat="dvr" data-label="DVR">
+        <h4>DVR</h4>
+        <label class="set-row"><span class="set-text"><b>Recordings folder</b><small>Only changeable on the TunerBox PC.</small></span><input name="recordings_dir"></label>
+        <label class="set-row"><span class="set-text"><b>Start recording early</b><small>Before the show starts.</small></span><span class="unit-field"><input name="dvr_pad_before" type="number" min="0" max="60" step="0.5" data-scale="60"><em>min</em></span></label>
+        <label class="set-row"><span class="set-text"><b>Keep recording after</b><small>After the show ends.</small></span><span class="unit-field"><input name="dvr_pad_after" type="number" min="0" max="240" step="0.5" data-scale="60"><em>min</em></span></label>
+      </div>
+
+      <div class="set-group" data-cat="screens" data-label="Screens">
+        <h4>Screens</h4>
+        <label class="set-row"><span class="set-text"><b>Sleep timer</b><small>Turn a TV screen off when nobody presses a button. Never during a recording or while a phone remote is open.</small></span><input type="checkbox" class="toggle" name="sleep_enabled"></label>
+        <label class="set-row" data-needs="sleep_enabled"><span class="set-text"><b>Turn off after</b></span><select name="sleep_hours" data-num="1"><option value="1">1 hour</option><option value="2">2 hours</option><option value="3">3 hours</option><option value="4">4 hours</option><option value="6">6 hours</option><option value="8">8 hours</option><option value="12">12 hours</option></select></label>
+        <label class="set-row"><span class="set-text"><b>Screensaver</b><small>Shown on a TV screen once it's off.</small></span><input type="checkbox" class="toggle" name="screensaver_enabled"></label>
+        <label class="set-row" data-needs="screensaver_enabled"><span class="set-text"><b>Screensaver starts after</b></span><select name="screensaver_minutes" data-num="1"><option value="1">1 minute</option><option value="2">2 minutes</option><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
+      </div>
+
+      <div class="set-group" data-cat="advanced" data-label="Advanced">
+        <h4>Advanced</h4>
+        <label class="set-row wide"><span class="set-text"><b>User-Agent</b><small>Sent to providers when reading playlists and streams.</small></span><input name="user_agent"></label>
+        <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC.</small></span><input name="lineup_csv"></label>
+        <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC.</small></span><input name="ffmpeg"></label>
+      </div>
     </form>
-    <h3>Use TunerBox in other apps</h3>
-    <ul class="muted links">
-      <li>M3U playlist: <code id="u-m3u"></code></li>
-      <li>XMLTV guide: <code id="u-epg"></code></li>
-      <li>Plex / Emby / Jellyfin: add an HDHomeRun tuner at <code id="u-hdhr"></code></li>
-    </ul>
+
+    <div class="set-group" data-cat="apps" data-label="Other apps">
+      <h4>Use TunerBox in other apps</h4>
+      <div class="set-links">
+        <div><span class="muted small">M3U playlist</span><span class="copy-field"><code id="u-m3u"></code><button type="button" class="btn small" data-copy="u-m3u">Copy</button></span></div>
+        <div><span class="muted small">XMLTV guide</span><span class="copy-field"><code id="u-epg"></code><button type="button" class="btn small" data-copy="u-epg">Copy</button></span></div>
+        <div><span class="muted small">Plex / Emby / Jellyfin: add an HDHomeRun tuner at</span><span class="copy-field"><code id="u-hdhr"></code><button type="button" class="btn small" data-copy="u-hdhr">Copy</button></span></div>
+      </div>
+    </div>
+    <div class="savebar"><span id="set-dirty" class="muted small">All changes saved</span><button class="btn primary" id="set-save" form="set-form">Save settings</button></div>
+    </div>
+    </div>
   </section>
 </main>
 
