@@ -13,7 +13,7 @@ function listNav(listEl, key, onPick) {
   items[i].classList.add("sel"); items[i].scrollIntoView({ block: "nearest" });
 }
 function fillList(listEl, entries, sel = 0) {
-  listEl.innerHTML = entries.map((e, i) => `<li class="${i === sel ? "sel" : ""}" data-i="${i}">${e.html ?? esc(e.label)}${e.right ? `<span class="r">${e.right}</span>` : ""}</li>`).join("");
+  listEl.innerHTML = entries.map((e, i) => `<li class="${i === sel ? "sel" : ""}${e.cls ? ` ${e.cls}` : ""}" data-i="${i}">${e.html ?? esc(e.label)}${e.right ? `<span class="r">${e.right}</span>` : ""}</li>`).join("");
 }
 
 let dlg = { entries: [] };

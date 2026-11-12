@@ -1,6 +1,7 @@
 """Search plus the Sports & PPV area.
 
-* Sports on now / coming up come from the guide (program categories).
+* Sports on now / coming up come from the guide (program categories), plus the games of the leagues
+  picked in Settings (scoreboard.py): those are matched to a guide listing or an event feed.
 * Sports channels are lineup/extra channels that look like sports networks.
 * Events & PPV are playlist groups of event feeds (ESPN+, Peacock events, PPV, NFL/NBA team
   feeds...). Those only carry video while something is on, so the stream check usually marks
@@ -14,7 +15,7 @@ import time
 
 from rapidfuzz import fuzz, process
 
-from . import config, db, epg, guide, probe
+from . import config, db, epg, guide, probe, scoreboard
 from .text import is_foreign, norm
 
 SPORT_CATEGORY = re.compile(
@@ -159,19 +160,83 @@ def _chan_out(c):
     return {"number": c["number"], "name": c["name"], "label": c["label"], "logo": c["logo"]}
 
 
-def _sport_programs(start, stop):
+def _sport_programs(start, stop, evs=()):
+    """Guide listings that are sports (by category) or carry one of the scoreboard games `evs`.
+    With games, listings that ended in the last few hours come back too: a game can run long."""
     chans = guide.channels()
     by_epg = _channels_by_epg(chans)
+    lo = start - OVERRUN if evs else start
+    matched = scoreboard.match_programs(evs, by_epg, lo, stop, sport_of=sport_type,
+                                        cache_key=(id(_base()), db.get_meta("epg_updated", "")))
+    by_id = {e["id"]: e for e in evs}
+    rows = db.rows("SELECT * FROM programs WHERE stop > ? AND start < ? AND category != '' ORDER BY start", (start, stop))
+    have = {(p["channel"], p["start"]) for p in rows}
+    with db.conn() as con:          # the matched listings that query left out (no category, or already over)
+        for k in matched.keys() - have:
+            r = con.execute("SELECT * FROM programs WHERE channel=? AND start=?", k).fetchone()
+            if r:
+                rows.append(dict(r))
+    rows.sort(key=lambda p: p["start"])
     out = []
-    for p in db.rows("SELECT * FROM programs WHERE stop > ? AND start < ? AND category != '' ORDER BY start",
-                     (start, stop)):
+    for p in rows:
         c = by_epg.get(p["channel"])
-        if not c or not is_sport_program(p):
+        ev = by_id.get(matched.get((p["channel"], p["start"])))
+        if not c or not (ev or is_sport_program(p)):
             continue
         q = dict(p)
         q.pop("channel", None)
         q["ch"] = _chan_out(c)
+        q["game"] = ev
         out.append(q)
+    return out
+
+
+OVERRUN = 4 * 3600
+
+
+def _one_per_game(progs, now):
+    """One listing per scoreboard game (the first: on now before later, lowest channel). A listing
+    that already ended only stays if the game is still being played and nothing else carries it:
+    the game ran long, and the channel is still on it whatever the guide says."""
+    seen, out = set(), []
+    for p in sorted(progs, key=lambda p: p["stop"] <= now):      # stable: listings still on air first
+        ev = p.pop("game", None)
+        if ev:
+            if ev["id"] in seen or (p["stop"] <= now and ev["state"] != "in"):
+                continue
+            seen.add(ev["id"])
+            if p["stop"] <= now:
+                p["stop"] = now + 1800
+            p["event"] = scoreboard.public(ev)
+            p["is_live"] = int(ev["state"] == "in" or (ev["state"] == "pre" and bool(p["is_live"])))
+        elif p["stop"] <= now:
+            continue
+        out.append(p)
+    return out, seen
+
+
+def _game_items(evs, taken, now):
+    """Scoreboard games with no guide listing: on an event feed if a feed's name has both teams,
+    otherwise listed without a channel (unless that's switched off in Settings)."""
+    # "pre" long after the start time is a postponed game or a scoreboard that stopped updating
+    evs = [e for e in evs if e["id"] not in taken
+           and (e["state"] == "in" or (e["state"] == "pre" and e["start"] > now - 3600))]
+    if not evs:
+        return []
+    feeds = [({**f, "kind": g["kind"]}, scoreboard.candidates(f["name"]))
+             for g in event_groups() for f in g["feeds"] if not f["slot"]]
+    feeds.sort(key=lambda ft: ft[0]["status"] != "ok")          # a feed that's live right now first
+    finder = scoreboard.Finder(feeds)
+    show_all = config.get("sports_show_unmatched", True)
+    out = []
+    for ev in evs:
+        feed = finder.find(scoreboard.event_keys(ev))
+        if not feed and not show_all:
+            continue
+        pub = scoreboard.public(ev)
+        out.append({"title": pub["name"], "subtitle": pub["league_name"], "descr": "", "category": "Sports",
+                    "start": ev["start"], "stop": max(ev["start"] + 3 * 3600, now + 1800 if ev["state"] == "in" else 0),
+                    "is_live": int(ev["state"] == "in"), "is_new": 0, "ch": None, "feed": feed, "event": pub})
     return out
 
 
@@ -205,18 +270,28 @@ def _sports_channels(allc):
     return _sc_cache["list"]
 
 
+def _ch_num(p):
+    return p["ch"]["number"] if p["ch"] else 10 ** 9
+
+
 def overview():
     now = int(time.time())
-    progs = _sport_programs(now, now + 2 * 86400)
+    evs = scoreboard.events(now - 8 * 3600, now + 2 * 86400)
+    progs = _sport_programs(now, now + 2 * 86400, evs)
     progs.sort(key=lambda p: (p["start"] > now, p["start"] if p["start"] > now else 0, p["ch"]["number"]))
-    progs = _dedupe(progs, now)
+    progs, taken = _one_per_game(progs, now)
+    progs = _dedupe(progs, now) + _game_items(evs, taken, now)
     on_now = [p for p in progs if p["start"] <= now]
-    upcoming = [p for p in progs if p["start"] > now][:200]
+    upcoming = sorted((p for p in progs if p["start"] > now), key=lambda p: (p["start"], _ch_num(p)))[:300]
+    for p in progs:
+        if p.get("event"):
+            p["sport"] = p["event"]["sport"]
     for p in on_now:
-        p["sport"] = sport_type(p)
-    # LIVE broadcasts first, then the rest; within each: earliest start, sport (unknown last), name
-    on_now.sort(key=lambda p: (not p["is_live"], p["start"], not p["sport"], p["sport"], _natural(p["title"]),
-                               p["ch"]["number"]))
+        p.setdefault("sport", sport_type(p))
+    # games nothing here carries go last. Then LIVE broadcasts first, then the rest; within each:
+    # earliest start, sport (unknown last), name
+    on_now.sort(key=lambda p: (not (p["ch"] or p.get("feed")), not p["is_live"], p["start"], not p["sport"], p["sport"],
+                               _natural(p["title"]), _ch_num(p)))
 
     chans = _sports_channels(guide.channels())
     cur = epg.programs({c["epg"] for c in chans if c["epg"]}, now, now + 1)

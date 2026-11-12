@@ -176,8 +176,13 @@ async function loadSports() {
   $("sp-list").innerHTML = '<li class="msg">Loading…</li>';
   let d; try { d = await api("/api/sports"); } catch (e) { $("sp-list").innerHTML = `<li class="msg">${esc(e.message)}</li>`; return; }
   const items = [
-    ...d.on_now.map((p) => p.key ? feedRow(p) : { title: p.title, sub: `${p.ch.number} ${p.ch.label || p.ch.name}`, badge: "ON NOW", live: true,
-      logo: p.ch.logo, cmd: { type: "tune", number: p.ch.number } }),
+    // scoreboard games carry a score; ones without a channel play from an event feed, or are left out
+    ...d.on_now.filter((p) => p.ch || p.feed).map((p) => {
+      const score = p.event ? [p.event.score, p.event.detail].filter(Boolean).join(" · ") : "";
+      if (!p.ch) return { ...feedRow(p.feed), title: p.title, sub: [score, p.feed.name].filter(Boolean).join(" · "), badge: "ON NOW", live: true };
+      return { title: p.title + (p.event && p.subtitle ? `: ${p.subtitle}` : ""), sub: [`${p.ch.number} ${p.ch.label || p.ch.name}`, score].filter(Boolean).join(" · "),
+               badge: "ON NOW", live: true, logo: p.ch.logo, cmd: { type: "tune", number: p.ch.number } };
+    }),
     ...d.channels.map((c) => ({ title: `${c.number}  ${c.label || c.name}`, sub: c.now ? c.now.title : "Sports channel", logo: c.logo, cmd: { type: "tune", number: c.number } })),
     ...d.groups.filter((g) => g.named).map((g) => ({ title: g.name, sub: `${g.named} event${g.named === 1 ? "" : "s"}${g.live ? ` · ${g.live} live` : ""}`,
       badge: g.kind === "ppv" ? "PPV" : "EVENTS", open: () => openGroup(g.name) })),

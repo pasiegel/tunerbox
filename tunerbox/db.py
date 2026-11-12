@@ -114,6 +114,13 @@ CREATE TABLE IF NOT EXISTS reminders (
     created INTEGER DEFAULT 0,
     UNIQUE (number, start)
 );
+CREATE TABLE IF NOT EXISTS sports_events (  -- games from the scoreboard (see scoreboard.py)
+    id TEXT PRIMARY KEY,           -- <league>:<ESPN event id>
+    league TEXT NOT NULL,
+    day TEXT NOT NULL,             -- the scoreboard day it was listed under (YYYYMMDD)
+    start INTEGER NOT NULL,
+    data TEXT NOT NULL             -- JSON
+);
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS source_groups (   -- every group in the playlist, kept or not
     source_id INTEGER NOT NULL,

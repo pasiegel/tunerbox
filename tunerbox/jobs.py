@@ -5,7 +5,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, sources
+from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, scoreboard, sources
 
 log = logging.getLogger("tunerbox.jobs")
 _lock = threading.Lock()
@@ -171,6 +171,7 @@ def housekeeping():
                     refresh_epg()
                 elif has_sources and quick_due(now):
                     quick_refresh()
+            scoreboard.tick(now)       # games and scores, in its own thread
             # local channels: keep two days of listings ahead
             if now - int(db.get_meta("media_epg", 0) or 0) > 3600:
                 media.write_epg()

@@ -432,6 +432,28 @@ showSetCat(savedCat);
 
 const matchWord = (v) => v >= 98 ? "exact" : v >= 90 ? "strict" : v >= 78 ? "balanced" : "loose";
 
+// Sports leagues: tick boxes grouped by sport. What's saved is the hidden sports_leagues field
+// (comma-separated here, sent as a list), so the form's load / save / unsaved-changes code covers it.
+let leagueList = null;
+function syncLeagues() {
+  const want = new Set($("set-form").elements.sports_leagues.value.split(",").filter(Boolean));
+  $("league-grid").querySelectorAll("input").forEach((b) => (b.checked = want.has(b.value)));
+  $("league-count").innerHTML = want.size ? `<b>${want.size}</b> selected` : "Off · TV guide only";
+}
+async function loadLeagues() {
+  if (!leagueList) {
+    leagueList = await api("/api/sports/leagues");
+    const sports = [...new Set(leagueList.map((l) => l.sport))];
+    $("league-grid").innerHTML = sports.map((s) => `<span class="sport">${esc(s)}</span><div class="chips">${leagueList.filter((l) => l.sport === s)
+      .map((l) => `<label class="chip"><input type="checkbox" value="${esc(l.key)}"><span>${esc(l.name)}</span></label>`).join("")}</div>`).join("");
+  }
+  syncLeagues();
+}
+$("league-grid").addEventListener("change", () => {      // runs before the form's own change handler
+  $("set-form").elements.sports_leagues.value = [...$("league-grid").querySelectorAll("input:checked")].map((b) => b.value).sort().join(",");
+  syncLeagues();
+});
+
 loaders.settings = async () => {
   settings = await api("/api/settings");
   const f = $("set-form");
@@ -439,11 +461,13 @@ loaders.settings = async () => {
     if (!el.name || !(el.name in settings)) continue;
     const v = settings[el.name];
     if (el.type === "checkbox") { el.checked = !!v; continue; }
+    if (el.dataset.list) { el.value = [...v].sort().join(","); continue; }
     const shown = el.dataset.scale ? v / +el.dataset.scale : v;
     // a value set in settings.json that the list doesn't offer: show it rather than silently saving another
     if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(shown))) el.add(new Option(String(shown), String(shown)));
     el.value = String(shown);
   }
+  try { await loadLeagues(); } catch (e) { $("league-grid").textContent = e.message; }
   rememberSaved(); syncSettings();
   $("u-m3u").textContent = location.origin + "/playlist.m3u";
   $("u-epg").textContent = location.origin + "/epg.xml";
@@ -481,6 +505,7 @@ $("set-form").onsubmit = async (e) => {
     if (!el.name) continue;
     out[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.dataset.num ? +el.value : el.value;
     if (el.dataset.scale) out[el.name] = Math.round(out[el.name] * +el.dataset.scale);
+    if (el.dataset.list) out[el.name] = el.value.split(",").filter(Boolean);
   }
   try { await api("/api/settings", { method: "POST", body: out }); }
   catch (err) { toast(err.message); return; }

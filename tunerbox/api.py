@@ -14,7 +14,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, sources, sports
+from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, scoreboard, sources, sports
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
 
@@ -189,6 +189,11 @@ def api_search(q: str = ""):
 @app.get("/api/sports")
 def api_sports():
     return sports.overview()
+
+
+@app.get("/api/sports/leagues")
+def api_sports_leagues():
+    return scoreboard.league_list()
 
 
 @app.get("/api/sports/group")
@@ -422,7 +427,10 @@ def api_save_settings(request: Request, data: dict = Body(...)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     before = (config.get("gracenote") or {}).get("lineup_id") or ""
+    leagues = scoreboard.selected()
     config.update(data)
+    if scoreboard.selected() != leagues:
+        scoreboard.tick(force=True)     # fetch the newly picked leagues now, not at the next refresh
     after = (config.get("gracenote") or {}).get("lineup_id") or ""
     if before and after != before:
         # a different provider has different channel numbers: drop the old ones (your

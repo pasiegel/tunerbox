@@ -162,6 +162,7 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
 * **Sports & PPV** (`T`, or Menu › Sports & PPV) has four tabs:
   * **On Now:** live games from the guide.
   * **Coming Up:** the next 2 days. OK opens the record options.
+  * **Live games and scores.** Pick the leagues you follow in Setup › Settings › **Sports** (NFL, college football, NBA, college basketball, MLB and NHL to start with; WNBA and soccer leagues are there too). Their games come from ESPN's public scoreboard, which needs no account, and each one is matched to a guide listing or an event feed by team names and start time. Matched games show in On Now and Coming Up with the score, even when the guide doesn't label the listing as sports or the game runs past its slot. Games none of your channels carry are listed dimmed with where they air; turn that off with *List games you have no channel for*.
   * **Sports Channels:** sports networks with what's on now.
   * **Events & PPV:** event groups from your playlists, such as PPV, ESPN+, Peacock events, and NFL/NBA/NHL team feeds.
 * **Event feeds only carry video while an event is on**, so the playlist scan usually marks them dead and they get no channel number.

@@ -160,20 +160,32 @@ function closeSports() {
 const spCounts = () => SP.data ? [SP.data.on_now.length, SP.data.upcoming.length, SP.data.channels.length, SP.data.groups.length] : [0, 0, 0, 0];
 const ago = (t) => { const m = Math.round((now() - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 
+// A row of On Now / Coming Up. Games from the scoreboard (p.event) carry a score, and may have no
+// guide listing: then they play from an event feed (p.feed), or nothing here carries them.
+function spGame(p, badge, until) {
+  const e = p.event, score = e && [e.score, e.detail].filter(Boolean).join(" · ");
+  // title, matchup and score are separate pieces, so a phone can stack them (tv.css: li.game)
+  const html = `${badge}<span class="sp-main"><span class="sp-t">${esc(p.title)}</span>${p.subtitle ? `<small class="sp-s">${esc(p.subtitle)}</small>` : ""}</span>`
+    + (score ? `<small class="score">${esc(score)}</small>` : "");
+  const cls = "game";
+  if (p.ch) return { cls, html, right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}${until ? ` · until ${fmtTime(p.stop)}` : ""}`, act: () => pickProgram(p) };
+  if (p.feed) return { cls, html, right: esc(p.feed.group || "Event feed"), act: () => { closePanels(); playFeed(p.feed); } };
+  const on = e.on.length ? `on ${e.on.join(", ")}` : "";
+  return { cls: "game nochan", html, right: esc(on ? `${on} · no channel` : "no channel"),
+           act: () => toast(`${e.name}: none of your channels or event feeds has it${on ? ` (it's ${on})` : ""}`, 4000) };
+}
 function spItems() {
   const d = SP.data, n0 = now(), id = SP_TABS[SP.tab][0];
   const none = (label) => [{ label }];
   if (id === "now") {
-    return d.on_now.length ? d.on_now.map((p) => ({
-      html: progHtml(p, p.is_live ? '<span class="badge live">LIVE</span>' : '<span class="badge">ON</span>'),
-      right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)} · until ${fmtTime(p.stop)}`, act: () => pickProgram(p),
-    })) : none("No sports on right now, according to the TV guide.");
+    return d.on_now.length ? d.on_now.map((p) =>
+      spGame(p, p.is_live ? '<span class="badge live">LIVE</span>' : `<span class="badge${p.ch || p.feed ? "" : " off"}">${p.ch || p.feed ? "ON" : "SOON"}</span>`, true))
+      : none("No sports on right now.");
   }
   if (id === "up") {
-    return d.upcoming.length ? d.upcoming.map((p) => ({
-      html: progHtml(p, `<span class="badge">${esc(fmtWhen(p.start))}</span>`),
-      right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}`, act: () => pickProgram(p),
-    })) : none("No upcoming sports in the TV guide.");
+    return d.upcoming.length ? d.upcoming.map((p) =>
+      spGame(p, `<span class="badge${p.ch || p.feed ? "" : " off"}">${esc(fmtWhen(p.start))}</span>`))
+      : none("No upcoming sports.");
   }
   if (id === "ch") {
     return d.channels.length ? d.channels.map((c) => ({

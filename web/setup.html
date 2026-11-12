@@ -185,6 +185,16 @@
         <label class="set-row" data-needs="extras_enabled"><span class="set-text"><b>First extra channel number</b></span><input name="extra_channel_start" type="number" min="1"></label>
         <label class="set-row"><span class="set-text"><b>Use national network feeds</b><small>When your local station has no stream, play the national feed (e.g. NBC for your local NBC station).</small></span><input type="checkbox" class="toggle" name="network_fallback"></label>
         <label class="set-row"><span class="set-text"><b>First local channel number</b><small>Where channels made from your own video folders start.</small></span><input name="media_channel_start" type="number" min="1"></label>
+      </div>
+
+      <div class="set-group" data-cat="sports" data-label="Sports">
+        <h4>Sports</h4>
+        <div class="set-block">
+          <div class="set-head"><span class="set-text"><b>Leagues to follow</b><small>Their games are looked up on ESPN's scoreboard and matched to your channels and event feeds, so they show under Sports › On Now and Coming Up with live scores.</small></span><output id="league-count"></output></div>
+          <input type="hidden" name="sports_leagues" data-list="1">
+          <div class="league-grid" id="league-grid"></div>
+        </div>
+        <label class="set-row"><span class="set-text"><b>List games you have no channel for</b><small>Games that none of your channels or event feeds carry are still listed, with where they air.</small></span><input type="checkbox" class="toggle" name="sports_show_unmatched"></label>
         <label class="set-row"><span class="set-text"><b>Sports &amp; PPV countries</b><small>Country codes of playlist groups to show: US, or US,CA,UK, or * for all.</small></span><input name="sports_regions" placeholder="US"></label>
       </div>
 

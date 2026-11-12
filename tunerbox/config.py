@@ -84,6 +84,11 @@ DEFAULTS = {
     "probe_xtream": False,
     # Sports & PPV: country codes of playlist groups to show ("US", "US,CA,UK", or "*" for all)
     "sports_regions": "US",
+    # Leagues whose games are looked up on ESPN's scoreboard and matched to your channels, so they
+    # show under Sports > On Now / Coming Up with scores (keys are in scoreboard.py; [] = off)
+    "sports_leagues": ["nfl", "ncaaf", "nba", "ncaab", "mlb", "nhl"],
+    # Also list games that none of your channels or event feeds carry
+    "sports_show_unmatched": True,
     "probe_concurrency": 16,
     "probe_timeout": 10,
     # Playback: "copy" keeps the original video (fast), "h264" re-encodes (compatibility)
@@ -286,6 +291,8 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
         v = _check_value(k, v, DEFAULTS[k])
         if k == "xmltv_sources":
             v = [str(u).strip() for u in v if str(u).strip()]
+        elif k == "sports_leagues":
+            v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
         if k in PC_ONLY and not from_pc:
