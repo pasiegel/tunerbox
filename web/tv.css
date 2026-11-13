@@ -304,6 +304,7 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .od-tabs { flex: 1; min-width: 0; display: flex; align-items: stretch; gap: .3em; overflow: hidden; }
 .od-tab { display: flex; align-items: center; padding: 0 1.1em; font-size: 1.2em; color: #dbe6ff; cursor: pointer; white-space: nowrap; }
 .od-tab small { font-weight: 400; font-size: .8em; margin-left: .5em; }
+.od-ts { display: none; }
 .od-tab.sel { background: #ffffff2b; color: #fff; box-shadow: inset 0 -.2em 0 var(--hl); }
 .od-tab.sel.focus, .od-tab.focus { background: var(--hl); color: var(--hl-text); box-shadow: none; }
 .od-crumb { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 1em; padding: 0 1em; font-size: 1.15em; white-space: nowrap; }
@@ -355,11 +356,40 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .phone #od-info { padding: 0; }
 .phone #odi-title { font-size: 17px; } .phone #odi-sub { font-size: 14px; } .phone #odi-meta { font-size: 13px; }
 .phone #odi-desc { font-size: 13px; line-height: 1.3; } .phone #odi-cast { display: none; }
-.phone .od-head { height: 38px; overflow-x: auto; }
-.phone .od-tab { font-size: 14px; padding: 0 10px; }
+.phone .od-head { height: 38px; }
+/* the tabs swipe sideways when they don't fit; counts and long names make room */
+.phone .od-tabs { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; gap: 0; -webkit-overflow-scrolling: touch; }
+.phone .od-tabs::-webkit-scrollbar { display: none; }
+.phone .od-tab { flex: none; font-size: 14px; padding: 0 11px; }
+.phone .od-tab small, .phone .od-tl { display: none; }
+.phone .od-ts { display: inline; }
 .phone .od-side li { font-size: 13px; padding: 4px 8px; height: auto; min-height: 44px; }
 .phone .od-side li span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; overflow-wrap: anywhere; }
 .phone .od-side li small { font-size: 11px; }
 .phone .od-grid { padding: 8px 0 8px 8px; gap: 8px; }
+@media (max-aspect-ratio: 1/1) { .phone .od-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }   /* upright phone: 3 posters across */
 .phone .od-tile .n { font-size: 13px; } .phone .od-tile .y { font-size: 11px; }
 .phone .od-eps li .p { display: none; }
+
+/* phone on its side: little height, so a short info strip, no key hints (it's a touch screen), Close up
+   in the top-right corner instead of a strip at the bottom, clear of the notch, and bigger posters */
+@media (min-aspect-ratio: 1/1) {
+  .phone #od { padding: calc(env(safe-area-inset-top, 0px) + 6px) calc(env(safe-area-inset-right, 0px) + 8px)
+                          calc(env(safe-area-inset-bottom, 0px) + 6px) calc(env(safe-area-inset-left, 0px) + 8px); }
+  .phone:has(#od:not(.hidden)) #video.pip { top: calc(env(safe-area-inset-top, 0px) + 6px); left: calc(env(safe-area-inset-left, 0px) + 8px);
+    height: 27vh; width: 48vh; max-height: none; }
+  .phone #od .g-top { height: 29vh; padding-bottom: 6px; }
+  .phone .od-pip { flex-basis: 48vh; }
+  .phone #od-info { padding-right: 104px; }         /* room for Close */
+  .phone #odi-title { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phone #odi-sub, .phone #odi-meta { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phone #odi-desc { font-size: 12px; margin-top: 4px; -webkit-line-clamp: 2; }
+  .phone #od-foot { display: none; }
+  .phone:has(#od:not(.hidden)) #back { top: calc(env(safe-area-inset-top, 0px) + 6px); bottom: auto; right: calc(env(safe-area-inset-right, 0px) + 8px);
+                 padding: 7px 14px; font-size: 14px; }
+  .phone .od-head { height: 34px; }
+  .phone .od-label { width: 20%; padding-left: 8px; font-size: 13px; }
+  .phone .od-side { width: 20%; }
+  .phone .od-side li { min-height: 38px; }
+  .phone .od-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}

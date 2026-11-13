@@ -4,6 +4,7 @@
 // categories; Continue Watching, My List and Search cover both. A TV show opens in the same frame with its
 // seasons on the left and episodes on the right (OD.show).
 const OD_TABS = [["movie", "Movies"], ["series", "TV Shows"], ["continue", "Continue Watching"], ["list", "My List"], ["search", "Search"]];
+const OD_SHORT = { series: "Shows", continue: "Continue" };
 const OD_LISTS = 4;                     // tabs before this one show a list; Search acts on OK
 const OD_KIND = { movie: "Movies", series: "TV Shows" };
 const OD_PAGE = 160;
@@ -137,9 +138,14 @@ function odRenderHead() {
   const m = OD.counts.movie || {}, sr = OD.counts.series || {};
   const n = { movie: m.total, series: sr.total, continue: (m.continue || 0) + (sr.continue || 0), list: (m.list || 0) + (sr.list || 0) };
   $("od-tabs").innerHTML = OD_TABS.map(([id, label], i) => {
-    const text = `${label}${n[id] !== undefined ? ` <small>${(n[id] || 0).toLocaleString()}</small>` : ""}`;
+    const short = OD_SHORT[id];         // phones: "Continue" in place of "Continue Watching", so the row fits
+    const name = short ? `<span class="od-tl">${label}</span><span class="od-ts">${short}</span>` : label;
+    const text = `${name}${n[id] !== undefined ? ` <small>${(n[id] || 0).toLocaleString()}</small>` : ""}`;
     return `<div class="od-tab${i === OD.tab ? " sel" : ""}${i === OD.focus && OD.zone === "tabs" ? " focus" : ""}" data-t="${i}">${text}</div>`;
   }).join("");
+  // a narrow screen scrolls the tabs sideways: keep the current one in view
+  const cur = $("od-tabs").querySelector(".od-tab.focus") || $("od-tabs").querySelector(".od-tab.sel");
+  if (cur && $("od-tabs").scrollWidth > $("od-tabs").clientWidth) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function odRenderSide() {
   const rows = OD.show
