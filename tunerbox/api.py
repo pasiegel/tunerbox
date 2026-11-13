@@ -899,7 +899,7 @@ def out_xmltv():
 @app.get("/discover.json")
 def hdhr_discover(request: Request):
     base = _base(request)
-    return {"FriendlyName": "TunerBox", "Manufacturer": "Silicondust", "ModelNumber": "HDTC-2US",
+    return {"FriendlyName": config.box_name(), "Manufacturer": "Silicondust", "ModelNumber": "HDTC-2US",
             "FirmwareName": "hdhomeruntc_atsc", "FirmwareVersion": "20200101",
             "DeviceID": config.get("hdhr_device_id") or config.LEGACY_DEVICE_ID,
             "DeviceAuth": "tunerbox", "BaseURL": base, "LineupURL": f"{base}/lineup.json",
@@ -1050,13 +1050,22 @@ async def _setup_lock(request: Request, call_next):
     return await call_next(request)
 
 
+def _named(html):
+    """Setup's header shows the network name, so you can tell which box you're setting up. Titles and
+    home-screen apps stay "TunerBox"."""
+    name = config.box_name()
+    if name == "TunerBox":
+        return html
+    return html.replace("<small>Setup</small>", f"<small>Setup · {escape(name)}</small>")
+
+
 _ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
 
 
 def _page(name):
     """Serve a page with ?v=<file time> on its scripts/styles, so an updated TunerBox never runs
     with a script the browser or app window cached from the old version."""
-    html = (config.WEB / name).read_text(encoding="utf-8")
+    html = _named((config.WEB / name).read_text(encoding="utf-8"))
 
     def stamp(m):
         f = config.WEB / m.group(2)
