@@ -90,8 +90,8 @@ DEFAULTS = {
     "sports_leagues": ["nfl", "ncaaf", "nba", "ncaab", "mlb", "nhl"],
     # Also list games that none of your channels or event feeds carry
     "sports_show_unmatched": True,
-    # What this box is called in Plex/Emby/Jellyfin, browser tabs and home-screen icons (two TunerBoxes
-    # on one network can tell themselves apart)
+    # Network name: what this box is called when Plex, Jellyfin, Emby or Channels DVR find it as an
+    # HDHomeRun tuner, so two TunerBoxes on one network can be told apart (home-screen apps stay "TunerBox")
     "box_name": "TunerBox",
     "probe_concurrency": 16,
     "probe_timeout": 10,
@@ -250,7 +250,7 @@ def _is_num(v):
 
 
 def box_name():
-    """This box's name (Setup › Settings › Other apps)."""
+    """This box's network name (Setup › Settings › Other apps)."""
     return (get("box_name") or "").strip() or "TunerBox"
 
 

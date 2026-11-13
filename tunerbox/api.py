@@ -1033,28 +1033,12 @@ async def _setup_lock(request: Request, call_next):
 
 
 def _named(html):
-    """The page with this box's name (Settings › Other apps) in its title, home-screen name and header."""
+    """Setup's header shows the network name, so you can tell which box you're setting up. Titles and
+    home-screen apps stay "TunerBox"."""
     name = config.box_name()
     if name == "TunerBox":
         return html
-    n = escape(name, {'"': "&quot;"})
-    html = html.replace("<title>TunerBox", f"<title>{n}").replace(" · TunerBox</title>", f" · {n}</title>")
-    html = html.replace('name="apple-mobile-web-app-title" content="TunerBox"', f'name="apple-mobile-web-app-title" content="{n}"')
-    html = html.replace('name="apple-mobile-web-app-title" content="TB Remote"', f'name="apple-mobile-web-app-title" content="{n} Remote"')
-    return html.replace("<small>Setup</small>", f"<small>Setup · {n}</small>")
-
-
-@app.api_route("/static/manifest.webmanifest", methods=["GET", "HEAD"])
-@app.api_route("/static/remote.webmanifest", methods=["GET", "HEAD"])
-def web_manifest(request: Request):
-    """The home-screen app's manifest with this box's name, so two TunerBoxes get two names."""
-    remote_app = request.url.path.endswith("remote.webmanifest")
-    m = json.loads((config.WEB / ("remote.webmanifest" if remote_app else "manifest.webmanifest")).read_text(encoding="utf-8"))
-    name = config.box_name()
-    if name != "TunerBox":
-        m["name"] = f"{name} Remote" if remote_app else name
-        m["short_name"] = (f"{name} Remote" if remote_app else name)[:24]
-    return JSONResponse(m, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+    return html.replace("<small>Setup</small>", f"<small>Setup · {escape(name)}</small>")
 
 
 _ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
