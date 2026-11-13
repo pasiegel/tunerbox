@@ -398,9 +398,10 @@ def api_edit_source(sid: int, data: dict = Body(...)):
             if not on:
                 vod.clear(sid, vod.KINDS if src["type"] != "xtream" else ("movie",) if k == "vod_movies" else ("series",))
         if src["type"] != "xtream":
-            job = "refresh" if jobs.quick_refresh() else ""     # its video files move between channels and On Demand
+            job = "refresh" if jobs.quick_refresh(queue=True) else ""     # its video files move between channels and On Demand
         elif any(turned.values()):
-            job = "vod" if jobs.vod_scan(sid) else ""
+            kinds = tuple(k for k, key in (("movie", "vod_movies"), ("series", "vod_series")) if turned.get(key))
+            job = "vod" if jobs.vod_scan(sid, kinds) else ""
     guide.invalidate()
     return {"ok": True, "job": job}
 
@@ -424,9 +425,10 @@ def api_source_vod_cats_save(sid: int, hidden: list[str] = Body(..., embed=True)
     r = vod.set_hidden(sid, hidden, _kind(kind))
     if r is None:
         raise HTTPException(404)
-    if r["shown_again"]:    # those titles have to be read again
+    if r.pop("missing"):    # shown again, but never read (hidden since before titles were kept): read them
         src = db.one("SELECT type FROM sources WHERE id=?", (sid,))
-        r["job"] = ("vod" if jobs.vod_scan(sid) else "") if src["type"] == "xtream" else ("refresh" if jobs.quick_refresh() else "")
+        r["job"] = ("vod" if jobs.vod_scan(sid, (kind,)) else "") if src["type"] == "xtream" \
+            else ("refresh" if jobs.quick_refresh(queue=True) else "")
     return r
 
 
@@ -511,7 +513,10 @@ def api_save_settings(request: Request, data: dict = Body(...)):
         raise HTTPException(400, str(e))
     before = (config.get("gracenote") or {}).get("lineup_id") or ""
     leagues = scoreboard.selected()
+    adult = config.get("vod_show_adult")
     config.update(data)
+    if config.get("vod_show_adult") != adult:
+        jobs.vod_scan()             # adult titles are left out (or kept) while the lists are read
     if scoreboard.selected() != leagues:
         scoreboard.tick(force=True)     # fetch the newly picked leagues now, not at the next refresh
     after = (config.get("gracenote") or {}).get("lineup_id") or ""
@@ -699,6 +704,19 @@ def api_vod_title(title_id: str):
     if not t:
         raise HTTPException(404, "That title is no longer in the playlist")
     return t
+
+
+@app.get("/api/vod/poster/{title_id}")
+async def api_vod_poster(title_id: str):
+    """A small copy of a title's poster for TV grids (made once, then served from disk).
+    Falls back to the provider's own image when it can't be shrunk."""
+    path = await anyio.to_thread.run_sync(vod.poster_file, title_id)
+    if path:
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=2592000"})
+    url = await anyio.to_thread.run_sync(vod.poster_url, title_id)
+    if url.lower().startswith(("http://", "https://")):
+        return RedirectResponse(url, status_code=302)
+    raise HTTPException(404)
 
 
 def _vod_item(item_id, prepare=False):

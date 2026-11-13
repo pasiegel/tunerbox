@@ -11,14 +11,17 @@ import hashlib
 import json
 import logging
 import re
+import os
 import subprocess
+import threading
 import time
 import unicodedata
 from urllib.parse import urlparse
 
+import httpx
 from rapidfuzz import fuzz, process
 
-from . import db, sources
+from . import config, db, sources
 from .streaming import NO_WINDOW, ffmpeg_bin, input_args, play_args
 
 log = logging.getLogger("tunerbox.vod")
@@ -45,10 +48,11 @@ CREATE TABLE IF NOT EXISTS vod_titles (
     info_at INTEGER DEFAULT 0,     -- when the details were fetched (Xtream)
     seen_at INTEGER DEFAULT 0,
     search TEXT,                   -- the name folded for matching what people type
+    hidden INTEGER DEFAULT 0,      -- its category is unticked in Setup: kept, so ticking it again is instant
     tag TEXT DEFAULT '',           -- the provider's label in front of the name: "EN", "4K-FR", "NF" (see split_tag)
     country TEXT DEFAULT ''        -- a show's country from the end of its name: "(US)" -> "US"
 );
-CREATE INDEX IF NOT EXISTS ix_vod_titles ON vod_titles(kind, category);
+CREATE INDEX IF NOT EXISTS ix_vod_category ON vod_titles(source_id, kind, category);
 CREATE TABLE IF NOT EXISTS vod_episodes (
     id TEXT PRIMARY KEY,           -- <source id>:e<episode>
     title_id TEXT NOT NULL,
@@ -96,8 +100,12 @@ INFO_TTL = 30 * 86400
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        db._add_column(c, "vod_titles", "hidden", "INTEGER DEFAULT 0")     # test builds made the table without it
         db._add_column(c, "vod_titles", "tag", "TEXT DEFAULT ''")         # 1.5: language / platform labels
         db._add_column(c, "vod_titles", "country", "TEXT DEFAULT ''")
+        for old in ("ix_vod_titles", "ix_vod_lang"):                       # indexes from test builds
+            c.execute(f"DROP INDEX IF EXISTS {old}")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_vod_browse ON vod_titles(kind, hidden, name COLLATE NOCASE)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_vod_same ON vod_titles(kind, search, year)")
     _changed()
 
@@ -215,11 +223,11 @@ def enabled():
 
 # ---------------------------------------------------------------- reading the catalogue
 _UPSERT = """INSERT INTO vod_titles(id, source_id, kind, xid, name, category, year, rating, genre, plot, actors,
-                                    director, poster, duration, ext, url, added, seen_at, search, tag, country)
+                                    director, poster, duration, ext, url, added, seen_at, search, hidden, tag, country)
              VALUES (:id,:source_id,:kind,:xid,:name,:category,:year,:rating,:genre,:plot,:actors,
-                     :director,:poster,:duration,:ext,:url,:added,:seen_at,:search,:tag,:country)
+                     :director,:poster,:duration,:ext,:url,:added,:seen_at,:search,:hidden,:tag,:country)
              ON CONFLICT(id) DO UPDATE SET xid=excluded.xid, name=excluded.name, category=excluded.category,
-               search=excluded.search, tag=excluded.tag, country=excluded.country,
+               search=excluded.search, hidden=excluded.hidden, tag=excluded.tag, country=excluded.country,
                poster=excluded.poster, ext=excluded.ext, url=excluded.url, added=excluded.added, seen_at=excluded.seen_at,
                year=CASE WHEN excluded.year!='' THEN excluded.year ELSE vod_titles.year END,
                rating=CASE WHEN excluded.rating!='' THEN excluded.rating ELSE vod_titles.rating END,
@@ -233,14 +241,16 @@ _BLANK = {"tag": "", "country": "", "xid": "", "category": "", "year": "", "rati
 
 
 def _store(src, kinds, rows):
-    """Replace a playlist's titles of these kinds. Hidden categories are counted but not kept."""
-    hidden, now, counts, kept = hidden_cats(src), int(time.time()), {}, []
+    """Replace a playlist's titles of these kinds. Titles in unticked categories are kept but marked hidden.
+    -> how many are shown."""
+    hidden = hidden_cats(_source(src["id"]) or src)      # as it is now: it may have changed while the list downloaded
+    now, counts, kept = int(time.time()), {}, []
     _label(rows)
     for r in rows:
         k = (r["kind"], r.get("category") or "")
         counts[k] = counts.get(k, 0) + 1
-        if k not in hidden:
-            kept.append({**_BLANK, **r, "search": fold(r["name"]), "source_id": src["id"], "seen_at": now})
+        kept.append({**_BLANK, **r, "search": fold(r["name"]), "source_id": src["id"], "seen_at": now,
+                     "hidden": int(k in hidden)})
     q = ",".join("?" * len(kinds))
     with db.conn() as c:
         c.execute(f"DELETE FROM vod_cats WHERE source_id=? AND kind IN ({q})", (src["id"], *kinds))
@@ -250,7 +260,7 @@ def _store(src, kinds, rows):
         c.execute(f"DELETE FROM vod_titles WHERE source_id=? AND kind IN ({q}) AND seen_at<?", (src["id"], *kinds, now))
         c.execute("DELETE FROM vod_episodes WHERE title_id NOT IN (SELECT id FROM vod_titles)")
     _changed()
-    return len(kept)
+    return sum(1 for r in kept if not r["hidden"])
 
 
 def clear(source_id, kinds=KINDS):
@@ -302,16 +312,29 @@ def take_m3u(src, items):
     return [it for it in items if not is_file(it["url"])]
 
 
-def refresh_xtream(src):
-    """Read an Xtream login's movie and show lists (whichever are turned on). -> titles kept."""
+def _adult(s):
+    """Marked as adult by the provider ('is_adult': 1) while adult titles are switched off in Settings."""
+    return not config.get("vod_show_adult") and _int(s.get("is_adult")) == 1
+
+
+def _early_cats(src, kind, names):
+    """The category list arrives long before the titles: list it in Setup straight away."""
+    with db.conn() as c:
+        c.executemany("INSERT OR IGNORE INTO vod_cats(source_id, kind, name, count) VALUES (?,?,?,0)",
+                      [(src["id"], kind, n) for n in names])
+
+
+def refresh_xtream(src, kinds=KINDS):
+    """Read an Xtream login's movie and show lists (those turned on, of `kinds`). -> titles shown."""
     n = 0
-    if src.get("vod_movies"):
+    if src.get("vod_movies") and "movie" in kinds:
         cats = {str(c.get("category_id")): _s(c.get("category_name"))
                 for c in sources.xtream_api(src, "get_vod_categories") or []}
+        _early_cats(src, "movie", cats.values())
         rows = []
         for s in sources.xtream_api(src, "get_vod_streams") or []:
             sid = s.get("stream_id")
-            if sid is None:
+            if sid is None or _adult(s):
                 continue
             name, year = _split_year(_s(s.get("name")) or str(sid))
             rows.append({"id": f"{src['id']}:m{sid}", "kind": "movie", "xid": str(sid), "name": name,
@@ -321,13 +344,14 @@ def refresh_xtream(src):
                          "poster": _s(s.get("stream_icon")), "ext": _s(s.get("container_extension")) or "mp4",
                          "added": _int(s.get("added"))})
         n += _store(src, ("movie",), rows)
-    if src.get("vod_series"):
+    if src.get("vod_series") and "series" in kinds:
         cats = {str(c.get("category_id")): _s(c.get("category_name"))
                 for c in sources.xtream_api(src, "get_series_categories") or []}
+        _early_cats(src, "series", cats.values())
         rows = []
         for s in sources.xtream_api(src, "get_series") or []:
             sid = s.get("series_id")
-            if sid is None:
+            if sid is None or _adult(s):
                 continue
             name, year = _split_year(_s(s.get("name")) or str(sid))
             released = _s(s.get("releaseDate") or s.get("release_date"))
@@ -340,7 +364,7 @@ def refresh_xtream(src):
     return n
 
 
-def refresh_all(progress=None, source_id=None):
+def refresh_all(progress=None, source_id=None, kinds=KINDS):
     """Re-read the On Demand lists of every Xtream login that has them on (M3U playlists are split
     whenever the playlist itself is read)."""
     srcs = [s for s in sources.enabled_sources() if s["type"] == "xtream" and (s.get("vod_movies") or s.get("vod_series"))
@@ -349,7 +373,7 @@ def refresh_all(progress=None, source_id=None):
         if progress:
             progress(f"Loading On Demand from {s['name']}", i, len(srcs))
         try:
-            n = refresh_xtream(s)
+            n = refresh_xtream(s, kinds)
             log.info("Source %s: %d On Demand titles", s["name"], n)
         except Exception:  # noqa: BLE001
             log.exception("On Demand list of %s failed", s["name"])
@@ -454,8 +478,9 @@ def title(title_id):
 
 
 # ---------------------------------------------------------------- browsing
-# titles of enabled playlists whose label is one of the picked ones (sources.vod_tags: a JSON list, '' = all)
-_FROM = ("FROM vod_titles t JOIN sources src ON src.id=t.source_id AND src.enabled=1 "
+# titles of enabled playlists, in ticked categories, whose label is one of the picked ones
+# (sources.vod_tags: a JSON list, '' = all)
+_FROM = ("FROM vod_titles t JOIN sources src ON src.id=t.source_id AND src.enabled=1 AND t.hidden=0 "
          "AND (src.vod_tags='' OR instr(src.vod_tags, '\"' || t.tag || '\"')>0) ")
 _COLS = "t.id, t.kind, t.name, t.year, t.rating, t.category, t.poster, t.added, t.duration, t.tag, t.country"
 
@@ -538,10 +563,31 @@ def titles(kind="movie", cat=None, tab="", offset=0, limit=120):
 
 # ---------------------------------------------------------------- search
 YEAR_WORD = re.compile(r"^(19|20)\d\d$")
+NAME_TAG = re.compile(r"^\s*[\[|]?\s*([A-Z0-9][A-Z0-9+/_.-]{0,14})\s*(?:\]|\|)?\s*(?:-\s|\|)")     # "EN - ", "|ES| ", "4K-DE - "
 
 
-def _rank(qf, words, name_f):
-    """Higher = better: the whole name, the start of it, every word at a word start, anywhere."""
+def _first_tags():
+    """The codes from Settings > On Demand > List these languages first ("EN", "EN,FR")."""
+    return {c.strip().upper() for c in str(config.get("vod_search_first") or "").split(",") if c.strip()}
+
+
+def _tag_order(r, first):
+    """0 for a title tagged with a preferred code ('EN', '4K-EN'), 1 for one with no tag, 2 for another
+    code ('ES'), so the same film in several languages lists the wanted one first. The label cut off the
+    name is used; a name that still has one in front (too rare to be cut) is read too."""
+    tag = r.get("tag") or ""
+    if not tag:
+        m = NAME_TAG.match(r.get("name") or "")
+        if not m:
+            return 1
+        tag = m.group(1)
+    return 0 if set(re.split(r"[-/_.+]", tag.upper())) & first else 2
+
+
+def _rank(qf, words, name):
+    """Higher = better: the whole name, the start of it, every word at a word start, anywhere.
+    A language tag in front ('EN - ') doesn't count as part of the name."""
+    name_f = fold(NAME_TAG.sub("", name or ""))
     if name_f == qf:
         return 100
     if name_f.startswith(qf):
@@ -577,12 +623,13 @@ def _fuzzy(qf, limit):
     return [ids[i] for _, _, i in hits if len(names[i]) >= 0.6 * len(qf)][:limit]
 
 
-def _by_preference(rows):
-    """The versions of one title, the most likely wanted first: the label most of the shown titles
-    have (with only English picked, "EN" before "4K-EN"), then alphabetically."""
+def _by_preference(rows, first=None):
+    """The versions of one title, the most likely wanted first: a label from "List these languages first",
+    then the label most of the shown titles have (with only English picked, "EN" before "4K-EN"), then alphabetically."""
     if not _tag_rank:
         _tag_rank.update({r["tag"]: r["n"] for r in db.rows(f"SELECT t.tag, count(*) n {_FROM} GROUP BY t.tag")})
-    return sorted(rows, key=lambda r: (-_tag_rank.get(r["tag"], 0), r["tag"], r["id"]))
+    first = _first_tags() if first is None else first
+    return sorted(rows, key=lambda r: (_tag_order(r, first), -_tag_rank.get(r["tag"], 0), r["tag"], r["id"]))
 
 
 def versions(t):
@@ -609,7 +656,7 @@ def search(q, limit=12):
         for r in rows:
             if r["id"] not in seen:
                 seen.add(r["id"])
-                found.append((score if score is not None else _rank(qf, words, r["search"] or ""), r))
+                found.append((score if score is not None else _rank(qf, words, r["name"]), r))
     add(_matches(words, 400))
     years = [w for w in words if YEAR_WORD.match(w)]
     text = " ".join(w for w in words if not YEAR_WORD.match(w))
@@ -622,7 +669,10 @@ def search(q, limit=12):
         like = f"%{q.strip()}%"
         add(db.rows(f"SELECT {_COLS}, t.search {_FROM} WHERE t.kind='movie' AND (t.actors LIKE ? OR t.director LIKE ?) "
                     "LIMIT ?", (like, like, limit)), 30)
-    found.sort(key=lambda sr: (-sr[0], len(sr[1]["search"] or ""), -(int(sr[1]["year"]) if str(sr[1]["year"]).isdigit() else 0)))
+    first = _first_tags()
+    found.sort(key=lambda sr: (-sr[0], _tag_order(sr[1], first),
+                               len(fold(NAME_TAG.sub("", sr[1]["name"] or ""))),
+                               -(int(sr[1]["year"]) if str(sr[1]["year"]).isdigit() else 0)))
     # one result per film or show: its other languages / qualities ride along as versions
     groups, order = {}, []
     for _, r in found:
@@ -633,7 +683,7 @@ def search(q, limit=12):
         groups[k].append(r)
     out = []
     for k in order[:limit]:
-        vs = _by_preference(groups[k])
+        vs = _by_preference(groups[k], first)
         r = vs[0]
         out.append({"id": r["id"], "kind": r["kind"], "name": r["name"], "year": r["year"], "category": r["category"],
                     "duration": r["duration"], "tag": r["tag"], "country": r["country"],
@@ -761,10 +811,95 @@ def set_listed(title_id, on=True):
     return {"in_list": bool(on)}
 
 
+# ---------------------------------------------------------------- posters (small copies for TVs)
+# Providers' posters are often full-size (1000x1500 and up). A TV grid shows them at ~200 px wide, so the
+# first request downloads one, shrinks it with ffmpeg and keeps the small JPEG; later requests are a local file.
+POSTER_W = 240
+POSTER_KEEP = 6000                      # small copies kept on disk (the least recently shown go first)
+POSTER_MAX = 15 * 1024 * 1024           # bigger than this isn't a poster
+_poster_slots = threading.BoundedSemaphore(4)
+_poster_made = 0
+
+
+def poster_dir():
+    return config.data_path("posters")
+
+
+def poster_url(title_id):
+    r = db.one("SELECT poster FROM vod_titles WHERE id=?", (title_id,))
+    return (r["poster"] or "").strip() if r else ""
+
+
+def _shrink(data):
+    """JPEG POSTER_W wide (kept small, never enlarged), or None when ffmpeg can't read it."""
+    try:
+        r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0",
+                            "-vf", f"scale='min({POSTER_W},iw)':-2", "-frames:v", "1", "-q:v", "4",
+                            "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+                           input=data, capture_output=True, timeout=20, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 and r.stdout[:2] == b"\xff\xd8" else None
+
+
+def _download(url):
+    try:
+        with httpx.stream("GET", url, timeout=12, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as r:
+            if r.status_code != 200:
+                return None
+            data = bytearray()
+            for chunk in r.iter_bytes():
+                data += chunk
+                if len(data) > POSTER_MAX:
+                    return None
+            return bytes(data)
+    except httpx.HTTPError as e:
+        log.debug("Poster %s: %s", url[:80], e)
+        return None
+
+
+def _prune(folder):
+    files = sorted(folder.glob("*.jpg"), key=lambda f: f.stat().st_mtime)
+    for f in files[:max(0, len(files) - POSTER_KEEP)]:
+        f.unlink(missing_ok=True)
+
+
+def poster_file(title_id):
+    """Path of the small poster for a title (made on first use), or None (no poster, or it couldn't be read)."""
+    global _poster_made
+    url = poster_url(title_id)
+    if not url.lower().startswith(("http://", "https://")):
+        return None
+    folder = poster_dir()
+    path = folder / (hashlib.sha1(url.encode()).hexdigest()[:24] + ".jpg")     # by address: a new poster makes a new file
+    if path.exists():
+        try:
+            os.utime(path)              # recently shown: keep it
+        except OSError:
+            pass
+        return path
+    with _poster_slots:
+        if path.exists():
+            return path
+        data = _download(url)
+        small = _shrink(data) if data else None
+        if not small:
+            return None
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(small)
+        tmp.replace(path)
+        _poster_made += 1
+        if _poster_made % 200 == 0:
+            _prune(folder)
+    return path
+
+
 # ---------------------------------------------------------------- setup
 def source_stats(src):
     """Numbers for a playlist's card in Setup."""
-    n = {r["kind"]: r["n"] for r in db.rows("SELECT kind, count(*) n FROM vod_titles WHERE source_id=? GROUP BY kind", (src["id"],))}
+    n = {r["kind"]: r["n"] for r in db.rows("SELECT kind, count(*) n FROM vod_titles WHERE source_id=? AND hidden=0 GROUP BY kind",
+                                             (src["id"],))}
     hidden = hidden_cats(src)
     cats = {k: [0, 0] for k in KINDS}       # kind -> [shown, all]
     for c in db.rows("SELECT kind, name FROM vod_cats WHERE source_id=?", (src["id"],)):
@@ -791,23 +926,29 @@ def cats(source_id, kind="movie"):
 
 def set_hidden(source_id, names, kind="movie"):
     """Save which of a playlist's movie (or TV show) categories are hidden; the other kind's stay as they
-    are. Newly hidden ones are dropped right away; the caller re-reads the playlist for the ones shown again."""
+    are, and so do hidden ones the provider isn't listing right now. Instant: the titles are only marked.
+    -> counts, plus "missing": categories shown again whose titles were never read (they need a re-read)."""
     src = _source(source_id)
     if not src:
         return None
     by_label = {r["name"] or "(no category)": r["name"]
                 for r in db.rows("SELECT name FROM vod_cats WHERE source_id=? AND kind=?", (source_id, kind))}
+    listed = set(by_label.values())
     before = hidden_cats(src)
-    old = {h for h in before if h[0] == kind}
+    old = {h for h in before if h[0] == kind and h[1] in listed}
     new = {(kind, by_label[n]) for n in names if n in by_label}
-    db.run("UPDATE sources SET vod_hidden=? WHERE id=?",
-           (json.dumps(sorted((before - old) | new)), source_id))
+    db.run("UPDATE sources SET vod_hidden=? WHERE id=?", (json.dumps(sorted((before - old) | new)), source_id))
     with db.conn() as c:
-        for k, name in new - old:
-            c.execute("DELETE FROM vod_titles WHERE source_id=? AND kind=? AND category=?", (source_id, k, name))
-        c.execute("DELETE FROM vod_episodes WHERE title_id NOT IN (SELECT id FROM vod_titles)")
+        for flag, group in ((1, new - old), (0, old - new)):
+            for _, name in group:
+                c.execute("UPDATE vod_titles SET hidden=? WHERE source_id=? AND kind=? AND category=?",
+                          (flag, source_id, kind, name))
+        missing = [name for _, name in old - new
+                   if not c.execute("SELECT 1 FROM vod_titles WHERE source_id=? AND kind=? AND category=? LIMIT 1",
+                                    (source_id, kind, name)).fetchone()]
     _changed()
-    return {"hidden": len(new), "newly_hidden": len(new - old), "shown_again": len(old - new)}
+    return {"hidden": len(new), "newly_hidden": len(new - old), "shown_again": len(old - new), "missing": len(missing)}
+
 
 
 def shown_tags(src):

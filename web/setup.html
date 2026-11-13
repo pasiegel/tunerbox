@@ -194,6 +194,12 @@
         <label class="set-row"><span class="set-text"><b>First local channel number</b><small>Where channels made from your own video folders start.</small></span><input name="media_channel_start" type="number" min="1"></label>
       </div>
 
+      <div class="set-group" data-cat="ondemand" data-label="On Demand">
+        <h4>On Demand</h4>
+        <label class="set-row"><span class="set-text"><b>Show adult titles</b><small>Movies and shows your provider marks as adult. Off: they're left out the next time the lists are read (that starts when you change this).</small></span><input type="checkbox" class="toggle" name="vod_show_adult"></label>
+        <label class="set-row"><span class="set-text"><b>List these languages first in search</b><small>When a title comes in several languages ("EN - Dune", "ES - Dune"), the ones tagged with these codes come first. EN, or EN,FR.</small></span><input name="vod_search_first" placeholder="EN"></label>
+      </div>
+
       <div class="set-group" data-cat="sports" data-label="Sports">
         <h4>Sports</h4>
         <div class="set-block">

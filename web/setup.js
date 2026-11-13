@@ -35,11 +35,13 @@ async function startJob(name, q = "") {
 let polling = false;
 async function pollJob() {
   if (polling) return; polling = true;
-  let wasRunning = false;
+  let wasRunning = false, ticks = 0;
   for (;;) {
     let j; try { j = await api("/api/jobs"); } catch (_) { break; }
     if (j.running) {
       wasRunning = true;
+      // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
+      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden")) loaders.sources();
       $("job").classList.remove("hidden");
       $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
       $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
@@ -233,7 +235,7 @@ loaders.sources = async () => {
 // (a plain M3U has one switch for its video files, which can be movies and episodes)
 function vodRows(s) {
   if (s.type === "hdhomerun") return "";
-  const catNote = (kind) => { const [shown, all] = s.vod.cats[kind]; return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "Categories are read at the next scan"; };
+  const catNote = (kind) => { const [shown, all] = s.vod.cats[kind]; return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "Reading the categories…"; };
   const btn = (kind, on) => `<button class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>${kind === "tags" ? "Languages…" : "Categories…"}</button>`;
   const [tShown, tAll] = s.vod.tags || [0, 0];
   const tagNote = tAll < 2 ? "Labels like EN, DE or 4K in front of the names are read with the titles"
@@ -259,7 +261,7 @@ $("src-list").addEventListener("change", async (e) => {
     let r;
     try { r = await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { [e.target.dataset.k]: on ? 1 : 0 } }); }
     catch (err) { toast(err.message); e.target.checked = !on; return; }
-    toast(!on ? "On Demand turned off for this playlist" : r.job ? "Reading the On Demand list…" : "Saved. Press Scan playlists when the current job finishes.");
+    toast(!on ? "On Demand turned off for this playlist" : r.job ? "Reading the list from your provider: the categories show up here in a moment…" : "Saved");
     if (r.job) pollJob();
     loaders.sources();
     return;
@@ -431,7 +433,7 @@ $("gr-save").onclick = async () => {
   try { r = await api(grUrl(), { method: "PUT", body: { hidden } }); } catch (e) { toast(e.message); return; }
   closeGroups(); loaders.sources();
   if (GR.vod === "tags") toast(`Saved: On Demand shows ${r.hidden ? `${r.shown} label${r.shown === 1 ? "" : "s"}` : "every label"}`);
-  else if (GR.vod) toast(r.shown_again ? (r.job ? "Saved. Reading those categories again…" : "Saved. Press Scan playlists when the current job finishes to add them back.") : "Saved");
+  else if (GR.vod) toast(r.job ? "Saved. Reading those categories from your provider…" : "Saved");
   else if (r.shown_again) toast(r.job ? "Saved. Rescanning to add the groups back…" : "Saved. Press Scan playlists when the current job finishes to add the groups back.");
   else if (r.newly_hidden) toast(r.job ? `Saved. Removed ${r.newly_hidden} group${r.newly_hidden === 1 ? "" : "s"}, re-matching channels…` : "Saved. Press Re-run auto match when the current job finishes.");
   else toast("Saved");

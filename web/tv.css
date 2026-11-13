@@ -357,7 +357,9 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .phone #odi-desc { font-size: 13px; line-height: 1.3; } .phone #odi-cast { display: none; }
 .phone .od-head { height: 38px; overflow-x: auto; }
 .phone .od-tab { font-size: 14px; padding: 0 10px; }
-.phone .od-side li { font-size: 13px; padding: 0 8px; height: 40px; }
+.phone .od-side li { font-size: 13px; padding: 4px 8px; height: auto; min-height: 44px; }
+.phone .od-side li span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.2; overflow-wrap: anywhere; }
+.phone .od-side li small { font-size: 11px; }
 .phone .od-grid { padding: 8px 0 8px 8px; gap: 8px; }
 .phone .od-tile .n { font-size: 13px; } .phone .od-tile .y { font-size: 11px; }
 .phone .od-eps li .p { display: none; }
