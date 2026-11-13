@@ -1,9 +1,9 @@
-"""Search plus the Sports & PPV area.
+"""Search plus the Sports & Events area.
 
 * Sports on now / coming up come from the guide (program categories), plus the games of the leagues
   picked in Settings (scoreboard.py): those are matched to a guide listing or an event feed.
 * Sports channels are lineup/extra channels that look like sports networks.
-* Events & PPV are playlist groups of event feeds (ESPN+, Peacock events, PPV, NFL/NBA team
+* Events (PPV, PLE, special events) are playlist groups of event feeds (ESPN+, Peacock events, PPV, NFL/NBA team
   feeds...). Those only carry video while something is on, so the stream check usually marks
   them dead; they are listed anyway, with an on-demand "which are live now" check.
 """

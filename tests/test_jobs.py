@@ -64,6 +64,7 @@ def _run_housekeeping(monkeypatch, loops=3):
     monkeypatch.setattr(jobs.dvr, "tick", lambda: None)
     monkeypatch.setattr(jobs.media, "write_epg", lambda: None)
     monkeypatch.setattr(jobs.sports, "warm", lambda _now: None)      # a background thread that would outlive the test
+    monkeypatch.setattr(jobs.scoreboard, "tick", lambda *_a, **_k: False)   # would download from ESPN in a thread
 
     def sleep(_s):
         n["i"] += 1

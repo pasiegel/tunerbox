@@ -107,7 +107,7 @@ const MENU = [
     },
     act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
   { label: "Search", act: () => { closeMenu(); openSearch(); } },
-  { label: "Sports & PPV", act: () => { closeMenu(); openSports(); } },
+  { label: "Sports & Events", act: () => { closeMenu(); openSports(); } },
   { label: "My Recordings (DVR)", act: () => { closeMenu(); openDvr(); } },
   { label: "Channel Setup (playlists, lineup, guide)", act: openSetup },
   { label: "Rescan channels", act: async () => { await api("/api/jobs/scan", { method: "POST" }); toast("Scanning channels in the background…"); closeMenu(); watchJob(); } },

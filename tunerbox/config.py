@@ -82,7 +82,7 @@ DEFAULTS = {
     # by default because providers limit simultaneous connections)
     "probe_streams": True,
     "probe_xtream": False,
-    # Sports & PPV: country codes of playlist groups to show ("US", "US,CA,UK", or "*" for all)
+    # Sports & Events: country codes of playlist groups to show ("US", "US,CA,UK", or "*" for all)
     "sports_regions": "US",
     # Leagues whose games are looked up on ESPN's scoreboard and matched to your channels, so they
     # show under Sports > On Now / Coming Up with scores (keys are in scoreboard.py; [] = off)

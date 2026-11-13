@@ -159,9 +159,9 @@ $("s-list").addEventListener("click", (e) => {
   SR.sel = +li.dataset.i; SR.items[SR.sel].act();
 });
 
-// ---------------------------------------------------------------- sports & PPV
+// ---------------------------------------------------------------- sports & events
 // tab id, label, and the list it shows (a key of SP.data, fetched on its own: /api/sports?tab=id)
-const SP_TABS = [["now", "On Now", "on_now"], ["up", "Coming Up", "upcoming"], ["ch", "Sports Channels", "channels"], ["ev", "Events & PPV", "groups"]];
+const SP_TABS = [["now", "On Now", "on_now"], ["up", "Coming Up", "upcoming"], ["ch", "Sports Channels", "channels"], ["ev", "Events", "groups"]];
 const SP = { tab: 0, data: null, group: null, items: [], poll: null, seq: 0 };
 
 async function openSports() {
@@ -236,7 +236,7 @@ function spItems() {
       act: () => { closePanels(); tuneNum(c.number); },
     })) : none("No sports channels found.");
   }
-  // events & PPV
+  // events (PPV, PLE, special events)
   if (!SP.group) {
     return d.groups.length ? d.groups.map((g) => ({
       html: `<span class="badge ${g.kind}">${g.kind === "ppv" ? "PPV" : "EVENTS"}</span> <span>${esc(g.name)}</span>`,

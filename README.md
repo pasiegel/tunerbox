@@ -88,7 +88,7 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | L / Backspace | last channel | back |
 | D | recordings | |
 | / | search | search |
-| T | Sports & PPV | Sports & PPV |
+| T | Sports & Events | Sports & Events |
 | M | menu | |
 | U, +/− | mute, volume | |
 | F / F11 | full screen | |
@@ -155,16 +155,16 @@ Like a cable box, a TV screen asks **"Are you still watching?"** after 4 hours w
 
 Neither happens while a recording is running or a phone remote is open. Turn either one on or off, or change its time, in **Menu › Sleep timer & screensaver** on the TV (OK switches or steps through the times), or in **Setup › Settings**. The settings apply to every screen.
 
-## Search and Sports & PPV
+## Search and Sports & Events
 * **Search** (`/`, Menu › Search, or SEARCH on the on-screen remote) looks through channel names and numbers, the next 7 days of the guide (shows, teams, games), and event feeds.
   * Type on a keyboard, or use the on-screen keyboard with a remote: ◀ ▶ move between the keyboard and the results.
   * OK on a show that's on now tunes it. A later show opens the record options.
-* **Sports & PPV** (`T`, or Menu › Sports & PPV) has four tabs:
+* **Sports & Events** (`T`, or Menu › Sports & Events) has four tabs:
   * **On Now:** live games from the guide.
   * **Coming Up:** the next 2 days. OK opens the record options.
   * **Live games and scores.** Pick the leagues you follow in Setup › Settings › **Sports** (NFL, college football, NBA, college basketball, MLB and NHL to start with; WNBA and soccer leagues are there too). Their games come from ESPN's public scoreboard, which needs no account, and each one is matched to a guide listing or an event feed by team names and start time. Matched games show in On Now and Coming Up with the score, even when the guide doesn't label the listing as sports or the game runs past its slot. Games none of your channels carry are listed dimmed with where they air; turn that off with *List games you have no channel for*.
   * **Sports Channels:** sports networks with what's on now.
-  * **Events & PPV:** event groups from your playlists, such as PPV, ESPN+, Peacock events, and NFL/NBA/NHL team feeds.
+  * **Events:** event groups from your playlists, such as PPV, PLE, special events, ESPN+, Peacock events, and NFL/NBA/NHL team feeds.
 * **Event feeds only carry video while an event is on**, so the playlist scan usually marks them dead and they get no channel number.
   * Opening a group checks which feeds are live (if the last check is over 15 minutes old). Live feeds are listed first.
   * You can still try any feed. Last/Back returns to the channel you were watching.

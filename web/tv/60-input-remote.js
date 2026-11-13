@@ -7,7 +7,7 @@ const ACTIONS = [
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
   ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"],
-  ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & PPV"],
+  ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [String(n), `Number ${n}`]),
