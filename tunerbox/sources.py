@@ -415,7 +415,8 @@ def export_sources():
                     "exclude_groups": s["exclude_groups"] or "", "hidden_groups": sorted(hidden_groups(s)),
                     "xtream_format": s["xtream_format"] or "ts", "video_mode": s.get("video_mode") or "",
                     "on_demand": {"movies": bool(s.get("vod_movies")), "series": bool(s.get("vod_series")),
-                                  "hidden": json.loads(s.get("vod_hidden") or "[]")}})
+                                  "hidden": json.loads(s.get("vod_hidden") or "[]"),
+                                  "tags": json.loads(s.get("vod_tags") or "null")}})
     return {"kind": EXPORT_KIND, "version": 1, "app_version": __version__,
             "exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "playlists": out}
 
@@ -459,6 +460,8 @@ def import_sources(data):
             row.update(vod_movies=1 if od.get("movies") else 0, vod_series=1 if od.get("series") else 0,
                        vod_hidden=json.dumps(sorted({(str(h[0]), str(h[1])) for h in hidden_od
                                                      if isinstance(h, list) and len(h) == 2 and h[0] in ("movie", "series")})))
+            tags = od.get("tags")
+            row["vod_tags"] = json.dumps(sorted({str(t) for t in tags})) if isinstance(tags, list) else ""
         cur = next((s for s in have if _same(s, row)), None)
         if cur:
             cols = [k for k in row if k not in ("type", "url", "username")]

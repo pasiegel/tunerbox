@@ -181,24 +181,54 @@ Many playlists come with a library of movies and shows besides the live channels
 
 * **Xtream logins** have two switches, **On Demand: movies** and **On Demand: TV shows**. The lists are read when you turn one on and again at every full scan.
 * **Plain M3U playlists** have one switch: entries whose address is a video file (`.mp4`, `.mkv`…) become titles instead of channels. Names like `Show S02 E04` are grouped into a show with seasons.
-* **Categories…** next to each switch picks which movie or TV show categories are shown (untick the ones you don't want).
+* **Categories…** next to each switch picks which movie or TV show categories are shown (untick the ones you don't want). Categories named like `EN - MOVIES` can be filtered by language there too.
+* **Languages…** picks which labels are shown. Big providers put a label in front of every title: a language (`EN - Dune`, `DE - …`), a language and quality (`4K-EN`, `IN-EN`) or a platform (`NF` for Netflix, `D+` for Disney+). TunerBox cuts the label off the name, shows it as a small badge, and lists each label with how many titles have it and an example, so unfamiliar ones are easy to judge. Untick the languages you don't watch: with only English, a 235,000-title catalogue shrinks to about 37,000. Labels a provider adds later start unticked. Titles with no label are their own entry. This also works for TV shows, whose categories often have no language in them.
 
 Press `O` (or Menu › **On Demand**, or the **ON DEMAND** button) to open On Demand, where you left it. Live TV keeps playing in the corner. The tabs are **Movies** and **TV Shows** (each with its categories and posters), **Continue Watching** and **My List** (movies and shows together) and **Search**. Arrows move between the tabs, the categories and the titles; OK on a movie gives Resume / Play / My List; OK on a show opens its seasons and episodes; `*` adds to My List; `O` or Back closes it.
 
-**Search** (`/` in On Demand) looks through the movies and shows. Accents and punctuation don't matter (*amelie* finds *Amélie*), the words can be in any order, a year narrows it (*dune 2021*), small typos still find it, and movies are found by actor or director too. The main **Search** (`/` while watching) finds movies, shows and episodes alongside channels and guide listings.
+**Search** (`/` in On Demand) looks through the movies and shows. Accents and punctuation don't matter (*amelie* finds *Amélie*), the words can be in any order, a year narrows it (*dune 2021*), small typos still find it, and movies are found by actor or director too. A film the playlist has under several labels (*Dune* in EN, 4K-EN, DE…) is listed once; its options have **Other versions** to pick another language or quality. The main **Search** (`/` while watching) finds movies, shows and episodes alongside channels and guide listings.
 
 While a title plays: OK or Space pauses, ← goes back 10 seconds, → skips 30, PgUp/PgDn jump 5 minutes, Back stops and returns to where you were. Where you stopped is remembered on the server, so any screen can resume it. A title uses one of your provider's connections while it plays, like a live channel, and follows the playlist's **Video** setting (pick a re-encode there if a movie has picture but won't play in the browser).
 
 ## Docker
 Server-only image with ffmpeg included. Data (settings, database, recordings, logs, lineup CSV) lives in the `/data` volume.
 
-Each release publishes `ghcr.io/pasiegel/tunerbox` (`:latest`, or a version such as `:1.4.3`) for 64-bit PCs and ARM64 (Raspberry Pi 4/5).
+Each release publishes the image `ghcr.io/pasiegel/tunerbox` for 64-bit PCs (amd64) and ARM64 (Raspberry Pi 4/5). Docker picks the right one by itself. It's public: no login is needed to pull it.
+
+| Tag | Use it for |
+|---|---|
+| `latest` | the newest release |
+| `1.5` | the newest 1.5.x release (bug fixes, no big changes) |
+| `1.5.0` | exactly that release, never changes |
+
+**First install**
 
 ```sh
-docker compose up -d        # then open http://<host>:8642/ and go to /setup
-# or without compose:
-docker run -d --name tunerbox --restart unless-stopped -p 8642:8642 -v tunerbox-data:/data -e TZ=America/New_York ghcr.io/pasiegel/tunerbox:latest
+docker pull ghcr.io/pasiegel/tunerbox:latest
+docker run -d --name tunerbox --restart unless-stopped -p 8642:8642   -v tunerbox-data:/data -e TZ=America/New_York ghcr.io/pasiegel/tunerbox:latest
 ```
+
+Or with Compose: copy `compose.yaml` from this repository into a folder, then run `docker compose up -d` there. Open `http://<host>:8642/setup` to add your playlists.
+
+**Updating to a new release.** Your settings, guide and recordings are in the `tunerbox-data` volume, so replacing the container keeps them.
+
+```sh
+# Compose (in the folder with compose.yaml)
+docker compose pull && docker compose up -d
+
+# docker run: pull, then remove and start the container again with the same options as before
+docker pull ghcr.io/pasiegel/tunerbox:latest
+docker stop tunerbox && docker rm tunerbox
+docker run -d --name tunerbox --restart unless-stopped -p 8642:8642   -v tunerbox-data:/data -e TZ=America/New_York ghcr.io/pasiegel/tunerbox:latest
+
+docker image prune -f        # optional: delete the old image
+```
+
+* **Podman** takes the same commands (`podman pull …`, `podman run …`). With a systemd Quadlet that has `AutoUpdate=registry`, `sudo podman auto-update` pulls the new image and restarts TunerBox; the `podman-auto-update.timer` does it daily on its own.
+* **Portainer:** open the container, **Recreate**, and tick **Re-pull image**.
+* **Watchtower** (`containrrr/watchtower`) can update it automatically if you already use it.
+* **Which version is running?** `docker image inspect ghcr.io/pasiegel/tunerbox:latest --format '{{index .Config.Labels "org.opencontainers.image.version"}}'`.
+* **Going back** to an older release: use its tag (for example `ghcr.io/pasiegel/tunerbox:1.4.7`) in place of `latest`. Back up the volume first: a newer version may have upgraded the database.
 
 To build the image yourself instead, use `build: .` in `compose.yaml` (or `docker build -t tunerbox .`).
 
@@ -233,4 +263,4 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * Database changes go at the end of `MIGRATIONS` in `tunerbox/db.py`; the database's `user_version` records how many have run.
 
 ## Credits
-* Docker image, the 720p (Roku) re-encode mode, the phone / iPhone Safari touch layout, the test suite, Gracenote retries, faster guide downloads, PPV/event playlist refreshes and DVR disk-space safety by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).
+* On Demand (movies and TV shows with resume, Continue Watching, My List and search), live game scores in Sports, reminders, the grouped Settings page, the Docker image, the 720p (Roku) re-encode mode, the phone / iPhone Safari touch layout, the test suite, Gracenote retries, faster guide downloads, PPV/event playlist refreshes and DVR disk-space safety by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).

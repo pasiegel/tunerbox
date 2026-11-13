@@ -236,19 +236,24 @@ loaders.sources = async () => {
 function vodRows(s) {
   if (s.type === "hdhomerun") return "";
   const catNote = (kind) => { const [shown, all] = s.vod.cats[kind]; return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "Reading the categories…"; };
-  const btn = (kind, on) => `<button class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>Categories…</button>`;
+  const btn = (kind, on) => `<button class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>${kind === "tags" ? "Languages…" : "Categories…"}</button>`;
+  const [tShown, tAll] = s.vod.tags || [0, 0];
+  const tagNote = tAll < 2 ? "Labels like EN, DE or 4K in front of the names are read with the titles"
+    : tShown === tAll ? `All ${tAll} labels shown (languages like EN and DE, and platforms like NF)` : `${tShown} of ${tAll} labels shown`;
+  const tagRow = () => (s.vod_movies || s.vod_series) && tAll > 1 ? row("", "tags", "Languages and labels", tagNote, true) : "";
   const sw = (key) => `<input type="checkbox" class="toggle" id="vod-${s.id}-${key}" data-a="vod" data-k="${key}" ${s[key] ? "checked" : ""}>`;
   const row = (key, kind, title, note, on) => `<div class="vod-row"><label class="vod-t" for="vod-${s.id}-${key}"><b>${title}</b><small class="muted">${note}</small></label>
       ${kind ? btn(kind, on) : "<span></span>"}${key ? sw(key) : "<span></span>"}</div>`;
   if (s.type === "xtream") {
     return `<div class="vod-box"><div class="vod-h">On Demand</div>
       ${row("vod_movies", "movie", "Movies", s.vod_movies ? catNote("movie") : "Off", s.vod_movies)}
-      ${row("vod_series", "series", "TV shows", s.vod_series ? catNote("series") : "Off", s.vod_series)}</div>`;
+      ${row("vod_series", "series", "TV shows", s.vod_series ? catNote("series") : "Off", s.vod_series)}
+      ${tagRow()}</div>`;
   }
   const n = s.vod.files;
   return `<div class="vod-box"><div class="vod-h">On Demand</div>
     ${row("vod_movies", "", "Movie and episode files", `Entries ending in .mp4 or .mkv become titles instead of channels${n ? ` (${n.toLocaleString()} found)` : ""}`)}
-    ${s.vod_movies ? row("", "movie", "Movies", catNote("movie"), true) + row("", "series", "TV shows", catNote("series"), true) : ""}</div>`;
+    ${s.vod_movies ? row("", "movie", "Movies", catNote("movie"), true) + row("", "series", "TV shows", catNote("series"), true) + tagRow() : ""}</div>`;
 }
 $("src-list").addEventListener("change", async (e) => {
   if (e.target.dataset.a === "vod") {
@@ -337,8 +342,10 @@ $("src-import-file").onchange = async (e) => {
 // Tick/untick whole groups. "US| SPORTS", "DE: NEWS"… can be filtered by their country prefix.
 // The same picker edits a playlist's On Demand movie or TV show categories (GR.vod = "movie" / "series").
 const GR = { id: 0, vod: false, all: [], shown: new Map(), orig: new Set() };
-const grUrl = () => `/api/sources/${GR.id}/${GR.vod ? `vod-cats?kind=${GR.vod}` : "groups"}`;
-const regionOf = (name) => { const m = /^\W*([A-Za-z]{2,3})\s*[|:]/.exec(name || ""); return m ? m[1].toUpperCase() : ""; };
+// ... and (GR.vod = "tags") which labels in front of the titles are shown: "EN", "4K-FR", "NF".
+const grUrl = () => `/api/sources/${GR.id}/${GR.vod === "tags" ? "vod-tags" : GR.vod ? `vod-cats?kind=${GR.vod}` : "groups"}`;
+// "US| NEWS", "DE: SPORT" and, in On Demand categories, "EN - MOVIES"
+const regionOf = (name) => { const m = /^\W*([A-Za-z]{2,3})\s*(?:[|:]|-\s)/.exec(name || ""); return m ? m[1].toUpperCase() : ""; };
 async function openGroups(id, vod = "") {
   let d;
   GR.id = id; GR.vod = vod;
@@ -347,19 +354,22 @@ async function openGroups(id, vod = "") {
   GR.shown = new Map(d.groups.map((g) => [g.name, !g.hidden]));
   GR.orig = new Set(d.groups.filter((g) => g.hidden).map((g) => g.name));
   const [what, these] = { movie: ["Movie", "movies"], series: ["TV show", "TV shows"] }[vod] || [];
-  $("gr-title").textContent = `${vod ? `${what} categories` : "Channel groups"} in ${d.source.name}`;
-  $("gr-sub").textContent = vod ? `Untick a category to leave its ${these} out of On Demand.` : "Untick a group to leave its channels out of TunerBox.";
-  $("gr-search").placeholder = vod ? "Search categories…" : "Search groups…";
-  $("gr-th").textContent = vod ? "Category" : "Group"; $("gr-th-n").textContent = vod ? "Titles" : "Channels";
-  $("gr-region").classList.toggle("hidden", !!vod);
+  const tags = vod === "tags";
+  $("gr-title").textContent = tags ? `On Demand languages and labels in ${d.source.name}` : `${vod ? `${what} categories` : "Channel groups"} in ${d.source.name}`;
+  $("gr-sub").textContent = tags ? "Most providers put a label in front of every title: a language (EN, DE, FR), a language and quality (4K-EN) or a platform (NF = Netflix, D+ = Disney+). Tick the ones you want. Labels the provider adds later start unticked."
+    : vod ? `Untick a category to leave its ${these} out of On Demand.` : "Untick a group to leave its channels out of TunerBox.";
+  $("gr-search").placeholder = tags ? "Search labels…" : vod ? "Search categories…" : "Search groups…";
+  $("gr-th").textContent = tags ? "Label · example" : vod ? "Category" : "Group"; $("gr-th-n").textContent = vod ? "Titles" : "Channels";
+  $("gr-region").classList.toggle("hidden", tags);
   const note = $("gr-note");
   note.textContent = d.partial ? "Groups skipped by an older version aren't listed yet. They appear after the next scan." : "";
   note.classList.toggle("hidden", !d.partial);
   const regions = new Map();
   for (const g of d.groups) { const r = regionOf(g.name); regions.set(r, (regions.get(r) || 0) + 1); }
-  $("gr-region").innerHTML = '<option value="">All countries</option>'
-    + [...regions].filter(([r]) => r).sort((a, b) => b[1] - a[1]).map(([r, n]) => `<option value="${esc(r)}">${esc(r)} (${n} groups)</option>`).join("")
-    + (regions.has("") ? `<option value="-">No country label (${regions.get("")} groups)</option>` : "");
+  const unit = vod ? "categories" : "groups";
+  $("gr-region").innerHTML = `<option value="">${vod ? "All languages" : "All countries"}</option>`
+    + [...regions].filter(([r]) => r).sort((a, b) => b[1] - a[1]).map(([r, n]) => `<option value="${esc(r)}">${esc(r)} (${n} ${unit})</option>`).join("")
+    + (regions.has("") ? `<option value="-">No ${vod ? "language" : "country"} label (${regions.get("")} ${unit})</option>` : "");
   $("gr-search").value = ""; $("gr-show").value = "";
   $("groups").classList.remove("hidden");
   renderGroups();
@@ -375,7 +385,7 @@ function renderGroups() {
   const rows = listedGroups();
   $("gr-body").innerHTML = rows.slice(0, 3000).map((g) => `<tr data-g="${esc(g.name)}" class="${GR.shown.get(g.name) ? "" : "off"}">
     <td class="gr-c"><input type="checkbox" ${GR.shown.get(g.name) ? "checked" : ""}></td>
-    <td>${esc(g.name || "(no group)")}${g.pattern ? ' <span class="tag none" title="Matches the skip pattern, so it stays out even when ticked">skip pattern</span>' : ""}</td>
+    <td>${esc(g.name || "(no group)")}${g.example ? ` <small class="muted">e.g. ${esc(g.example)}${g.series && g.movies ? ` · ${g.movies.toLocaleString()} movies, ${g.series.toLocaleString()} shows` : g.series ? " · shows" : ""}</small>` : ""}${g.pattern ? ' <span class="tag none" title="Matches the skip pattern, so it stays out even when ticked">skip pattern</span>' : ""}</td>
     <td class="gr-n">${g.count ? g.count.toLocaleString() : ""}</td></tr>`).join("")
     || `<tr><td colspan="3" class="muted">${GR.vod && !GR.all.length ? "No categories yet: they are read at the next scan." : "Nothing matches."}</td></tr>`;
   groupStats(rows.length);
@@ -388,7 +398,7 @@ function groupStats(listed) {
   let gs = 0, cs = 0, ct = 0;
   for (const g of GR.all) { ct += g.count; if (GR.shown.get(g.name) && !g.pattern) { gs++; cs += g.count; } }
   const changed = GR.all.filter((g) => GR.orig.has(g.name) === GR.shown.get(g.name)).length;
-  $("gr-stats").textContent = `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} ${GR.vod ? "categories" : "groups"} `
+  $("gr-stats").textContent = `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} ${GR.vod === "tags" ? "labels" : GR.vod ? "categories" : "groups"} `
     + `(${cs.toLocaleString()} of ${ct.toLocaleString()} ${GR.vod ? "titles" : "channels"}) · listing ${(listed ?? listedGroups().length).toLocaleString()}`
     + (changed ? ` · ${changed} unsaved change${changed === 1 ? "" : "s"}` : "");
 }
@@ -422,7 +432,8 @@ $("gr-save").onclick = async () => {
   let r;
   try { r = await api(grUrl(), { method: "PUT", body: { hidden } }); } catch (e) { toast(e.message); return; }
   closeGroups(); loaders.sources();
-  if (GR.vod) toast(r.job ? "Saved. Reading those categories from your provider…" : "Saved");
+  if (GR.vod === "tags") toast(`Saved: On Demand shows ${r.hidden ? `${r.shown} label${r.shown === 1 ? "" : "s"}` : "every label"}`);
+  else if (GR.vod) toast(r.job ? "Saved. Reading those categories from your provider…" : "Saved");
   else if (r.shown_again) toast(r.job ? "Saved. Rescanning to add the groups back…" : "Saved. Press Scan playlists when the current job finishes to add the groups back.");
   else if (r.newly_hidden) toast(r.job ? `Saved. Removed ${r.newly_hidden} group${r.newly_hidden === 1 ? "" : "s"}, re-matching channels…` : "Saved. Press Re-run auto match when the current job finishes.");
   else toast("Saved");

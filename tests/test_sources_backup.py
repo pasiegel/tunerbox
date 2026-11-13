@@ -32,7 +32,7 @@ def test_export_has_every_setting_including_the_login(client, monkeypatch):
     assert eagle == {"name": "Eagle", "type": "xtream", "url": "http://host:8080", "username": "me",
                      "password": "secret", "enabled": True, "exclude_groups": "XXX",
                      "hidden_groups": ["AR| KIDS", "UK| NEWS"], "xtream_format": "m3u8", "video_mode": "roku720",
-                     "on_demand": {"movies": False, "series": False, "hidden": []}}
+                     "on_demand": {"movies": False, "series": False, "hidden": [], "tags": None}}
     assert data["playlists"][1]["enabled"] is False
 
 
@@ -78,7 +78,7 @@ def test_on_demand_settings_go_with_the_playlist(client, monkeypatch):
     db.run("""UPDATE sources SET vod_movies=1, vod_series=0, vod_hidden='[["movie", "FOR ADULTS"]]' WHERE name='Eagle'""")
     monkeypatch.setattr(remote, "trusted", lambda _r: True)
     data = client.get("/api/sources/export").json()
-    assert data["playlists"][0]["on_demand"] == {"movies": True, "series": False, "hidden": [["movie", "FOR ADULTS"]]}
+    assert data["playlists"][0]["on_demand"] == {"movies": True, "series": False, "hidden": [["movie", "FOR ADULTS"]], "tags": None}
     db.run("DELETE FROM sources")
     assert client.post("/api/sources/import", json=data).json()["added"] == 2
     eagle = db.one("SELECT * FROM sources WHERE name='Eagle'")

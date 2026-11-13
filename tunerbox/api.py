@@ -432,6 +432,22 @@ def api_source_vod_cats_save(sid: int, hidden: list[str] = Body(..., embed=True)
     return r
 
 
+@app.get("/api/sources/{sid}/vod-tags")
+def api_source_vod_tags(sid: int):
+    g = vod.tags(sid)
+    if not g:
+        raise HTTPException(404)
+    return g
+
+
+@app.put("/api/sources/{sid}/vod-tags")
+def api_source_vod_tags_save(sid: int, hidden: list[str] = Body(..., embed=True)):
+    r = vod.set_tags(sid, hidden)
+    if r is None:
+        raise HTTPException(404)
+    return r
+
+
 @app.get("/api/sources/{sid}/groups")
 def api_source_groups(sid: int):
     g = sources.groups(sid)
