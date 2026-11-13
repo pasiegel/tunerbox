@@ -10,28 +10,41 @@ from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, scoreb
 log = logging.getLogger("tunerbox.jobs")
 _lock = threading.Lock()
 state = {"running": False, "name": "", "stage": "", "done": 0, "total": 0, "message": "", "finished": 0}
+_queue = []          # (name, fn) waiting for the running job: started straight after it
 
 
 def _progress(stage, done=0, total=0):
     state.update(stage=stage, done=done, total=total)
 
 
-def _run(name, fn):
+def _run(name, fn, queue=False):
+    """Start a job in the background. If one is running: False, or with `queue` it runs after that one
+    (a setting changed in Setup isn't lost because a guide refresh happened to be running)."""
     with _lock:
         if state["running"]:
+            if queue:
+                if name not in [n for n, _ in _queue]:      # already waiting: once is enough
+                    _queue.append((name, fn))
+                return True
             return False
         state.update(running=True, name=name, stage="Starting", done=0, total=0, message="")
 
-    def wrap():
-        try:
-            state["message"] = fn() or "Done"
-        except Exception as e:  # noqa: BLE001
-            log.error("Job %s failed: %s", name, traceback.format_exc())
-            state["message"] = f"Failed: {e}"
-        finally:
-            guide.invalidate()
-            state.update(running=False, finished=int(time.time()))
-    threading.Thread(target=wrap, daemon=True).start()
+    def wrap(name, fn):
+        while True:
+            try:
+                state["message"] = fn() or "Done"
+            except Exception as e:  # noqa: BLE001
+                log.error("Job %s failed: %s", name, traceback.format_exc())
+                state["message"] = f"Failed: {e}"
+            finally:
+                guide.invalidate()
+            with _lock:                 # the next queued job keeps "running" on, so pages keep following it
+                if not _queue:
+                    state.update(running=False, finished=int(time.time()))
+                    return
+                name, fn = _queue.pop(0)
+                state.update(name=name, stage="Starting", done=0, total=0)
+    threading.Thread(target=wrap, args=(name, fn), daemon=True).start()
     return True
 
 
@@ -72,9 +85,10 @@ def scan(force_probe=False):
     return _run("scan", job)
 
 
-def vod_scan(source_id=None):
-    """Re-read the On Demand lists (movies, shows) of the Xtream logins that have them turned on."""
-    return _run("vod", lambda: vod.refresh_all(_progress, source_id))
+def vod_scan(source_id=None, kinds=vod.KINDS):
+    """Re-read the On Demand lists (movies and/or shows) of the Xtream logins that have them turned on.
+    Queued if another job is running."""
+    return _run(f"vod:{source_id}:{','.join(kinds)}", lambda: vod.refresh_all(_progress, source_id, kinds), queue=True)
 
 
 def refresh_epg():
@@ -89,7 +103,7 @@ def refresh_epg():
     return _run("epg", job)
 
 
-def quick_refresh():
+def quick_refresh(queue=False):
     """Re-read the playlists between full scans, so event/PPV feeds pick up tonight's names and the
     guide picks up their listings. No stream checks; matching and guide parsing only run if something
     they use changed."""
@@ -108,7 +122,7 @@ def quick_refresh():
         made = dvr.apply_rules()
         n_extra = db.one("SELECT count(*) n FROM extras WHERE active=1")["n"]
         return f"Playlists refreshed: {mapped}/{total} lineup channels mapped, {n_extra} extra channels, {made} new recordings scheduled"
-    return _run("refresh", job)
+    return _run("refresh", job, queue)
 
 
 def rematch():

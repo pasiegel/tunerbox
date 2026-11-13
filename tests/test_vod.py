@@ -4,7 +4,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from tunerbox import api, db, jobs, sources, vod
+from tunerbox import api, config, db, jobs, sources, vod
 
 NOW = int(time.time())
 XTREAM = {
@@ -135,7 +135,7 @@ def test_hidden_categories(xtream):
     assert [g["name"] for g in vod.cats(sid)["groups"]] == ["Adult", "Mystery"]       # movies
     assert [g["name"] for g in vod.cats(sid, "series")["groups"]] == ["Crime"]
     r = vod.set_hidden(sid, ["Adult", "no such"])
-    assert r == {"hidden": 1, "newly_hidden": 1, "shown_again": 0} and vod.counts()["movie"]["total"] == 2
+    assert r == {"hidden": 1, "newly_hidden": 1, "shown_again": 0, "missing": 0} and vod.counts()["movie"]["total"] == 2
     vod.refresh_xtream(db.one("SELECT * FROM sources WHERE id=?", (sid,)))      # stays out after a scan
     assert vod.counts()["movie"]["total"] == 2
     stats = vod.source_stats(db.one("SELECT * FROM sources WHERE id=?", (sid,)))
@@ -143,8 +143,28 @@ def test_hidden_categories(xtream):
     assert vod.cats(sid)["groups"][0]["hidden"]
     vod.set_hidden(sid, ["Crime"], "series")                       # the TV show list doesn't touch the movie one
     assert vod.cats(sid)["groups"][0]["hidden"] and vod.cats(sid, "series")["groups"][0]["hidden"]
-    assert vod.set_hidden(sid, [])["shown_again"] == 1
+    r = vod.set_hidden(sid, [])
+    assert r["shown_again"] == 1 and r["missing"] == 0           # kept, only marked: back at once, nothing to read
+    assert vod.counts()["movie"]["total"] == 3
     assert vod.cats(sid, "series")["groups"][0]["hidden"]
+
+
+def test_hidden_categories_the_provider_stops_listing_stay_hidden(xtream):
+    sid, _ = xtream
+    vod.set_hidden(sid, ["Adult"])
+    db.run("DELETE FROM vod_cats WHERE name='Adult'")              # not listed right now
+    assert vod.set_hidden(sid, [])["shown_again"] == 0            # saving the rest doesn't un-hide it
+    assert vod.hidden_cats(db.one("SELECT * FROM sources WHERE id=?", (sid,))) == {("movie", "Adult")}
+
+
+def test_showing_a_category_that_was_never_read_reads_it(xtream, client, monkeypatch):
+    sid, _ = xtream
+    vod.set_hidden(sid, ["Adult"])
+    db.run("DELETE FROM vod_titles WHERE category='Adult'")       # hidden by an older version: titles never kept
+    started = []
+    monkeypatch.setattr(jobs, "vod_scan", lambda source_id=None, kinds=vod.KINDS: started.append((source_id, kinds)) or True)
+    r = client.put(f"/api/sources/{sid}/vod-cats?kind=movie", json={"hidden": []}).json()
+    assert r["job"] == "vod" and started == [(sid, ("movie",))] and "missing" not in r
 
 
 def test_search(xtream):
@@ -213,11 +233,12 @@ def test_api_never_sends_the_provider_login(xtream, client, monkeypatch):
 def test_api_turning_on_demand_off_and_on(xtream, client, monkeypatch):
     sid, _ = xtream
     started = []
-    monkeypatch.setattr(jobs, "vod_scan", lambda source_id=None: started.append(source_id) or True)
+    monkeypatch.setattr(jobs, "vod_scan", lambda source_id=None, kinds=vod.KINDS: started.append((source_id, kinds)) or True)
     r = client.patch(f"/api/sources/{sid}", json={"vod_movies": 0})
     assert r.json()["job"] == "" and vod.counts()["movie"]["total"] == 0 and vod.counts()["series"]["total"] == 1
     assert client.patch(f"/api/sources/{sid}", json={"vod_movies": 0}).json()["job"] == "" and not started     # no change
-    assert client.patch(f"/api/sources/{sid}", json={"vod_movies": 1}).json()["job"] == "vod" and started == [sid]
+    assert client.patch(f"/api/sources/{sid}", json={"vod_movies": 1}).json()["job"] == "vod"
+    assert started == [(sid, ("movie",))]                          # only the movie list is read again
     client.delete(f"/api/sources/{sid}")
     assert vod.counts()["series"]["total"] == 0
 
@@ -272,3 +293,34 @@ def test_continue_and_list_cover_both_kinds(xtream, client):
     assert {t["kind"] for t in client.get("/api/vod/titles?tab=continue").json()["items"]} == {"movie", "series"}
     assert client.get("/api/vod/titles?tab=list").json()["total"] == 2
     assert client.get("/api/vod/titles").json()["total"] == 3          # no tab: movies
+
+
+def test_search_lists_the_preferred_language_first(monkeypatch):
+    _titles(monkeypatch, [("AL - Dune", "AL - FILMA"), ("ES - Dune", "ES - PELÍCULAS"), ("Dune: Part Two", "NETFLIX MOVIES"),
+                          ("EN - Dune", "EN - ACTION"), ("DE - Dune", "DE - FILME"), ("4K-EN - Dune", "EN - MOVIES 4K")])
+    names = [r["name"] for r in vod.search("dune")]
+    assert names[:2] == ["EN - Dune", "4K-EN - Dune"]                  # the tag doesn't count against the match
+    assert names.index("Dune: Part Two") > names.index("DE - Dune")     # an exact name beats a longer one
+    config.update({"vod_search_first": "DE,ES"})
+    assert [r["name"] for r in vod.search("dune")][:2] == ["ES - Dune", "DE - Dune"]
+
+
+def test_adult_titles_left_out_unless_switched_on(monkeypatch):
+    data = {**XTREAM, "get_vod_streams": XTREAM["get_vod_streams"] + [{"stream_id": 99, "name": "Adult film", "category_id": "1",
+                                                                       "is_adult": "1"}],
+            "get_series": XTREAM["get_series"] + [{"series_id": 98, "name": "Adult show", "category_id": "5", "is_adult": 1}]}
+    monkeypatch.setattr(sources, "xtream_api", lambda src, action=None, **p: data[action])
+    sid = sources.add_source("P", "xtream", "http://h", "u", "p")
+    db.run("UPDATE sources SET vod_movies=1, vod_series=1 WHERE id=?", (sid,))
+    vod.refresh_xtream(db.one("SELECT * FROM sources WHERE id=?", (sid,)))
+    assert vod.search("adult") == [] and vod.counts()["movie"]["total"] == 3
+    config.update({"vod_show_adult": True})
+    vod.refresh_xtream(db.one("SELECT * FROM sources WHERE id=?", (sid,)))
+    assert {r["name"] for r in vod.search("adult")} == {"Adult film", "Adult show"}
+
+
+def test_switching_adult_titles_rereads_on_demand(client, monkeypatch):
+    started = []
+    monkeypatch.setattr(jobs, "vod_scan", lambda source_id=None: started.append(1) or True)
+    assert client.post("/api/settings", json={"vod_search_first": "EN,FR"}).status_code == 200 and not started
+    assert client.post("/api/settings", json={"vod_show_adult": True}).status_code == 200 and started == [1]

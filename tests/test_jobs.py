@@ -86,3 +86,19 @@ def test_guide_refreshes_once_at_startup_when_older_than_half_an_hour(monkeypatc
 def test_fresh_guide_is_not_downloaded_again_on_a_quick_restart(monkeypatch):
     db.set_meta("epg_updated", int(jobs.time.time()) - 5 * 60)
     assert _run_housekeeping(monkeypatch) == 0
+
+
+def test_a_queued_job_runs_after_the_running_one():
+    import threading
+    from tunerbox import jobs
+    gate, ran = threading.Event(), []
+    assert jobs._run("first", lambda: (gate.wait(5), ran.append("first"))[1])
+    assert not jobs._run("other", lambda: ran.append("other"))           # not queued: refused, as before
+    assert jobs._run("second", lambda: ran.append("second"), queue=True)
+    assert jobs._run("second", lambda: ran.append("again"), queue=True)  # already waiting: not twice
+    gate.set()
+    for _ in range(100):
+        if not jobs.state["running"]:
+            break
+        threading.Event().wait(0.05)
+    assert ran == ["first", "second"] and not jobs._queue

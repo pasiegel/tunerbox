@@ -109,6 +109,10 @@ DEFAULTS = {
     "sleep_hours": 4,
     "screensaver_enabled": True,
     "screensaver_minutes": 10,
+    # On Demand: titles the provider marks as adult stay out unless this is on; and when the same title
+    # comes in several languages ("EN - Dune", "ES - Dune"), search lists the ones tagged with these first
+    "vod_show_adult": False,
+    "vod_search_first": "EN",
     # Local channels (folders of videos) get numbers from here up; their video is made at this height
     "media_channel_start": 2000,
     "media_resolution": "1080",
