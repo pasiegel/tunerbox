@@ -48,6 +48,10 @@ opentelemetry-api==1.45.2
     # via fastapi
 packaging==26.3 ; sys_platform == 'openbsd6'
     # via qtpy
+pillow==13.0.0 ; sys_platform == 'win32'
+    # via
+    #   -r requirements.txt
+    #   pystray
 proxy-tools==0.1.0
     # via pywebview
 pycparser==3.12 ; implementation_name != 'PyPy' and sys_platform == 'win32'
@@ -79,6 +83,8 @@ pyobjc-framework-uniformtypeidentifiers==13.0 ; sys_platform == 'darwin'
     # via pywebview
 pyobjc-framework-webkit==13.0 ; sys_platform == 'darwin'
     # via pywebview
+pystray==0.19.5 ; sys_platform == 'win32'
+    # via -r requirements.txt
 python-dotenv==1.2.4
     # via uvicorn
 pythonnet==3.2.1 ; sys_platform == 'win32'
@@ -93,6 +99,8 @@ qtpy==2.4.3 ; sys_platform == 'openbsd6'
     # via pywebview
 rapidfuzz==3.14.6
     # via -r requirements.txt
+six==1.17.0 ; sys_platform == 'win32'
+    # via pystray
 starlette==1.10.0
     # via fastapi
 typing-extensions==4.16.0

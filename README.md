@@ -38,7 +38,7 @@ While the app is open, other devices on your network (a TV browser, tablet, Plex
 
 | Option | What it does |
 |---|---|
-| `run.bat --server` | server only, no window: for a PC that just feeds other devices |
+| `run.bat --server` | server only, no window: for a PC that just feeds other devices. On Windows it puts a TunerBox icon in the notification area (system tray): double-click to open TunerBox, right-click for Setup or **Exit TunerBox**. Add `--no-tray` to leave the icon out. The Start menu's **TunerBox (server only)** shortcut runs this. |
 | `run.bat --browser` | use your web browser instead of the app window |
 | `run.bat --shortcut` | re-create the Desktop/Start Menu shortcuts |
 

@@ -6,3 +6,6 @@ qrcode>=7.4
 numpy>=1.26
 # desktop app window (Linux also needs GTK or Qt: see pywebview docs)
 pywebview>=5.0
+# Windows server-only mode: notification-area icon (Open / Setup / Exit)
+pystray>=0.19 ; sys_platform == "win32"
+pillow>=10 ; sys_platform == "win32"

@@ -59,6 +59,8 @@ def main():
            "--distpath", str(ROOT / "dist"), "--workpath", str(build / "pyi"), "--specpath", str(build),
            "--collect-submodules", "uvicorn", "--collect-all", "webview",
            "--hidden-import", "tunerbox.api", "--collect-submodules", "qrcode", "--paths", str(ROOT)]
+    if WIN:
+        cmd += ["--collect-submodules", "pystray"]   # its Windows backend is imported by name
     for src, dst in data:
         cmd += ["--add-data", f"{src}{sep}{dst}"]
     if WIN:

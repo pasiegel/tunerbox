@@ -1,7 +1,8 @@
 """TunerBox launcher.
 
     python -m tunerbox              desktop app window (default)
-    python -m tunerbox --server     server only (other devices / Plex use it)
+    python -m tunerbox --server     server only (other devices / Plex use it); on Windows a tray
+                                    icon offers Open / Setup / Exit (--no-tray to leave it out)
     python -m tunerbox --browser    server + open the web browser
     python -m tunerbox --shortcut   add Desktop and Start Menu shortcuts (Windows)
 """
@@ -148,6 +149,7 @@ def main():
     ap.add_argument("--port", type=int)
     ap.add_argument("--host")
     ap.add_argument("--server", action="store_true", help="run the server only, no window")
+    ap.add_argument("--no-tray", action="store_true", help="with --server on Windows: no notification-area icon")
     ap.add_argument("--browser", action="store_true", help="open the web browser instead of the app window")
     ap.add_argument("--window", action="store_true", help=argparse.SUPPRESS)   # old flag, now the default
     ap.add_argument("--shortcut", action="store_true", help="add Desktop/Start Menu shortcuts (Windows)")
@@ -208,6 +210,14 @@ def main():
         return
     if a.browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    from . import tray
+    if a.server and not a.no_tray and tray.available():
+        # server only on Windows: a tray icon to open it or exit (the server runs alongside)
+        t = threading.Thread(target=server.run, daemon=True)
+        t.start()
+        if not tray.run(url, server, t):
+            t.join()
+        return
     server.run()
 
 
