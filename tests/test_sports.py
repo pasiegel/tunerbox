@@ -141,6 +141,8 @@ def test_scoreboard_games_in_overview():
            (sid, "ESPN+ 07 | Toronto Raptors vs Philadelphia 76ers"))
     db.run("INSERT INTO streams(key, source_id, name, url, grp) VALUES ('f2', ?, ?, 'http://f', 'US| NFL PPV')",
            (sid, "NFL | 01 - 1pm Cowboys @ Eagles"))
+    db.run("INSERT INTO streams(key, source_id, name, url, grp) VALUES ('f3', ?, ?, 'http://f', 'US| ESPN+ PPV')",
+           (sid, "US (ESPN+ 204) | Football: NFL Football: Dallas Cowboys vs. Philadelphia Eagles"))
     sixers = _team("Philadelphia 76ers", "76ers", "Philadelphia", "PHI", "50")
     raptors = _team("Toronto Raptors", "Raptors", "Toronto", "TOR", "48")
     _store(_game(1, "nfl", now - h, EAGLES, COWBOYS, "in", "3rd 5:21"),
@@ -162,6 +164,8 @@ def test_scoreboard_games_in_overview():
     assert d["on_now"][0]["stop"] > now
     assert d["on_now"][2]["feed"]["key"] == "f1"
     assert (nfl["feed"]["key"], nfl["feed"]["kind"]) == ("f2", "ppv")    # on channel 5, and on a PPV feed as a second choice
+    # every channel and feed that has the game is offered; the league's own feed group comes first
+    assert [c["number"] for c in nfl["also"]] == [6] and [f["key"] for f in nfl["feeds"]] == ["f2", "f3"]
 
     # one tab at a time gives the same lists
     same = lambda rows: [{k: v for k, v in p.items() if k != "stop"} for p in rows]     # a game running long ends "now + 30 min"

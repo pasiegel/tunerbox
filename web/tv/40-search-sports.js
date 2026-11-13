@@ -18,21 +18,27 @@ function pickProgram(p) {
   if (p.start <= n0 && n0 < p.stop) { closePanels(); tune(i); return; }
   programDialog(S.channels[i], p);
 }
-// A game that's on a channel and on an event feed. The guide can't tell whether the channel really
-// has it (blackouts, regional feeds), so ask; the feed goes first when it was checked and is live.
-const feedLabel = (f) => f.group || (f.kind === "ppv" ? "PPV" : "Event feed");
+// A game from the Sports screen: every channel showing it (p.ch, p.also) and every event feed named
+// after it (p.feeds). The guide can't tell whether a channel really has it (blackouts, regional
+// feeds, a wrong guide), and most feeds are never checked, so with more than one choice: ask.
+const gameChans = (p) => (p.ch ? [p.ch, ...(p.also || [])] : []).filter((c) => S.byNum.has(c.number));
+const gameFeeds = (p) => p.feeds || (p.feed ? [p.feed] : []);
+const clip = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
 function pickGame(p) {
-  const i = S.byNum.get(p.ch.number), n0 = now();
-  if (i === undefined) { closePanels(); playFeed(p.feed); return; }
-  if (!(p.start <= n0 && n0 < p.stop)) { pickProgram(p); return; }
-  const opts = [
-    { label: `Watch on ${p.ch.number} ${p.ch.label || p.ch.name}`,
-      act: () => { closeDialog(); closePanels(); tune(i); S.gameFeed = { idx: i, feed: p.feed, until: p.stop }; } },
-    { label: `Watch on ${feedLabel(p.feed)}${p.feed.status === "ok" ? " · live now" : ""}`,
-      act: () => { closeDialog(); closePanels(); playFeed(p.feed); } },
-  ];
-  if (p.feed.status === "ok") opts.reverse();
-  openDialog(p.event ? p.event.name : p.title, `${p.title}${p.subtitle ? `\n${p.subtitle}` : ""}\nIf one doesn't have the game, try the other.`, opts);
+  const n0 = now(), feeds = gameFeeds(p);
+  if (p.ch && !(p.start <= n0 && n0 < p.stop)) { pickProgram(p); return; }      // not on yet: record / remind
+  const go = (fn) => () => { closeDialog(); closePanels(); fn(); };
+  const chans = gameChans(p).map((c) => ({
+    html: `<span class="badge ch">CH</span> <span>${c.number} ${esc(c.label || c.name)}</span>`,
+    // no signal there: the first feed is tried by itself (failOver)
+    act: go(() => { const i = S.byNum.get(c.number); tune(i); if (feeds[0]) S.gameFeed = { idx: i, feed: feeds[0], until: p.stop }; }) }));
+  const fs = feeds.map((f) => ({ live: f.status === "ok", html: `${feedBadge(f)} <span>${esc(clip(f.name, 64))}</span>`,
+                                 right: esc(f.group || ""), act: go(() => playFeed(f)) }));
+  // feeds that were checked and are live, then the channels, then the feeds nobody has checked
+  const opts = [...fs.filter((o) => o.live), ...chans, ...fs.filter((o) => !o.live)];
+  if (!opts.length) { toast(`Channel ${p.ch.number} is not available`); return; }
+  if (opts.length === 1) { opts[0].act(); return; }
+  openDialog(p.event ? p.event.name : p.title, `${opts.length} places have this game. If one doesn't work, try the next.`, opts);
 }
 const progHtml = (p, badge) => `${badge} <span>${esc(p.title)}${p.subtitle ? ` <small>· ${esc(p.subtitle)}</small>` : ""}</span>`;
 function feedBadge(f) {
@@ -198,12 +204,13 @@ function spGame(p, badge, until) {
   const html = `${badge}<span class="sp-main"><span class="sp-t">${esc(p.title)}</span>${p.subtitle ? `<small class="sp-s">${esc(p.subtitle)}</small>` : ""}</span>`
     + (score ? `<small class="score">${esc(score)}</small>` : "");
   const cls = "game";
+  const chans = gameChans(p).length, feeds = gameFeeds(p), more = chans + feeds.length - 1;
   if (p.ch) {
-    const also = p.feed ? ` + ${p.feed.kind === "ppv" ? "PPV" : "feed"}` : "";
+    const also = more > 1 ? ` + ${more} more` : feeds.length ? ` + ${feeds[0].kind === "ppv" ? "PPV" : "feed"}` : more > 0 ? " + 1 more" : "";
     return { cls, html, right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}${also}${until ? ` · until ${fmtTime(p.stop)}` : ""}`,
-             act: () => (p.feed ? pickGame(p) : pickProgram(p)) };
+             act: () => (feeds.length || more > 0 ? pickGame(p) : pickProgram(p)) };
   }
-  if (p.feed) return { cls, html, right: esc(p.feed.group || "Event feed"), act: () => { closePanels(); playFeed(p.feed); } };
+  if (feeds.length) return { cls, html, right: esc(feeds[0].group || "Event feed") + (more > 0 ? ` + ${more} more` : ""), act: () => pickGame(p) };
   const on = e.on.length ? `on ${e.on.join(", ")}` : "";
   return { cls: "game nochan", html, right: esc(on ? `${on} · no channel` : "no channel"),
            act: () => toast(`${e.name}: none of your channels or event feeds has it${on ? ` (it's ${on})` : ""}`, 4000) };

@@ -268,12 +268,19 @@ class Finder:
                 out |= set.intersection(*sets)
         return out
 
-    def find(self, keys):
+    def find_all(self, keys, limit=30):
+        """Every thing whose name has both teams, in the order they were given."""
         home, away = keys
+        out = []
         for i in sorted(self._with(home) & self._with(away)):
             if text_matches(keys, self.items[i][1]):
-                return self.items[i][0]
-        return None
+                out.append(self.items[i][0])
+                if len(out) >= limit:
+                    break
+        return out
+
+    def find(self, keys):
+        return next(iter(self.find_all(keys, 1)), None)
 
 
 _match_cache = {"key": None, "t": 0, "map": {}}

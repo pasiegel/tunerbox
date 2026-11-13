@@ -198,19 +198,30 @@ def _sport_programs(start, stop, evs=(), later=True):
 
 
 OVERRUN = 4 * 3600
+MAX_ALSO, MAX_FEEDS = 5, 8      # how many other channels / event feeds a game row offers
 
 
 def _one_per_game(progs, now):
     """One listing per scoreboard game (the first: on now before later, lowest channel). A listing
     that already ended only stays if the game is still being played and nothing else carries it:
-    the game ran long, and the channel is still on it whatever the guide says."""
-    seen, out = set(), []
+    the game ran long, and the channel is still on it whatever the guide says.
+    The other channels showing the game right now go in the row's "also": the guide can be wrong
+    about a channel, so the screen offers them all."""
+    seen, out, kept = set(), [], {}
     for p in sorted(progs, key=lambda p: p["stop"] <= now):      # stable: listings still on air first
         ev = p.pop("game", None)
         if ev:
-            if ev["id"] in seen or (p["stop"] <= now and ev["state"] != "in"):
+            if ev["id"] in seen:
+                first = kept[ev["id"]]
+                if (p["start"] <= now < p["stop"] and first["start"] <= now and len(first["also"]) < MAX_ALSO
+                        and p["ch"]["number"] not in [first["ch"]["number"]] + [c["number"] for c in first["also"]]):
+                    first["also"].append(p["ch"])
+                continue
+            if p["stop"] <= now and ev["state"] != "in":
                 continue
             seen.add(ev["id"])
+            kept[ev["id"]] = p
+            p["also"] = []
             if p["stop"] <= now:
                 p["stop"] = now + 1800
             p["event"] = scoreboard.public(ev)
@@ -236,6 +247,15 @@ def _feed_finder():
     return _finder_cache["finder"]
 
 
+def _game_feeds(finder, ev):
+    """The event feeds named after a game: ones checked live first, then the league's own group
+    ("NFL PPV" for an NFL game) before the catch-all ones."""
+    tag = re.compile(rf"\b{re.escape(scoreboard.LEAGUES[ev['league']][1])}\b", re.I)
+    feeds = finder.find_all(scoreboard.event_keys(ev))
+    feeds.sort(key=lambda f: (f["status"] != "ok", not tag.search(f["group"] or "")))
+    return feeds[:MAX_FEEDS]
+
+
 def _game_items(evs, taken, now, finder):
     """Scoreboard games with no guide listing: on an event feed if a feed's name has both teams,
     otherwise listed without a channel (unless that's switched off in Settings)."""
@@ -247,13 +267,13 @@ def _game_items(evs, taken, now, finder):
     show_all = config.get("sports_show_unmatched", True)
     out = []
     for ev in evs:
-        feed = finder.find(scoreboard.event_keys(ev))
-        if not feed and not show_all:
+        feeds = _game_feeds(finder, ev)
+        if not feeds and not show_all:
             continue
         pub = scoreboard.public(ev)
         out.append({"title": pub["name"], "subtitle": pub["league_name"], "descr": "", "category": "Sports",
                     "start": ev["start"], "stop": max(ev["start"] + 3 * 3600, now + 1800 if ev["state"] == "in" else 0),
-                    "is_live": int(ev["state"] == "in"), "is_new": 0, "ch": None, "feed": feed, "event": pub})
+                    "is_live": int(ev["state"] == "in"), "is_new": 0, "ch": None, "feed": feeds[0] if feeds else None, "feeds": feeds, "event": pub})
     return out
 
 
@@ -304,7 +324,8 @@ def _games(now, later=True):
     # scheduled to show (a blackout or a regional feed looks the same here), so offer both.
     for p in progs:
         if p.get("event"):
-            p["feed"] = finder.find(scoreboard.event_keys(by_id[p["event"]["id"]]))
+            p["feeds"] = _game_feeds(finder, by_id[p["event"]["id"]])
+            p["feed"] = p["feeds"][0] if p["feeds"] else None       # the first choice
     progs += _game_items(evs, taken, now, finder)
     on_now = [p for p in progs if p["start"] <= now]
     upcoming = sorted((p for p in progs if p["start"] > now), key=lambda p: (p["start"], _ch_num(p)))[:300]

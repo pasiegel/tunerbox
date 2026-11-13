@@ -180,17 +180,20 @@ async function loadSports() {
     // scoreboard games carry a score; ones without a channel play from an event feed, or are left out
     ...d.on_now.filter((p) => p.ch || p.feed).map((p) => {
       const score = p.event ? [p.event.score, p.event.detail].filter(Boolean).join(" · ") : "";
-      if (!p.ch) return { ...feedRow(p.feed), title: p.title, sub: [score, p.feed.name].filter(Boolean).join(" · "), badge: "ON NOW", live: true };
-      const chan = `${p.ch.number} ${p.ch.label || p.ch.name}`, f = p.feed;
-      const row = { title: p.title + (p.event && p.subtitle ? `: ${p.subtitle}` : ""), sub: [chan + (f ? ` + ${f.kind === "ppv" ? "PPV" : "feed"}` : ""), score].filter(Boolean).join(" · "),
-                    badge: "ON NOW", live: true, logo: p.ch.logo, cmd: { type: "tune", number: p.ch.number } };
-      if (!f) return row;
-      // on a channel and on an event feed: the guide can't tell which really has it, so ask
-      const fr = feedRow(f);
-      row.cmd = { ...row.cmd, feed: fr.cmd.feed, until: p.stop };
-      const opts = [{ ...row, title: chan, sub: row.title }, { ...fr, sub: [f.group, f.status === "ok" ? "live now" : ""].filter(Boolean).join(" · ") }];
-      if (f.status === "ok") opts.reverse();
-      return { ...row, open: () => { bindList($("sp-list"), [{ title: "‹ Back to Sports", open: loadSports }, ...opts]); window.scrollTo(0, 0); } };
+      // every channel showing the game and every event feed named after it. The guide can't tell
+      // whether a channel really has it and most feeds are never checked, so with several: ask.
+      const feeds = p.feeds || (p.feed ? [p.feed] : []), fb = feeds[0] && feedRow(feeds[0]).cmd.feed;
+      const title = p.title + (p.ch && p.event && p.subtitle ? `: ${p.subtitle}` : "");
+      const chans = (p.ch ? [p.ch, ...(p.also || [])] : []).map((c) => ({
+        title: `${c.number} ${c.label || c.name}`, sub: title, logo: c.logo, badge: "CH",
+        cmd: { type: "tune", number: c.number, ...(fb ? { feed: fb, until: p.stop } : {}) } }));      // no signal: the TV tries the first feed
+      const fs = feeds.map((f) => ({ ...feedRow(f), sub: [f.group, f.status === "ok" ? "live now" : ""].filter(Boolean).join(" · ") }));
+      const opts = [...fs.filter((o) => o.live), ...chans, ...fs.filter((o) => !o.live)], more = opts.length - 1;
+      const where = p.ch ? `${p.ch.number} ${p.ch.label || p.ch.name}` : feeds[0].group || feeds[0].name;
+      const row = { ...opts[0], title, sub: [where + (more > 0 ? ` + ${more} more` : ""), score].filter(Boolean).join(" · "),
+                    badge: "ON NOW", live: true, logo: p.ch ? p.ch.logo : feeds[0].logo };
+      if (more > 0) row.open = () => { bindList($("sp-list"), [{ title: "‹ Back to Sports", open: loadSports }, ...opts]); window.scrollTo(0, 0); };
+      return row;
     }),
     ...d.channels.map((c) => ({ title: `${c.number}  ${c.label || c.name}`, sub: c.now ? c.now.title : "Sports channel", logo: c.logo, cmd: { type: "tune", number: c.number } })),
     ...d.groups.filter((g) => g.named).map((g) => ({ title: g.name, sub: `${g.named} event${g.named === 1 ? "" : "s"}${g.live ? ` · ${g.live} live` : ""}`,
