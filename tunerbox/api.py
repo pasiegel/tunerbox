@@ -353,6 +353,30 @@ def api_add_source(data: dict = Body(...)):
     return {"id": sid}
 
 
+@app.get("/api/sources/export")
+def api_export_sources(request: Request):
+    """Download every playlist (logins included) as a JSON file. Only this PC or a paired phone
+    may: the file holds passwords."""
+    if not remote.trusted(request):
+        raise HTTPException(403, "Export from the TunerBox PC or a paired phone (Setup › Phones)")
+    body = json.dumps(sources.export_sources(), indent=2, ensure_ascii=False)
+    name = f"tunerbox-playlists-{time.strftime('%Y-%m-%d')}.json"
+    return Response(body, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+@app.post("/api/sources/import")
+def api_import_sources(data: dict = Body(...)):
+    try:
+        r = sources.import_sources(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    guide.invalidate()
+    if r["added"] or r["updated"]:
+        r["job"] = "scan" if jobs.scan() else ""        # read the new / changed playlists
+    return r
+
+
 @app.get("/api/hdhomerun/discover")
 def api_hdhr_discover():
     return sources.discover_hdhomerun()

@@ -269,6 +269,37 @@ $("src-form").onsubmit = async (e) => {
   catch (err) { toast(err.message); }
 };
 
+// export is a plain download link; a phone that isn't paired gets a message instead of an error page
+$("src-export").onclick = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await fetch("/api/sources/export");
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch (_) {} throw new Error(m); }
+    const name = (/filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "") || [])[1] || "tunerbox-playlists.json";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await r.blob()); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (err) { toast(err.message); }
+};
+$("src-import").onclick = () => $("src-import-file").click();
+$("src-import-file").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch (_) { toast("That file isn't valid JSON"); return; }
+  const n = Array.isArray(data.playlists) ? data.playlists.length : 0;
+  if (!confirm(`Import ${n} playlist${n === 1 ? "" : "s"} from ${f.name}? Playlists you already have are updated.`)) return;
+  try {
+    const r = await api("/api/sources/import", { method: "POST", body: data });
+    let msg = `Imported: ${r.added} added, ${r.updated} updated`;
+    if (r.skipped.length) msg += `, ${r.skipped.length} skipped (${r.skipped.join("; ")})`;
+    toast(r.job ? msg + " - scanning…" : r.added + r.updated ? msg + ". Press Scan playlists now once the current job finishes." : msg);
+    loaders.sources();
+    if (r.job) pollJob();
+  } catch (err) { toast(err.message); }
+};
+
 // ---------------------------------------------------------------- playlist groups
 // Tick/untick whole groups. "US| SPORTS", "DE: NEWS"… can be filtered by their country prefix.
 const GR = { id: 0, all: [], shown: new Map(), orig: new Set() };

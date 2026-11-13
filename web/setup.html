@@ -89,6 +89,13 @@
       <button class="btn primary" id="btn-scan2">Scan playlists now</button>
       <label class="chk"><input type="checkbox" id="force-probe"> Re-check every stream (slow)</label>
     </div>
+    <h3>Back up or move to another PC</h3>
+    <p class="muted">Saves every playlist with its logins, groups and video settings as a <code>.json</code> file. Import it here or on another TunerBox: playlists it already has are updated, not added twice. The file holds your passwords in plain text, so keep it private.</p>
+    <div class="toolbar">
+      <a class="btn" id="src-export" href="/api/sources/export" download>Export playlists</a>
+      <button type="button" class="btn" id="src-import">Import playlists…</button>
+      <input type="file" id="src-import-file" accept=".json,application/json" hidden>
+    </div>
   </section>
 
   <!-- local channels -->

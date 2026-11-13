@@ -398,5 +398,71 @@ def add_source(name, type_, url, username="", password="", exclude_groups="", xt
                   (name or url, type_, url, username, password, exclude_groups, xtream_format, video_mode or ""))
 
 
+# ---------------------------------------------------------------- backup / move to another PC
+EXPORT_KIND = "tunerbox-playlists"
+_TYPES = ("m3u", "xtream", "hdhomerun")
+
+
+def export_sources():
+    """Every playlist with its settings (logins included), for Setup > Playlists > Export."""
+    from . import __version__
+    out = []
+    for s in db.rows("SELECT * FROM sources ORDER BY id"):
+        out.append({"name": s["name"], "type": s["type"], "url": s["url"], "username": s["username"] or "",
+                    "password": s["password"] or "", "enabled": bool(s["enabled"]),
+                    "exclude_groups": s["exclude_groups"] or "", "hidden_groups": sorted(hidden_groups(s)),
+                    "xtream_format": s["xtream_format"] or "ts", "video_mode": s.get("video_mode") or ""})
+    return {"kind": EXPORT_KIND, "version": 1, "app_version": __version__,
+            "exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "playlists": out}
+
+
+def _same(a, b):
+    """The same playlist: same kind, address and login (a renamed one still counts)."""
+    def key(s):
+        return (s["type"], (s["url"] or "").strip().rstrip("/").lower(), (s.get("username") or "").strip())
+    return key(a) == key(b)
+
+
+def import_sources(data):
+    """Add the playlists in an export file. One that's already here (same address and login) has
+    its settings updated instead of being added twice. Returns counts plus any entries skipped."""
+    if not isinstance(data, dict) or data.get("kind") != EXPORT_KIND or not isinstance(data.get("playlists"), list):
+        raise ValueError("That isn't a TunerBox playlists file")
+    have = db.rows("SELECT * FROM sources")
+    added = updated = 0
+    skipped = []
+    for i, p in enumerate(data["playlists"], 1):
+        if not isinstance(p, dict):
+            skipped.append(f"entry {i}: not a playlist")
+            continue
+        typ, url = str(p.get("type") or "m3u"), str(p.get("url") or "").strip()
+        name = str(p.get("name") or "").strip() or url
+        if typ not in _TYPES or not url:
+            skipped.append(f"{name or f'entry {i}'}: missing address or unknown type")
+            continue
+        hidden = p.get("hidden_groups") or []
+        if not isinstance(hidden, list):
+            hidden = []
+        row = {"name": name, "type": typ, "url": url, "username": str(p.get("username") or "").strip(),
+               "password": str(p.get("password") or ""), "enabled": 1 if p.get("enabled", True) else 0,
+               "exclude_groups": str(p.get("exclude_groups") or ""),
+               "hidden_groups": json.dumps(sorted({str(g) for g in hidden})),
+               "xtream_format": "m3u8" if p.get("xtream_format") == "m3u8" else "ts",
+               "video_mode": p.get("video_mode") if p.get("video_mode") in ("copy", "h264", "roku720") else ""}
+        cur = next((s for s in have if _same(s, row)), None)
+        if cur:
+            cols = [k for k in row if k not in ("type", "url", "username")]
+            db.run(f"UPDATE sources SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?",
+                   (*[row[k] for k in cols], cur["id"]))
+            updated += 1
+        else:
+            cols = list(row)
+            db.run(f"INSERT INTO sources({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                   tuple(row[k] for k in cols))
+            have.append(row)
+            added += 1
+    return {"added": added, "updated": updated, "skipped": skipped}
+
+
 def enabled_sources():
     return db.rows("SELECT * FROM sources WHERE enabled=1 ORDER BY id")

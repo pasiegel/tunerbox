@@ -98,6 +98,35 @@ def write_png(path: Path, size=192, bg=None, overwrite=False):
     return path
 
 
+def tile_rgba(size: int, scale=0.62, glow=(34, 74, 158), edge=(10, 26, 66)) -> bytes:
+    """The TV centred on a full-bleed blue tile with a soft glow. For home-screen icons the
+    launcher crops itself (Android "maskable" circles/squircles, iOS rounded squares): at
+    scale 0.62 the whole TV stays inside Android's safe zone (the middle 80% circle)."""
+    tv = int(size * scale)
+    art = _rgba(tv)
+    o = (size - tv) // 2
+    px = bytearray(size * size * 4)
+    half = (size - 1) / 2
+    for y in range(size):
+        for x in range(size):
+            d = min(1.0, (((x - half) ** 2 + (y - half * 0.9) ** 2) ** 0.5) / (half * 1.3))
+            r, g, b = (glow[k] + (edge[k] - glow[k]) * d for k in range(3))
+            tx, ty = x - o, y - o
+            if 0 <= tx < tv and 0 <= ty < tv:
+                j = (ty * tv + tx) * 4
+                a = art[j + 3] / 255
+                if a:
+                    r, g, b = (art[j + k] * a + c * (1 - a) for k, c in enumerate((r, g, b)))
+            i = (y * size + x) * 4
+            px[i:i + 4] = bytes([int(r), int(g), int(b), 255])
+    return bytes(px)
+
+
+def write_tile(path: Path, size=512, scale=0.62):
+    path.write_bytes(_png(size, raw=tile_rgba(size, scale)))
+    return path
+
+
 def write_banner(path: Path, w=320, h=180, bg=TILE_BG):
     """Android TV launcher banner: the icon centred on a wide tile."""
     ico = int(h * 0.8)

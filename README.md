@@ -71,6 +71,8 @@ Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno
 6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans.
 7. Press **Watch TV**.
 
+**Backing up your playlists, or moving them to another PC:** in **Setup › Playlists**, **Export playlists** saves every playlist (with its login, hidden groups, skip pattern and video setting) as a `tunerbox-playlists-<date>.json` file. **Import playlists…** on this or another TunerBox adds them back and scans; a playlist that's already there (same address and login) is updated instead of added twice. The file holds your passwords in plain text, so keep it private. Exporting only works on the TunerBox PC itself or a paired phone.
+
 Changing provider later replaces the lineup: press **Scan playlists now** again afterwards.
 
 ## Remote / keyboard
