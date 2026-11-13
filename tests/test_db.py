@@ -41,3 +41,20 @@ def test_database_from_a_newer_version_is_left_alone():
     db.init()
     with db.conn() as c:
         assert c.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS) + 5
+
+
+def test_migrations_repair_a_database_numbered_by_another_build():
+    """A development build used schema versions 3-4 for other columns: ours must still be added."""
+    import sqlite3
+    from tunerbox import config
+    path = config.DATA / "tunerbox.db"
+    path.unlink()
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE sources (id INTEGER PRIMARY KEY, name TEXT, type TEXT, url TEXT, user_agent TEXT)")
+    c.execute(f"PRAGMA user_version={len(db.MIGRATIONS)}")
+    c.commit()
+    c.close()
+    db.init()
+    cols = {r["name"] for r in db.rows("PRAGMA table_info(sources)")}
+    assert {"hidden_groups", "video_mode", "vod_movies", "vod_series", "vod_hidden", "user_agent"} <= cols
+    db.init()                       # and again: nothing breaks on a second start

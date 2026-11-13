@@ -31,7 +31,8 @@ def test_export_has_every_setting_including_the_login(client, monkeypatch):
     eagle = data["playlists"][0]
     assert eagle == {"name": "Eagle", "type": "xtream", "url": "http://host:8080", "username": "me",
                      "password": "secret", "enabled": True, "exclude_groups": "XXX",
-                     "hidden_groups": ["AR| KIDS", "UK| NEWS"], "xtream_format": "m3u8", "video_mode": "roku720"}
+                     "hidden_groups": ["AR| KIDS", "UK| NEWS"], "xtream_format": "m3u8", "video_mode": "roku720",
+                     "on_demand": {"movies": False, "series": False, "hidden": []}}
     assert data["playlists"][1]["enabled"] is False
 
 
@@ -70,3 +71,21 @@ def test_import_skips_bad_entries_and_rejects_other_files(client):
     row = db.one("SELECT video_mode, hidden_groups FROM sources")
     assert (row["video_mode"], json.loads(row["hidden_groups"])) == ("", [])
     assert client.post("/api/sources/import", json={"settings": {}}).status_code == 400
+
+
+def test_on_demand_settings_go_with_the_playlist(client, monkeypatch):
+    _two_playlists()
+    db.run("""UPDATE sources SET vod_movies=1, vod_series=0, vod_hidden='[["movie", "FOR ADULTS"]]' WHERE name='Eagle'""")
+    monkeypatch.setattr(remote, "trusted", lambda _r: True)
+    data = client.get("/api/sources/export").json()
+    assert data["playlists"][0]["on_demand"] == {"movies": True, "series": False, "hidden": [["movie", "FOR ADULTS"]]}
+    db.run("DELETE FROM sources")
+    assert client.post("/api/sources/import", json=data).json()["added"] == 2
+    eagle = db.one("SELECT * FROM sources WHERE name='Eagle'")
+    assert (eagle["vod_movies"], eagle["vod_series"], json.loads(eagle["vod_hidden"])) == (1, 0, [["movie", "FOR ADULTS"]])
+    # a file from before On Demand leaves those settings as they are
+    for pl in data["playlists"]:
+        pl.pop("on_demand")
+    db.run("UPDATE sources SET vod_series=1 WHERE name='Eagle'")
+    assert client.post("/api/sources/import", json=data).json()["updated"] == 2
+    assert db.one("SELECT vod_movies, vod_series FROM sources WHERE name='Eagle'") == {"vod_movies": 1, "vod_series": 1}

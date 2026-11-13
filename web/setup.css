@@ -200,3 +200,12 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
   .league-grid .sport:not(:first-child) { margin-top: 8px; }
   .chip span { padding: 8px 14px 8px 11px; }
 }
+/* On Demand switches on a playlist card */
+.card-head { display: flex; align-items: center; gap: 6px; }
+.card-head .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vod-box { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto auto; gap: 8px 12px; align-items: center; }
+.vod-h { grid-column: 1 / -1; font-weight: 700; color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.vod-row { display: contents; }
+.vod-t { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
+.vod-t small { font-size: 12px; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }

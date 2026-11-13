@@ -55,14 +55,18 @@ function selIndex(listEl) { return [...listEl.querySelectorAll("li")].findIndex(
 // ---------------------------------------------------------------- search
 // On-screen keyboard for remotes; a real keyboard (or the iPad/phone keyboard) types into the box.
 const KB_ROWS = [[..."ABCDEFG"], [..."HIJKLMN"], [..."OPQRSTU"], [..."VWXYZ12"], [..."3456789"], ["0", "Space", "⌫", "Clear"]];
-const SR = { q: "", zone: "kb", r: 0, c: 0, sel: 0, items: [], timer: null, seq: 0 };
+// SR.vodOnly: opened from On Demand, so it searches only the movies and shows
+const SR = { q: "", zone: "kb", r: 0, c: 0, sel: 0, items: [], timer: null, seq: 0, vodOnly: false };
 const sInput = $("s-input");
 const finePointer = !!(window.matchMedia && matchMedia("(pointer: fine)").matches);
 
-function openSearch() {
+function openSearch(vodOnly = false) {
   hideBanner(); closeMenu(); closeSports();
   if (top() !== "search") S.layer.push("search");
   $("search").classList.remove("hidden");
+  if (vodOnly !== SR.vodOnly) { SR.vodOnly = vodOnly; SR.items = []; SR.sel = 0; if (SR.q.trim()) runSearch(); }
+  $("s-title").textContent = vodOnly ? "Search On Demand" : "Search";
+  sInput.placeholder = vodOnly ? "Title, year or actor…" : "Channel, show, movie, team or event";
   SR.zone = "kb"; renderKb(); renderSearch();
   if (finePointer && !window.TunerBoxApp) sInput.focus();
 }
@@ -87,10 +91,13 @@ function kbPress(k) {
 }
 async function runSearch() {
   const seq = ++SR.seq, q = SR.q.trim();
-  if (!q) { SR.items = []; renderSearch(); return; }
+  if (!q) { SR.items = []; SR.vod = 0; renderSearch(); return; }
   $("s-count").textContent = "Searching…";
   let d;
-  try { d = await api(`/api/search?q=${encodeURIComponent(q)}`); } catch (e) { $("s-count").textContent = e.message; return; }
+  try {
+    d = SR.vodOnly ? { channels: [], programs: [], feeds: [], vod: await api(`/api/vod/search?q=${encodeURIComponent(q)}`) }
+                   : await api(`/api/search?q=${encodeURIComponent(q)}`);
+  } catch (e) { $("s-count").textContent = e.message; return; }
   if (seq !== SR.seq) return;
   const n0 = now();
   SR.items = [
@@ -100,14 +107,18 @@ async function runSearch() {
                                 right: `${p.ch.number} ${esc(p.ch.label || p.ch.name)}`, act: () => pickProgram(p) })),
     ...d.feeds.map(feedItem),
   ];
+  SR.vod = (d.vod || []).length;
+  SR.items.push(...(d.vod || []).map(vodSearchItem));
   SR.sel = Math.min(SR.sel, Math.max(0, SR.items.length - 1));
   renderSearch();
 }
 function renderSearch() {
   const q = SR.q.trim();
-  $("s-count").textContent = q ? `${SR.items.length || "No"} result${SR.items.length === 1 ? "" : "s"}` : "";
+  $("s-count").textContent = q ? `${SR.items.length || "No"} result${SR.items.length === 1 ? "" : "s"}`
+    + (SR.vod && SR.items.length && !SR.vodOnly ? ` · ${SR.items.length - SR.vod} on TV · ${SR.vod} On Demand` : "") : "";
   const entries = SR.items.length ? SR.items
-    : [{ label: q ? "Nothing found. Try fewer letters, a team name or a channel number." : "Type a channel name or number, a show, a team or an event." }];
+    : [{ label: SR.vodOnly ? (q ? "Nothing found in On Demand. Try fewer letters." : "Type a title, a year or an actor.")
+         : q ? "Nothing found. Try fewer letters, a team name or a channel number." : "Type a channel name or number, a show, a movie, a team or an event." }];
   fillList($("s-list"), entries, SR.zone === "res" && SR.items.length ? SR.sel : -1);
   const li = $("s-list").querySelector("li.sel"); if (li) li.scrollIntoView({ block: "nearest" });
 }

@@ -209,15 +209,15 @@ $("ex-off").onclick = () => bulk(false);
 loaders.sources = async () => {
   const list = await api("/api/sources");
   $("src-list").innerHTML = list.length ? list.map((s) => `<div class="card" data-id="${s.id}">
-      <div class="t">${esc(s.name)} <span class="tag">${{ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U"}</span> ${s.enabled ? "" : '<span class="tag none">disabled</span>'}</div>
+      <div class="card-head"><div class="t">${esc(s.name)} <span class="tag">${{ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U"}</span> ${s.enabled ? "" : '<span class="tag none">disabled</span>'}</div>
+        <button class="btn small" data-a="toggle">${s.enabled ? "Disable" : "Enable"}</button>
+        <button class="btn small danger" data-a="del">Delete</button></div>
       <div class="u">${esc(s.url)}${s.username ? " · user " + esc(s.username) : ""}</div>
-      <div class="muted small">${s.count} channels · ${esc(s.status || "not scanned yet")}${s.updated_at ? " · " + fmt(s.updated_at) : ""}</div>
+      <div class="muted small">${s.count} channels${s.vod.movies ? ` · ${s.vod.movies.toLocaleString()} movies` : ""}${s.vod.series ? ` · ${s.vod.series.toLocaleString()} shows` : ""} · ${esc(s.status || "not scanned yet")}${s.updated_at ? " · " + fmt(s.updated_at) : ""}</div>
       ${s.epg_url ? `<div class="muted small">Guide: ${esc(s.epg_url.replace(/password=[^&]+/, "password=…"))}</div>` : ""}
-      <div class="row"><button class="btn small primary" data-a="groups">Groups…</button>
-      ${s.hidden ? `<span class="muted small">${s.hidden} group${s.hidden === 1 ? "" : "s"} hidden</span>` : ""}
-      <span class="grow"></span>
-      <button class="btn small" data-a="toggle">${s.enabled ? "Disable" : "Enable"}</button>
-      <button class="btn small danger" data-a="del">Delete</button></div>
+      <div class="row"><button class="btn small primary" data-a="groups">Channel groups…</button>
+      <span class="muted small">${s.hidden ? `${s.hidden} group${s.hidden === 1 ? "" : "s"} hidden` : "All groups shown"}</span></div>
+      ${vodRows(s)}
       <div class="row"><span class="muted small">Video:</span><select data-a="video" class="small">
         <option value="" ${!s.video_mode ? "selected" : ""}>Default (Settings)</option>
         <option value="copy" ${s.video_mode === "copy" ? "selected" : ""}>Original</option>
@@ -228,7 +228,37 @@ loaders.sources = async () => {
       <button class="btn small" data-a="save">Save</button></div></details></div>`).join("")
     : '<p class="muted">No playlists yet. Add your M3U link or Xtream login below, then press <b>Scan playlists now</b>.</p>';
 };
+// On Demand switches on a playlist's card: movies + TV shows for an Xtream login, video files for a plain M3U
+// On Demand on a playlist's card: a row each for movies and TV shows, with its categories and its switch
+// (a plain M3U has one switch for its video files, which can be movies and episodes)
+function vodRows(s) {
+  if (s.type === "hdhomerun") return "";
+  const catNote = (kind) => { const [shown, all] = s.vod.cats[kind]; return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "Categories are read at the next scan"; };
+  const btn = (kind, on) => `<button class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>Categories…</button>`;
+  const sw = (key) => `<input type="checkbox" class="toggle" id="vod-${s.id}-${key}" data-a="vod" data-k="${key}" ${s[key] ? "checked" : ""}>`;
+  const row = (key, kind, title, note, on) => `<div class="vod-row"><label class="vod-t" for="vod-${s.id}-${key}"><b>${title}</b><small class="muted">${note}</small></label>
+      ${kind ? btn(kind, on) : "<span></span>"}${key ? sw(key) : "<span></span>"}</div>`;
+  if (s.type === "xtream") {
+    return `<div class="vod-box"><div class="vod-h">On Demand</div>
+      ${row("vod_movies", "movie", "Movies", s.vod_movies ? catNote("movie") : "Off", s.vod_movies)}
+      ${row("vod_series", "series", "TV shows", s.vod_series ? catNote("series") : "Off", s.vod_series)}</div>`;
+  }
+  const n = s.vod.files;
+  return `<div class="vod-box"><div class="vod-h">On Demand</div>
+    ${row("vod_movies", "", "Movie and episode files", `Entries ending in .mp4 or .mkv become titles instead of channels${n ? ` (${n.toLocaleString()} found)` : ""}`)}
+    ${s.vod_movies ? row("", "movie", "Movies", catNote("movie"), true) + row("", "series", "TV shows", catNote("series"), true) : ""}</div>`;
+}
 $("src-list").addEventListener("change", async (e) => {
+  if (e.target.dataset.a === "vod") {
+    const on = e.target.checked;
+    let r;
+    try { r = await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { [e.target.dataset.k]: on ? 1 : 0 } }); }
+    catch (err) { toast(err.message); e.target.checked = !on; return; }
+    toast(!on ? "On Demand turned off for this playlist" : r.job ? "Reading the On Demand list…" : "Saved. Press Scan playlists when the current job finishes.");
+    if (r.job) pollJob();
+    loaders.sources();
+    return;
+  }
   if (e.target.dataset.a !== "video") return;
   await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { video_mode: e.target.value } });
   toast("Saved: applies from the next channel change");
@@ -239,6 +269,7 @@ $("src-list").addEventListener("click", async (e) => {
   if (b.dataset.a === "del" && confirm("Delete this playlist?")) await api(`/api/sources/${id}`, { method: "DELETE" });
   if (b.dataset.a === "toggle") await api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: b.textContent === "Enable" ? 1 : 0 } });
   if (b.dataset.a === "groups") { openGroups(+id); return; }
+  if (b.dataset.a === "vodcats") { openGroups(+id, b.dataset.kind); return; }
   if (b.dataset.a === "save") { await api(`/api/sources/${id}`, { method: "PATCH", body: { exclude_groups: card.querySelector("[data-f]").value } }); toast("Saved - rescan to apply"); }
   loaders.sources();
 });
@@ -302,15 +333,23 @@ $("src-import-file").onchange = async (e) => {
 
 // ---------------------------------------------------------------- playlist groups
 // Tick/untick whole groups. "US| SPORTS", "DE: NEWS"… can be filtered by their country prefix.
-const GR = { id: 0, all: [], shown: new Map(), orig: new Set() };
+// The same picker edits a playlist's On Demand movie or TV show categories (GR.vod = "movie" / "series").
+const GR = { id: 0, vod: false, all: [], shown: new Map(), orig: new Set() };
+const grUrl = () => `/api/sources/${GR.id}/${GR.vod ? `vod-cats?kind=${GR.vod}` : "groups"}`;
 const regionOf = (name) => { const m = /^\W*([A-Za-z]{2,3})\s*[|:]/.exec(name || ""); return m ? m[1].toUpperCase() : ""; };
-async function openGroups(id) {
+async function openGroups(id, vod = "") {
   let d;
-  try { d = await api(`/api/sources/${id}/groups`); } catch (e) { toast(e.message); return; }
-  GR.id = id; GR.all = d.groups;
+  GR.id = id; GR.vod = vod;
+  try { d = await api(grUrl()); } catch (e) { toast(e.message); return; }
+  GR.all = d.groups;
   GR.shown = new Map(d.groups.map((g) => [g.name, !g.hidden]));
   GR.orig = new Set(d.groups.filter((g) => g.hidden).map((g) => g.name));
-  $("gr-title").textContent = `Groups in ${d.source.name}`;
+  const [what, these] = { movie: ["Movie", "movies"], series: ["TV show", "TV shows"] }[vod] || [];
+  $("gr-title").textContent = `${vod ? `${what} categories` : "Channel groups"} in ${d.source.name}`;
+  $("gr-sub").textContent = vod ? `Untick a category to leave its ${these} out of On Demand.` : "Untick a group to leave its channels out of TunerBox.";
+  $("gr-search").placeholder = vod ? "Search categories…" : "Search groups…";
+  $("gr-th").textContent = vod ? "Category" : "Group"; $("gr-th-n").textContent = vod ? "Titles" : "Channels";
+  $("gr-region").classList.toggle("hidden", !!vod);
   const note = $("gr-note");
   note.textContent = d.partial ? "Groups skipped by an older version aren't listed yet. They appear after the next scan." : "";
   note.classList.toggle("hidden", !d.partial);
@@ -336,7 +375,7 @@ function renderGroups() {
     <td class="gr-c"><input type="checkbox" ${GR.shown.get(g.name) ? "checked" : ""}></td>
     <td>${esc(g.name || "(no group)")}${g.pattern ? ' <span class="tag none" title="Matches the skip pattern, so it stays out even when ticked">skip pattern</span>' : ""}</td>
     <td class="gr-n">${g.count ? g.count.toLocaleString() : ""}</td></tr>`).join("")
-    || '<tr><td colspan="3" class="muted">No groups match.</td></tr>';
+    || `<tr><td colspan="3" class="muted">${GR.vod && !GR.all.length ? "No categories yet: they are read at the next scan." : "Nothing matches."}</td></tr>`;
   groupStats(rows.length);
   // Check/Uncheck all only touch what's listed: say so when a filter narrows the list
   const n = rows.length < GR.all.length ? ` ${rows.length.toLocaleString()} listed` : " all";
@@ -347,8 +386,8 @@ function groupStats(listed) {
   let gs = 0, cs = 0, ct = 0;
   for (const g of GR.all) { ct += g.count; if (GR.shown.get(g.name) && !g.pattern) { gs++; cs += g.count; } }
   const changed = GR.all.filter((g) => GR.orig.has(g.name) === GR.shown.get(g.name)).length;
-  $("gr-stats").textContent = `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} groups `
-    + `(${cs.toLocaleString()} of ${ct.toLocaleString()} channels) · listing ${(listed ?? listedGroups().length).toLocaleString()}`
+  $("gr-stats").textContent = `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} ${GR.vod ? "categories" : "groups"} `
+    + `(${cs.toLocaleString()} of ${ct.toLocaleString()} ${GR.vod ? "titles" : "channels"}) · listing ${(listed ?? listedGroups().length).toLocaleString()}`
     + (changed ? ` · ${changed} unsaved change${changed === 1 ? "" : "s"}` : "");
 }
 function setListed(on, others) {
@@ -379,9 +418,10 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("grou
 $("gr-save").onclick = async () => {
   const hidden = GR.all.filter((g) => !GR.shown.get(g.name)).map((g) => g.name);
   let r;
-  try { r = await api(`/api/sources/${GR.id}/groups`, { method: "PUT", body: { hidden } }); } catch (e) { toast(e.message); return; }
+  try { r = await api(grUrl(), { method: "PUT", body: { hidden } }); } catch (e) { toast(e.message); return; }
   closeGroups(); loaders.sources();
-  if (r.shown_again) toast(r.job ? "Saved. Rescanning to add the groups back…" : "Saved. Press Scan playlists when the current job finishes to add the groups back.");
+  if (GR.vod) toast(r.shown_again ? (r.job ? "Saved. Reading those categories again…" : "Saved. Press Scan playlists when the current job finishes to add them back.") : "Saved");
+  else if (r.shown_again) toast(r.job ? "Saved. Rescanning to add the groups back…" : "Saved. Press Scan playlists when the current job finishes to add the groups back.");
   else if (r.newly_hidden) toast(r.job ? `Saved. Removed ${r.newly_hidden} group${r.newly_hidden === 1 ? "" : "s"}, re-matching channels…` : "Saved. Press Re-run auto match when the current job finishes.");
   else toast("Saved");
   if (r.job) pollJob();

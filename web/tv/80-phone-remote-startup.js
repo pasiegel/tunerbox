@@ -13,7 +13,7 @@ function screenName() {
 function closeOverlays() {
   if (S.digits) { clearTimeout(S.digitTimer); S.digits = ""; $("digits").classList.add("hidden"); }
   if (top() === "guide") G.close();
-  closePanels(); closeMenu(); closeDvr(); closeDialog();
+  closePanels(); closeMenu(); closeDvr(); closeDialog(); closeOD();
 }
 async function remoteCmd(c) {
   wake(false);
@@ -39,7 +39,7 @@ function sendState(force) {
   const ch = curCh();
   const live = S.mode === "live" && ch;
   const nn = live && !ch.feed && S.nowCache.get(ch.number);
-  const st = { power: S.mode !== "off", mode: S.mode, number: live ? ch.number : "", name: live ? (ch.label || ch.name) : "",
+  const st = { power: S.mode !== "off", mode: S.mode, number: live ? ch.number : "", name: live ? (ch.label || ch.name) : S.vod ? S.vod.it.title : "",
                title: nn && nn.d && nn.d.now ? nn.d.now.title : "", layer: top() || "", volume: Math.round(video.volume * 100) / 100,
                muted: video.muted, feed: !!(live && ch.feed), buffer: bufSecs() };
   const js = JSON.stringify(st);

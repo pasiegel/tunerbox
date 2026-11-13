@@ -268,6 +268,8 @@ def refresh_source(src):
             items, epg = fetch_hdhomerun(src)
         else:
             items, epg = fetch_m3u(src)
+            from . import vod
+            items = vod.take_m3u(src, items)        # video files are On Demand titles, not channels
     except Exception as e:  # noqa: BLE001
         log.exception("Source %s failed", src["name"])
         db.run("UPDATE sources SET status=? WHERE id=?", (f"error: {e}", src["id"]))
@@ -411,7 +413,9 @@ def export_sources():
         out.append({"name": s["name"], "type": s["type"], "url": s["url"], "username": s["username"] or "",
                     "password": s["password"] or "", "enabled": bool(s["enabled"]),
                     "exclude_groups": s["exclude_groups"] or "", "hidden_groups": sorted(hidden_groups(s)),
-                    "xtream_format": s["xtream_format"] or "ts", "video_mode": s.get("video_mode") or ""})
+                    "xtream_format": s["xtream_format"] or "ts", "video_mode": s.get("video_mode") or "",
+                    "on_demand": {"movies": bool(s.get("vod_movies")), "series": bool(s.get("vod_series")),
+                                  "hidden": json.loads(s.get("vod_hidden") or "[]")}})
     return {"kind": EXPORT_KIND, "version": 1, "app_version": __version__,
             "exported": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "playlists": out}
 
@@ -449,6 +453,12 @@ def import_sources(data):
                "hidden_groups": json.dumps(sorted({str(g) for g in hidden})),
                "xtream_format": "m3u8" if p.get("xtream_format") == "m3u8" else "ts",
                "video_mode": p.get("video_mode") if p.get("video_mode") in ("copy", "h264", "roku720") else ""}
+        od = p.get("on_demand")
+        if isinstance(od, dict):        # files from before On Demand don't have it: leave those settings alone
+            hidden_od = od.get("hidden") if isinstance(od.get("hidden"), list) else []
+            row.update(vod_movies=1 if od.get("movies") else 0, vod_series=1 if od.get("series") else 0,
+                       vod_hidden=json.dumps(sorted({(str(h[0]), str(h[1])) for h in hidden_od
+                                                     if isinstance(h, list) and len(h) == 2 and h[0] in ("movie", "series")})))
         cur = next((s for s in have if _same(s, row)), None)
         if cur:
             cols = [k for k in row if k not in ("type", "url", "username")]

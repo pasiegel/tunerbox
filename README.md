@@ -9,6 +9,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (pick yo
 * **M3U and Xtream Codes.** Paste an Xtream `get.php` link and it switches to the Xtream API automatically.
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
 * **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB.
+* **On Demand.** Movies and TV shows that come with your playlist, each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
 * **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
 
 ## Getting started
@@ -91,6 +92,7 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | D | recordings | |
 | / | search | search |
 | T | Sports & Events | Sports & Events |
+| O | On Demand | On Demand |
 | M | menu | |
 | U, +/− | mute, volume | |
 | F / F11 | full screen | |
@@ -173,6 +175,19 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Xtream feeds aren't checked unless *probe Xtream* is on in Settings, because providers limit connections.
   * Empty and ended slots ("NO EVENT STREAMING", "ESPN+ 12") are folded away under **Show empty and ended slots**.
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
+
+## On Demand (movies and TV shows)
+Many playlists come with a library of movies and shows besides the live channels. TunerBox leaves it alone until you turn it on in Setup › **Playlists**, on the playlist's card:
+
+* **Xtream logins** have two switches, **On Demand: movies** and **On Demand: TV shows**. The lists are read when you turn one on and again at every full scan.
+* **Plain M3U playlists** have one switch: entries whose address is a video file (`.mp4`, `.mkv`…) become titles instead of channels. Names like `Show S02 E04` are grouped into a show with seasons.
+* **Categories…** next to each switch picks which movie or TV show categories are shown (untick the ones you don't want).
+
+Press `O` (or Menu › **On Demand**, or the **ON DEMAND** button) to open On Demand, where you left it. Live TV keeps playing in the corner. The tabs are **Movies** and **TV Shows** (each with its categories and posters), **Continue Watching** and **My List** (movies and shows together) and **Search**. Arrows move between the tabs, the categories and the titles; OK on a movie gives Resume / Play / My List; OK on a show opens its seasons and episodes; `*` adds to My List; `O` or Back closes it.
+
+**Search** (`/` in On Demand) looks through the movies and shows. Accents and punctuation don't matter (*amelie* finds *Amélie*), the words can be in any order, a year narrows it (*dune 2021*), small typos still find it, and movies are found by actor or director too. The main **Search** (`/` while watching) finds movies, shows and episodes alongside channels and guide listings.
+
+While a title plays: OK or Space pauses, ← goes back 10 seconds, → skips 30, PgUp/PgDn jump 5 minutes, Back stops and returns to where you were. Where you stopped is remembered on the server, so any screen can resume it. A title uses one of your provider's connections while it plays, like a live channel, and follows the playlist's **Video** setting (pick a re-encode there if a movie has picture but won't play in the browser).
 
 ## Docker
 Server-only image with ffmpeg included. Data (settings, database, recordings, logs, lineup CSV) lives in the `/data` volume.

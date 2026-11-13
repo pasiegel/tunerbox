@@ -70,6 +70,7 @@ function fillCache(p, secs, then) {
 function tune(idx, alt = 0) {
   if (idx < 0 || idx >= S.channels.length) return;
   clearTimeout(S.stepTimer); S.pendingIdx = undefined;
+  vodLeave();                    // leaving a movie: its position is saved
   const ch = S.channels[idx];
   if (S.idx !== idx && S.idx >= 0 && alt === 0 && !S.feedCh) S.lastIdx = S.idx;
   S.feedCh = null;
@@ -86,6 +87,7 @@ function tune(idx, alt = 0) {
 
 // event / PPV feed: no channel number, no backups; Last/Back returns to the channel you were on
 function playFeed(f) {
+  vodLeave();
   if (S.idx >= 0 && !S.feedCh) S.lastIdx = S.idx;
   const ch = { number: "", badge: f.kind === "ppv" ? "PPV" : "LIVE", name: f.name, label: f.name, logo: f.logo || "",
                feed: f.key, group: f.group, mapped: true, alts: 0, epg: null };
@@ -245,6 +247,7 @@ function tickClock() {
   const t = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const day = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   $("b-clock").textContent = t; $("g-clock").textContent = t; $("b-date").textContent = day; $("g-date").textContent = day;
+  $("od-clock").textContent = t; $("od-date").textContent = day;
 }
 setInterval(tickClock, 1000); tickClock();
 

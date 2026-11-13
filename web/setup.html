@@ -90,7 +90,7 @@
       <label class="chk"><input type="checkbox" id="force-probe"> Re-check every stream (slow)</label>
     </div>
     <h3>Back up or move to another PC</h3>
-    <p class="muted">Saves every playlist with its logins, groups and video settings as a <code>.json</code> file. Import it here or on another TunerBox: playlists it already has are updated, not added twice. The file holds your passwords in plain text, so keep it private.</p>
+    <p class="muted">Saves every playlist with its logins, groups, video and On Demand settings as a <code>.json</code> file. Import it here or on another TunerBox: playlists it already has are updated, not added twice. The file holds your passwords in plain text, so keep it private.</p>
     <div class="toolbar">
       <a class="btn" id="src-export" href="/api/sources/export" download>Export playlists</a>
       <button type="button" class="btn" id="src-import">Import playlists…</button>
@@ -285,7 +285,7 @@
 <div id="groups" class="modal hidden">
   <div class="modal-box">
     <div class="modal-head">
-      <div><b id="gr-title">Groups</b><div class="muted">Untick a group to leave its channels out of TunerBox.</div></div>
+      <div><b id="gr-title">Groups</b><div class="muted" id="gr-sub">Untick a group to leave its channels out of TunerBox.</div></div>
       <button class="btn" id="gr-close">Close</button>
     </div>
     <div class="gr-tools">
@@ -304,7 +304,7 @@
     </div>
     <div id="gr-note" class="muted small hidden"></div>
     <div class="gr-list"><table class="grid">
-      <thead><tr><th class="gr-c">Show</th><th>Group</th><th class="gr-n">Channels</th></tr></thead>
+      <thead><tr><th class="gr-c">Show</th><th id="gr-th">Group</th><th class="gr-n" id="gr-th-n">Channels</th></tr></thead>
       <tbody id="gr-body"></tbody>
     </table></div>
     <div class="gr-foot">

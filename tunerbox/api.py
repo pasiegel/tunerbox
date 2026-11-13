@@ -14,7 +14,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, scoreboard, sources, sports
+from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
 
@@ -183,7 +183,7 @@ async def api_feed_hls(key: str, client: str = "", mode: str = "", buf: int = -1
 # ------------------------------------------------------------------ search, sports & PPV
 @app.get("/api/search")
 def api_search(q: str = ""):
-    return sports.search(q)
+    return {**sports.search(q), "vod": vod.search(q)}
 
 
 @app.get("/api/sports")
@@ -333,7 +333,9 @@ def api_sources():
         s["password"] = "••••" if s["password"] else ""
         s["count"] = db.one("SELECT count(*) n FROM streams WHERE source_id=?", (s["id"],))["n"]
         s["hidden"] = len(sources.hidden_groups(s))
+        s["vod"] = vod.source_stats(s)
         s.pop("hidden_groups", None)
+        s.pop("vod_hidden", None)
     return out
 
 
@@ -387,8 +389,45 @@ def api_edit_source(sid: int, data: dict = Body(...)):
     for k in ("name", "url", "username", "password", "exclude_groups", "xtream_format", "enabled", "video_mode"):
         if k in data and not (k == "password" and data[k] == "••••"):
             db.run(f"UPDATE sources SET {k}=? WHERE id=?", (data[k], sid))
+    job = ""
+    src = db.one("SELECT * FROM sources WHERE id=?", (sid,))
+    turned = {k: int(bool(data[k])) for k in ("vod_movies", "vod_series") if src and k in data and int(bool(data[k])) != src[k]}
+    if turned:              # On Demand switched on or off for this playlist
+        for k, on in turned.items():
+            db.run(f"UPDATE sources SET {k}=? WHERE id=?", (on, sid))
+            if not on:
+                vod.clear(sid, vod.KINDS if src["type"] != "xtream" else ("movie",) if k == "vod_movies" else ("series",))
+        if src["type"] != "xtream":
+            job = "refresh" if jobs.quick_refresh() else ""     # its video files move between channels and On Demand
+        elif any(turned.values()):
+            job = "vod" if jobs.vod_scan(sid) else ""
     guide.invalidate()
-    return {"ok": True}
+    return {"ok": True, "job": job}
+
+
+def _kind(kind):
+    if kind not in vod.KINDS:
+        raise HTTPException(400, "Unknown kind")
+    return kind
+
+
+@app.get("/api/sources/{sid}/vod-cats")
+def api_source_vod_cats(sid: int, kind: str = "movie"):
+    g = vod.cats(sid, _kind(kind))
+    if not g:
+        raise HTTPException(404)
+    return g
+
+
+@app.put("/api/sources/{sid}/vod-cats")
+def api_source_vod_cats_save(sid: int, hidden: list[str] = Body(..., embed=True), kind: str = "movie"):
+    r = vod.set_hidden(sid, hidden, _kind(kind))
+    if r is None:
+        raise HTTPException(404)
+    if r["shown_again"]:    # those titles have to be read again
+        src = db.one("SELECT type FROM sources WHERE id=?", (sid,))
+        r["job"] = ("vod" if jobs.vod_scan(sid) else "") if src["type"] == "xtream" else ("refresh" if jobs.quick_refresh() else "")
+    return r
 
 
 @app.get("/api/sources/{sid}/groups")
@@ -416,6 +455,7 @@ def api_source_groups_save(sid: int, hidden: list[str] = Body(..., embed=True)):
 def api_del_source(sid: int):
     db.run("DELETE FROM streams WHERE source_id=?", (sid,))
     db.run("DELETE FROM sources WHERE id=?", (sid,))
+    vod.clear(sid)
     guide.invalidate()
     return {"ok": True}
 
@@ -423,7 +463,8 @@ def api_del_source(sid: int):
 # ------------------------------------------------------------------ jobs & settings
 @app.post("/api/jobs/{name}")
 def api_job(name: str, force: int = 0):
-    fn = {"scan": lambda: jobs.scan(bool(force)), "epg": jobs.refresh_epg, "match": jobs.rematch, "refresh": jobs.quick_refresh}.get(name)
+    fn = {"scan": lambda: jobs.scan(bool(force)), "epg": jobs.refresh_epg, "match": jobs.rematch, "refresh": jobs.quick_refresh,
+          "vod": jobs.vod_scan}.get(name)
     if not fn:
         raise HTTPException(404)
     return {"started": fn()}
@@ -611,6 +652,90 @@ def api_stats():
         "extras": db.one("SELECT count(*) n FROM extras WHERE active=1")["n"],
         "programs": db.one("SELECT count(*) n FROM programs")["n"],
     }
+
+
+# ------------------------------------------------------------------ On Demand (movies and shows from the playlists)
+@app.get("/api/vod")
+def api_vod():
+    return vod.counts()
+
+
+@app.get("/api/vod/categories")
+def api_vod_categories(kind: str = "movie"):
+    return vod.categories(_kind(kind))
+
+
+@app.get("/api/vod/titles")
+def api_vod_titles(kind: str = "movie", cat: str | None = None, tab: str = "", offset: int = 0, limit: int = 120):
+    if tab not in ("", "continue", "list"):
+        raise HTTPException(400, "Unknown list")
+    return vod.titles(_kind(kind), cat, tab, max(0, offset), max(1, min(limit, 500)))
+
+
+@app.get("/api/vod/search")
+def api_vod_search(q: str = "", limit: int = 60):
+    return vod.search(q[:100], max(1, min(limit, 200)))
+
+
+@app.get("/api/vod/title/{title_id}")
+def api_vod_title(title_id: str):
+    t = vod.title(title_id)
+    if not t:
+        raise HTTPException(404, "That title is no longer in the playlist")
+    return t
+
+
+def _vod_item(item_id, prepare=False):
+    it = (vod.prepare if prepare else vod.item)(item_id)
+    if not it:
+        raise HTTPException(404, "That title is no longer in the playlist")
+    return it
+
+
+@app.get("/api/vod/play/{item_id}")
+def api_vod_play(item_id: str):
+    """What the player needs before it starts: title, length, where to resume, the next episode."""
+    it = _vod_item(item_id, prepare=True)
+    return {k: v for k, v in it.items() if k not in ("url", "video_mode")}     # the address holds the provider login
+
+
+@app.get("/api/vod/stream/{item_id}")
+async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+    it = await anyio.to_thread.run_sync(_vod_item, item_id)
+    cmd = vod.stream_cmd(it["url"], max(0.0, ss), mode or it["video_mode"] or None)
+    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, cmd=cmd),
+                        media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/vod/hls/{item_id}")
+async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+    it = await anyio.to_thread.run_sync(_vod_item, item_id)
+    sid = await anyio.to_thread.run_sync(hls.start, it["url"], client or None, mode or it["video_mode"] or None, 0,
+                                         vod.hls_pre(max(0.0, ss)))
+    if not await hls.wait_ready(sid):
+        raise HTTPException(502, "Can't play this title")
+    return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+
+
+@app.post("/api/vod/progress")
+def api_vod_progress(id: str = Body(...), position: float = Body(...), duration: float = Body(0)):
+    r = vod.set_progress(id, position, duration)
+    if r is None:
+        raise HTTPException(404)
+    return r
+
+
+@app.post("/api/vod/watched")
+def api_vod_watched(id: str = Body(...), watched: bool = Body(True)):
+    return vod.set_watched(id, watched)
+
+
+@app.post("/api/vod/list")
+def api_vod_list(id: str = Body(...), on: bool = Body(True)):
+    r = vod.set_listed(id, on)
+    if r is None:
+        raise HTTPException(404)
+    return r
 
 
 # ------------------------------------------------------------------ reminders

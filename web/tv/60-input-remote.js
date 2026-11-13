@@ -7,7 +7,7 @@ const ACTIONS = [
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
   ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"],
-  ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"],
+  ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["o", "On Demand"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [String(n), `Number ${n}`]),
@@ -26,7 +26,7 @@ const DEFAULT_BINDINGS = {
   r: "r", MediaRecord: "r", ColorF0Red: "r",
   d: "d", DVR: "d",
   "*": "*", a: "*", Favorites: "v", v: "v",
-  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t",
+  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", o: "o",
   "+": "VolUp", "=": "VolUp", AudioVolumeUp: "VolUp",
   "-": "VolDown", "_": "VolDown", AudioVolumeDown: "VolDown",
   u: "u", AudioVolumeMute: "u",
@@ -146,7 +146,7 @@ function handleKey(k, ev) {
   if (k === "Power") { if (S.mode === "off") powerOn(); else powerOff(); return true; }
   if (S.mode === "off") { powerOn(); return true; }
   const layer = top();
-  if (/^[0-9]$/.test(k) && !["dialog", "menu", "dvr", "remotecfg", "search", "sports"].includes(layer) && S.mode === "live") { digit(k); return true; }
+  if (/^[0-9]$/.test(k) && !["dialog", "menu", "dvr", "remotecfg", "search", "sports", "od"].includes(layer) && S.mode === "live") { digit(k); return true; }
   if (S.digits && k === "Enter") { commitDigits(); return true; }
   if (reminderKey(k)) return true;
 
@@ -164,6 +164,7 @@ function handleKey(k, ev) {
   }
   if (layer === "search") { searchKey(k); return true; }
   if (layer === "sports") { sportsKey(k); return true; }
+  if (layer === "od") { odKey(k); return true; }
   if (layer === "menu") {
     if (k === "Back" || k === "m") closeMenu(); else listNav($("menu-list"), k, (_, i) => menuShown[i].act());
     return true;
@@ -189,6 +190,7 @@ function handleKey(k, ev) {
       case "d": G.close(); openDvr(); break;
       case "/": G.close(); openSearch(); break;
       case "t": G.close(); openSports(); break;
+      case "o": G.close(); openOD(); break;
       case "u": toggleMute(); break;
       case "VolUp": setVolume(video.volume + 0.05); break;
       case "VolDown": setVolume(video.volume - 0.05); break;
@@ -196,6 +198,7 @@ function handleKey(k, ev) {
     }
     return true;
   }
+  if (S.mode === "vod") return vodKey(k);
   if (S.mode === "playback") {
     switch (k) {
       case " ": case "Enter": video.paused ? video.play() : video.pause(); showPlaybackBar(); break;
@@ -215,6 +218,7 @@ function handleKey(k, ev) {
         break;
       case "/": openSearch(); break;
       case "t": openSports(); break;
+      case "o": openOD(); break;
       case "d": openDvr(); break;
       case "m": openMenu(); break;
       case "u": toggleMute(); break;
@@ -228,6 +232,7 @@ function handleKey(k, ev) {
   if (S.mode === "empty") {
     if (k === "Enter") openSetup();
     else if (k === "m") openMenu();
+    else if (k === "o") openOD();
     else if (k === "f") toggleFull();
     else return false;
     return true;
@@ -249,6 +254,7 @@ function handleKey(k, ev) {
     case "d": openDvr(); break;
     case "/": openSearch(); break;
     case "t": openSports(); break;
+    case "o": openOD(); break;
     case "r": {
       const ch = curCh();
       if (ch && ch.feed) toast("Event feeds can't be recorded (they have no guide listing)");

@@ -88,7 +88,7 @@ function stopSaver() { clearInterval(IDLE.saver); IDLE.saver = null; $("saver").
 setInterval(async () => {
   const idle = Date.now() - IDLE.last;
   if (S.mode !== "off") IDLE.offSince = Date.now();
-  if ((S.mode === "live" || S.mode === "playback") && !IDLE.ask && sleepMs() > 0 && idle >= sleepMs()) {
+  if ((S.mode === "live" || S.mode === "playback" || S.mode === "vod") && !IDLE.ask && sleepMs() > 0 && idle >= sleepMs()) {
     if (await idleBusy()) return;            // recording or a phone remote open: keep going
     if (!IDLE.ask && Date.now() - IDLE.last >= sleepMs()) startAsk();
   } else if (IDLE.ask && await idleBusy()) {
@@ -138,6 +138,7 @@ function toggleOverlay() {
   }
   r.classList.remove("hidden"); hideRemoteLater(6000);
   if (S.mode === "live") showBanner();
+  else if (S.mode === "vod") showVodBar();
   else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
 }
 $("learn").addEventListener("click", stopLearn);
@@ -147,6 +148,7 @@ video.addEventListener("click", () => {
   if (top() || Date.now() - lastTouch < 1000) return;     // touch taps are handled in touchend below
   // mouse: moving it already shows the button bar, so a click toggles just the info banner
   if (!$("banner").classList.contains("hidden")) { hideBanner(); clearTimeout(S.bannerTimer); return; }
+  if (S.mode === "vod") { vodPause(); return; }             // click the picture: pause / play
   if (S.mode === "live") showBanner();
   else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
 });
@@ -194,7 +196,7 @@ $("tv").addEventListener("touchend", (e) => {
   // taps on the remote bar (or other tap targets) are clicks for them, not "toggle the bar"
   if (e.target.closest && e.target.closest("#remote")) { hideRemoteLater(5000); return; }
   if (e.target.closest && e.target.closest("#power, #tapplay, #saver, #stillthere, #learn")) return;
-  if (Math.abs(dy) > 80) chStep(dy < 0 ? 1 : -1);
-  else if (S.mode === "live" || S.mode === "playback") toggleOverlay();
+  if (Math.abs(dy) > 80) { if (S.mode !== "vod") chStep(dy < 0 ? 1 : -1); }     // no channel change by accident mid-movie
+  else if (S.mode === "live" || S.mode === "playback" || S.mode === "vod") toggleOverlay();
 }, { passive: true });
 

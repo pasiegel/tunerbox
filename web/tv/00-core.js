@@ -5,8 +5,8 @@ const HALF = 1800, CHUNK = 21600;
 
 const S = {
   channels: [], byNum: new Map(), idx: -1, lastIdx: -1, alt: 0, player: null,
-  mode: "off",            // off | live | playback
-  layer: [],              // overlay stack: guide, menu, dvr, dialog
+  mode: "off",            // off | live | playback (a recording) | vod (an On Demand title) | empty
+  layer: [],              // overlay stack: guide, menu, dvr, dialog, search, sports, od
   digits: "", digitTimer: null, bannerTimer: null, watchdog: null,
   nowCache: new Map(), settings: {},
   favs: new Set(),        // favorite channel numbers (shared by every screen, stored on the server)

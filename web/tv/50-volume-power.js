@@ -59,6 +59,7 @@ function keepAwake(on) {
 }
 function powerOff() {
   keepAwake(false);
+  vodLeave(); closeOD();
   destroyPlayer(); S.mode = "off"; hideBanner(); hideStatic(); IDLE.offSince = Date.now();
   $("power").classList.remove("hidden");
 }

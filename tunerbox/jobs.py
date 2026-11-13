@@ -5,7 +5,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, scoreboard, sources, sports
+from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, scoreboard, sources, sports, vod
 
 log = logging.getLogger("tunerbox.jobs")
 _lock = threading.Lock()
@@ -45,6 +45,7 @@ def scan(force_probe=False):
         for i, s in enumerate(srcs):
             _progress(f"Loading {s['name']}", i, len(srcs))
             sources.refresh_source(s)
+        on_demand = vod.refresh_all(_progress) if vod.enabled() else ""
         probed = ""
         if config.get("probe_streams", True):
             cutoff = 0 if force_probe else int(time.time()) - 12 * 3600
@@ -67,8 +68,13 @@ def scan(force_probe=False):
         dvr.apply_rules()
         db.set_meta("scan_updated", int(time.time()))
         n_extra = db.one("SELECT count(*) n FROM extras WHERE active=1")["n"]
-        return f"{mapped}/{total} lineup channels mapped, {n_extra} extra channels{probed}"
+        return f"{mapped}/{total} lineup channels mapped, {n_extra} extra channels{probed}" + (f". {on_demand}" if on_demand else "")
     return _run("scan", job)
+
+
+def vod_scan(source_id=None):
+    """Re-read the On Demand lists (movies, shows) of the Xtream logins that have them turned on."""
+    return _run("vod", lambda: vod.refresh_all(_progress, source_id))
 
 
 def refresh_epg():

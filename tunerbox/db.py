@@ -159,6 +159,9 @@ def _add_column(c, table, column, decl):
 MIGRATIONS = [
     lambda c: _add_column(c, "sources", "hidden_groups", "TEXT DEFAULT '[]'"),   # 1.2
     lambda c: _add_column(c, "sources", "video_mode", "TEXT DEFAULT ''"),        # 1.4: per-playlist video
+    lambda c: _add_column(c, "sources", "vod_movies", "INTEGER DEFAULT 0"),      # 1.5: On Demand movies on
+    lambda c: _add_column(c, "sources", "vod_series", "INTEGER DEFAULT 0"),      # 1.5: On Demand TV shows on
+    lambda c: _add_column(c, "sources", "vod_hidden", "TEXT DEFAULT '[]'"),      # 1.5: [kind, category] left out
 ]
 
 
@@ -166,12 +169,17 @@ def migrate(c):
     ver = c.execute("PRAGMA user_version").fetchone()[0]
     if ver > len(MIGRATIONS):
         log.warning("Database is from a newer TunerBox (schema %s, this version knows %s)", ver, len(MIGRATIONS))
-        return
     for n, step in enumerate(MIGRATIONS[ver:], ver + 1):
         step(c)
         c.execute(f"PRAGMA user_version={n}")
         c.commit()
         log.info("Database upgraded to schema %s", n)
+    # The version number alone can't be trusted: a test or development build may have used the same
+    # numbers for different changes, leaving a database "up to date" without this version's columns.
+    # Every step is safe to run again, so make sure all of them have been applied.
+    for step in MIGRATIONS[:min(ver, len(MIGRATIONS))]:
+        step(c)
+    c.commit()
 
 
 def init():
@@ -179,8 +187,9 @@ def init():
         c.execute("PRAGMA journal_mode=WAL")    # stored in the database file: once is enough
         c.executescript(SCHEMA)
         migrate(c)
-    from . import media
+    from . import media, vod
     media.init()
+    vod.init()
 
 
 def rows(sql, args=()):

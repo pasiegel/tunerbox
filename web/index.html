@@ -83,7 +83,7 @@
     </div>
     <div id="g-rows"></div>
     <div class="g-foot">
-      <span><b>OK</b> Watch / Options</span><span><b>R</b> Record</span><span><b>/</b> Search</span><span><b>T</b> Sports</span><span><b>PgUp/PgDn</b> Page</span>
+      <span><b>OK</b> Watch / Options</span><span><b>R</b> Record</span><span><b>/</b> Search</span><span><b>T</b> Sports</span><span><b>O</b> On Demand</span><span><b>PgUp/PgDn</b> Page</span>
       <span><b>&#9664;&#9654;</b> Time</span><span><b>Ch #</b> Jump</span><span><b>*</b> Favorite</span><span><b>V</b> Favorites / All</span><span><b>G</b> Exit</span>
     </div>
   </div>
@@ -115,7 +115,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
 
   <!-- search -->
   <div id="search" class="panel xwide hidden">
-    <div class="p-title">Search <span id="s-count"></span></div>
+    <div class="p-title"><b id="s-title">Search</b> <span id="s-count"></span></div>
     <input id="s-input" type="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
            enterkeyhint="search" placeholder="Channel, show, team or event">
     <div class="s-body">
@@ -133,6 +133,31 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     <div class="p-foot" id="sp-foot"></div>
   </div>
 
+  <!-- on demand: movies and shows from the playlists -->
+  <div id="od" class="hidden">
+    <div class="g-top">
+      <div class="od-pip"></div>
+      <div id="od-info">
+        <div id="odi-title"></div>
+        <div id="odi-sub"></div>
+        <div id="odi-meta"></div>
+        <div id="odi-desc"></div>
+        <div id="odi-cast"></div>
+      </div>
+      <div class="g-clock"><div id="od-clock"></div><div id="od-date"></div></div>
+    </div>
+    <div class="od-head">
+      <div class="od-label" id="od-label">Categories</div>
+      <div class="od-tabs" id="od-tabs"></div>
+    </div>
+    <div class="od-body">
+      <ul class="od-side" id="od-side"></ul>
+      <div class="od-grid" id="od-grid"></div>
+      <ul class="list od-eps hidden" id="od-eps"></ul>
+    </div>
+    <div class="g-foot" id="od-foot"></div>
+  </div>
+
   <!-- dialog -->
   <div id="dialog" class="panel hidden">
     <div class="p-title" id="dlg-title"></div>
@@ -144,7 +169,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
   <!-- on-screen remote for mouse / touch -->
   <div id="remote" class="hidden">
     <button data-k="ChannelUp">CH &#9650;</button><button data-k="ChannelDown">CH &#9660;</button>
-    <button data-k="g">GUIDE</button><button data-k="v">&#9733; FAVS</button><button data-k="i">INFO</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button><button data-k="t">SPORTS</button>
+    <button data-k="g">GUIDE</button><button data-k="v">&#9733; FAVS</button><button data-k="i">INFO</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button><button data-k="t">SPORTS</button><button data-k="o">ON DEMAND</button>
     <button data-k="m">MENU</button><button data-k="l">LAST</button><button data-k="u">MUTE</button><button data-k="*">&#9733; ADD</button>
     <button data-k="f">FULL</button>
   </div>

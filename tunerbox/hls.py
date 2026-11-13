@@ -25,10 +25,10 @@ _lock = threading.Lock()
 _reaper = None
 
 
-def _cmd(raw_url, mode=None, buffer=0):
+def _cmd(raw_url, mode=None, buffer=0, pre=()):
     inp, vid, aud = play_args(raw_url, mode or config.get("video_mode", "copy"), buffer)
     return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin",
-            *inp, "-sn", "-dn", *vid, *aud,
+            *pre, *inp, "-sn", "-dn", *vid, *aud,
             "-f", "hls", "-hls_time", "2", "-hls_list_size", str(8 + buffer // 2), "-hls_allow_cache", "0",
             "-hls_flags", "delete_segments+independent_segments+omit_endlist",
             "-hls_segment_filename", "seg%05d.ts", "index.m3u8"]
@@ -62,7 +62,8 @@ def _reap():
                 _stop(sid)
 
 
-def start(raw_url, client=None, mode=None, buffer=None):
+def start(raw_url, client=None, mode=None, buffer=None, pre=()):
+    """`pre`: extra ffmpeg input options (On Demand: play at normal speed, from a start time)."""
     global _reaper
     buffer = buffer_seconds(buffer)
     if client:
@@ -70,7 +71,7 @@ def start(raw_url, client=None, mode=None, buffer=None):
     sid = secrets.token_hex(6)
     d = ROOT / sid
     d.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen(_cmd(raw_url, mode, buffer), cwd=d, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+    proc = subprocess.Popen(_cmd(raw_url, mode, buffer, pre), cwd=d, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, creationflags=NO_WINDOW)
     track(proc)
     err = []

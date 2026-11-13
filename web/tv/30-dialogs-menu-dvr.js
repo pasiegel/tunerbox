@@ -100,6 +100,7 @@ function programDialog(ch, p) {
 const MENU = [
   { label: "TV Guide", act: () => { closeMenu(); G.open(); } },
   { label: "★ Favorites guide", act: () => { closeMenu(); G.open(true); } },
+  { label: "On Demand (movies & TV shows)", act: () => { closeMenu(); openOD(); } },
   { get label() {
       const ch = S.mode === "live" && curCh();
       if (!ch || ch.feed) return "Add to Favorites (tune to a channel first)";
@@ -187,6 +188,7 @@ function dvrPick(i) {
 $("dvr-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) dvrPick(+li.dataset.i); });
 
 function playRecording(r) {
+  vodLeave();
   destroyPlayer(); hideStatic(); hideBanner();
   S.mode = "playback";
   if (r.file.endsWith(".ts") && window.mpegts) {
