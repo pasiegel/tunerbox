@@ -64,7 +64,7 @@ def run(url: str, server, thread) -> bool:
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit TunerBox", exit_app),
     )
-    icon = pystray.Icon("TunerBox", _image(), f"TunerBox server (port {port})", menu)
+    icon = pystray.Icon("TunerBox", _image(), f"{config.box_name()} server (port {port})", menu)
 
     def watch():
         # the server stopped by itself (port in use, crash): take the icon away too

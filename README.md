@@ -236,6 +236,7 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
 * For Local channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
 * If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
+* **Two TunerBoxes on one host** (say one for the family and one private): give the second its own data volume and port, e.g. `-v tunerbox-private-data:/data` and `-p 8644:8644` with the command `python -m tunerbox --server --port 8644` (with host networking, just the `--port`). Then set **Setup › Settings › Other apps › Box name** on each, so Plex, browser tabs and home-screen icons tell them apart. Each one gets its own HDHomeRun device ID for Plex automatically.
 
 ## How matching works
 * **Locals** (WNBC, KABC, WGN…) match by callsign, including subchannels: a station's DT2 is matched to its second channel on the lineup, and so on. If no local stream exists, the national network feed (NBC, FOX…) is used. You can turn that off in Settings.

@@ -1,5 +1,6 @@
 """Settings stored in data/settings.json (created with defaults on first run)."""
 import json
+import re
 import os
 import shutil
 import sys
@@ -89,6 +90,9 @@ DEFAULTS = {
     "sports_leagues": ["nfl", "ncaaf", "nba", "ncaab", "mlb", "nhl"],
     # Also list games that none of your channels or event feeds carry
     "sports_show_unmatched": True,
+    # What this box is called in Plex/Emby/Jellyfin, browser tabs and home-screen icons (two TunerBoxes
+    # on one network can tell themselves apart)
+    "box_name": "TunerBox",
     "probe_concurrency": 16,
     "probe_timeout": 10,
     # Playback: "copy" keeps the original video (fast), "h264" re-encodes (compatibility)
@@ -245,6 +249,11 @@ def _is_num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def box_name():
+    """This box's name (Setup › Settings › Other apps)."""
+    return (get("box_name") or "").strip() or "TunerBox"
+
+
 def _check_value(key, value, default):
     """`value` coerced to the type of `default`, or ValueError."""
     if isinstance(default, bool):
@@ -293,6 +302,8 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
             v = [str(u).strip() for u in v if str(u).strip()]
         elif k == "sports_leagues":
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
+        elif k == "box_name":
+            v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
         if k in PC_ONLY and not from_pc:

@@ -126,7 +126,7 @@ def _kill_orphan_webviews(profile):
 def run_window(url: str, server, thread):
     import webview
     api = _JsApi()
-    win = webview.create_window("TunerBox", url, js_api=api, width=1280, height=760, min_size=(640, 400),
+    win = webview.create_window(config.box_name(), url, js_api=api, width=1280, height=760, min_size=(640, 400),
                                 background_color="#000000", text_select=False)
     api._window = win
     try:

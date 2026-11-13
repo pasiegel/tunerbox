@@ -881,7 +881,7 @@ def out_xmltv():
 @app.get("/discover.json")
 def hdhr_discover(request: Request):
     base = _base(request)
-    return {"FriendlyName": "TunerBox", "Manufacturer": "Silicondust", "ModelNumber": "HDTC-2US",
+    return {"FriendlyName": config.box_name(), "Manufacturer": "Silicondust", "ModelNumber": "HDTC-2US",
             "FirmwareName": "hdhomeruntc_atsc", "FirmwareVersion": "20200101",
             "DeviceID": config.get("hdhr_device_id") or config.LEGACY_DEVICE_ID,
             "DeviceAuth": "tunerbox", "BaseURL": base, "LineupURL": f"{base}/lineup.json",
@@ -1032,13 +1032,38 @@ async def _setup_lock(request: Request, call_next):
     return await call_next(request)
 
 
+def _named(html):
+    """The page with this box's name (Settings › Other apps) in its title, home-screen name and header."""
+    name = config.box_name()
+    if name == "TunerBox":
+        return html
+    n = escape(name, {'"': "&quot;"})
+    html = html.replace("<title>TunerBox", f"<title>{n}").replace(" · TunerBox</title>", f" · {n}</title>")
+    html = html.replace('name="apple-mobile-web-app-title" content="TunerBox"', f'name="apple-mobile-web-app-title" content="{n}"')
+    html = html.replace('name="apple-mobile-web-app-title" content="TB Remote"', f'name="apple-mobile-web-app-title" content="{n} Remote"')
+    return html.replace("<small>Setup</small>", f"<small>Setup · {n}</small>")
+
+
+@app.api_route("/static/manifest.webmanifest", methods=["GET", "HEAD"])
+@app.api_route("/static/remote.webmanifest", methods=["GET", "HEAD"])
+def web_manifest(request: Request):
+    """The home-screen app's manifest with this box's name, so two TunerBoxes get two names."""
+    remote_app = request.url.path.endswith("remote.webmanifest")
+    m = json.loads((config.WEB / ("remote.webmanifest" if remote_app else "manifest.webmanifest")).read_text(encoding="utf-8"))
+    name = config.box_name()
+    if name != "TunerBox":
+        m["name"] = f"{name} Remote" if remote_app else name
+        m["short_name"] = (f"{name} Remote" if remote_app else name)[:24]
+    return JSONResponse(m, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
 _ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
 
 
 def _page(name):
     """Serve a page with ?v=<file time> on its scripts/styles, so an updated TunerBox never runs
     with a script the browser or app window cached from the old version."""
-    html = (config.WEB / name).read_text(encoding="utf-8")
+    html = _named((config.WEB / name).read_text(encoding="utf-8"))
 
     def stamp(m):
         f = config.WEB / m.group(2)
