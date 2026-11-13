@@ -49,7 +49,7 @@ def client():
 
 def test_xtream_titles_and_categories(xtream):
     sid, _ = xtream
-    assert vod.counts() == {"enabled": True, "movie": {"total": 3, "continue": 0, "list": 0},
+    assert vod.counts() == {"enabled": True, "tags": 1, "movie": {"total": 3, "continue": 0, "list": 0},
                             "series": {"total": 1, "continue": 0, "list": 0}}
     cats = vod.categories("movie")
     assert cats["total"] == 3 and [c["name"] for c in cats["cats"]] == ["Adult", "Mystery"]
@@ -272,3 +272,72 @@ def test_continue_and_list_cover_both_kinds(xtream, client):
     assert {t["kind"] for t in client.get("/api/vod/titles?tab=continue").json()["items"]} == {"movie", "series"}
     assert client.get("/api/vod/titles?tab=list").json()["total"] == 2
     assert client.get("/api/vod/titles").json()["total"] == 3          # no tab: movies
+
+
+# ---------------------------------------------------------------- language / platform labels
+LABELLED = {
+    "get_vod_categories": [{"category_id": "1", "category_name": "EN - MOVIES"}, {"category_id": "2", "category_name": "DE - FILME"}],
+    "get_vod_streams": (
+        [{"stream_id": 100 + i, "name": f"EN - Film {i} (2020)", "category_id": "1"} for i in range(5)]
+        + [{"stream_id": 200 + i, "name": f"DE - Film {i} (2020)", "category_id": "2"} for i in range(5)]
+        + [{"stream_id": 300 + i, "name": f"4K-EN - Film {i} (2020)", "category_id": "1"} for i in range(5)]
+        + [{"stream_id": 400, "name": "Dune (2021)", "category_id": "1"},
+           {"stream_id": 401, "name": "Alien: Romulus (2024)", "category_id": "1"},
+           {"stream_id": 402, "name": "X-Men - Days of Future Past (2014)", "category_id": "1"}]),
+    "get_series_categories": [{"category_id": "5", "category_name": "NETFLIX SERIES"}],
+    "get_series": [{"series_id": 70 + i, "name": f"NF - Show {i} (2023) (KR)", "category_id": "5"} for i in range(5)],
+}
+
+
+@pytest.fixture
+def labelled(monkeypatch):
+    monkeypatch.setattr(sources, "xtream_api", lambda src, action=None, **p: LABELLED[action])
+    sid = sources.add_source("Big Provider", "xtream", "http://big:8080", "user", "pass")
+    db.run("UPDATE sources SET vod_movies=1, vod_series=1 WHERE id=?", (sid,))
+    vod.refresh_xtream(db.one("SELECT * FROM sources WHERE id=?", (sid,)))
+    return sid
+
+
+def test_labels_are_cut_off_the_names(labelled):
+    rows = {r["id"]: r for r in db.rows("SELECT id, name, tag, year, country FROM vod_titles")}
+    assert (rows["1:m100"]["name"], rows["1:m100"]["tag"], rows["1:m100"]["year"]) == ("Film 0", "EN", "2020")
+    assert rows["1:m300"]["tag"] == "4K-EN"
+    assert (rows["1:s70"]["name"], rows["1:s70"]["tag"], rows["1:s70"]["year"], rows["1:s70"]["country"]) == ("Show 0", "NF", "2023", "KR")
+    # not labels: no label at all, a colon in a real name, and a "label" only one title has
+    assert (rows["1:m400"]["name"], rows["1:m400"]["tag"]) == ("Dune", "")
+    assert (rows["1:m401"]["name"], rows["1:m401"]["tag"]) == ("Alien: Romulus", "")
+    assert (rows["1:m402"]["name"], rows["1:m402"]["tag"]) == ("X-Men - Days of Future Past", "")
+
+
+def test_picking_labels_filters_everything_and_new_labels_start_hidden(labelled, client):
+    g = client.get(f"/api/sources/{labelled}/vod-tags").json()["groups"]
+    by = {x["name"]: x for x in g}
+    assert by["EN"]["count"] == 5 and by["NF"]["series"] == 5 and by[vod.NO_TAG]["count"] == 3
+    assert by["DE"]["example"] == "Film 0 (2020)" and not any(x["hidden"] for x in g)
+    r = client.put(f"/api/sources/{labelled}/vod-tags", json={"hidden": ["DE", "4K-EN", "NF"]}).json()
+    assert r == {"shown": 2, "hidden": 3}
+    assert vod.counts()["movie"]["total"] == 8 and vod.counts()["series"]["total"] == 0      # EN 5 + 3 unlabelled
+    assert {c["name"] for c in vod.categories("movie")["cats"]} == {"EN - MOVIES"}
+    assert all(t["tag"] in ("EN", "") for t in vod.search("film"))
+    src = db.one("SELECT * FROM sources WHERE id=?", (labelled,))
+    assert vod.source_stats(src)["tags"] == [2, 5]
+    # a language the provider adds later stays out until it's ticked
+    db.run("INSERT INTO vod_titles(id, source_id, kind, name, tag, search) VALUES ('1:m999', ?, 'movie', 'Film X', 'FR', 'film x')",
+           (labelled,))
+    vod._changed()
+    assert vod.counts()["movie"]["total"] == 8
+    # nothing left out: back to everything
+    client.put(f"/api/sources/{labelled}/vod-tags", json={"hidden": []})
+    assert db.one("SELECT vod_tags FROM sources WHERE id=?", (labelled,))["vod_tags"] == ""
+    assert vod.counts()["movie"]["total"] == 19
+
+
+def test_search_lists_a_film_once_with_its_versions(labelled):
+    hits = [h for h in vod.search("film 2") if h["name"] == "Film 2"]
+    assert len(hits) == 1
+    assert {v["tag"] for v in hits[0]["versions"]} == {"EN", "DE", "4K-EN"}
+    t = vod.title(hits[0]["id"])
+    assert len(t["versions"]) == 3 and sum(v["current"] for v in t["versions"]) == 1
+    vod.set_tags(labelled, ["DE", "4K-EN"])
+    hit = [h for h in vod.search("film 2") if h["name"] == "Film 2"][0]
+    assert (hit["tag"], hit["versions"]) == ("EN", [])

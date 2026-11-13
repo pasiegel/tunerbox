@@ -148,10 +148,14 @@ function odRenderSide() {
   $("od-side").innerHTML = rows.map((r, i) => `<li data-i="${i}"><span>${esc(r.name)}</span><small>${r.count}</small></li>`).join("");
   $("od-side").classList.toggle("hidden", !rows.length);
 }
+// the provider's label ("EN", "4K-FR", "NF") is only worth a badge when more than one is shown
+const odManyTags = () => ((OD.counts && OD.counts.tags) || 0) > 1;
+const odLabel = (x) => [x.tag, x.country].filter(Boolean).join(" · ");
 const odTone = (name) => { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 8; return h; };     // a title keeps its color
 const odTile = (t, i) => `<div class="od-tile t${odTone(t.name)}${t.poster ? " art" : ""}" data-i="${i}">`
   + (t.poster ? `<img loading="lazy" alt="" referrerpolicy="no-referrer" src="${esc(t.poster)}">` : "")
   + (t.new ? '<span class="flag">NEW</span>' : t.watched ? '<span class="flag cc">WATCHED</span>' : "")
+  + (t.tag && odManyTags() ? `<span class="od-lang">${esc(t.tag)}</span>` : "")
   + `<div class="tx"><div class="n">${esc(t.name)}</div><div class="y">${esc(t.sub || t.year || "")}</div></div>`
   + (t.pct ? `<div class="bar"><i style="width:${t.pct}%"></i></div>` : "") + "</div>";
 function odRenderGrid(from) {
@@ -209,7 +213,7 @@ function odInfo() {
   if (s) {
     const e = odEps()[OD.ep], n = s.seasons.length;
     odSetInfo(s.name, e ? `Season ${e.season} · Episode ${e.episode}${e.name ? ` · ${e.name}` : ""}` : "",
-      ["TV Show", s.year, plural(n, "season"), s.genre || s.category, `from ${s.source_name}`].filter(Boolean).join(" · "),
+      ["TV Show", odLabel(s), s.year, plural(n, "season"), s.genre || s.category, `from ${s.source_name}`].filter(Boolean).join(" · "),
       (e && e.plot) || s.plot,
       [e && fmtLen(e.duration), e && e.aired && `First aired ${e.aired}`, e && e.id === s.next && !e.watched && "Next up for you", !e && s.actors].filter(Boolean).join(" · "));
     return;
@@ -237,7 +241,7 @@ function odFill(t, d) {
   else if (d && movie && d.watched) seen = "Watched";
   else if (d && movie && d.position > RESUME_MIN) seen = `Watched ${Math.round(d.position / 60)} min${d.duration ? ` of ${Math.round(d.duration / 60)}` : ""}`;
   odSetInfo(x.name,
-    [x.year, movie ? fmtLen(x.duration) : d && d.seasons.length ? plural(d.seasons.length, "season") : "", odRating(x.rating), (d && d.genre) || x.category].filter(Boolean).join(" · "),
+    [odLabel(x), x.year, movie ? fmtLen(x.duration) : d && d.seasons.length ? plural(d.seasons.length, "season") : "", odRating(x.rating), (d && d.genre) || x.category].filter(Boolean).join(" · "),
     [movie ? "Movie" : "TV Show", d && `from ${d.source_name}`, d && d.in_list && "In My List", seen].filter(Boolean).join(" · "),
     d ? d.plot : "", d ? [d.actors, d.director && `Directed by ${d.director}`].filter(Boolean).join(" · ") : "");
 }
@@ -264,9 +268,11 @@ function odMovieDialog(d) {
   entries.push({ label: resume ? "Play from the beginning" : "Play", act: () => playVod(d.id, 0) });
   entries.push(odListEntry(d));
   entries.push({ label: d.watched ? "Mark as not watched" : "Mark as watched", act: () => odMark(d.id, !d.watched) });
+  const others = (d.versions || []).filter((v) => !v.current);
+  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || "no label").join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
-  openDialog(d.name, `${["Movie", d.year, fmtLen(d.duration), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
+  openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
     + (resume ? ` · You stopped at ${fmtDur(d.position)}` : d.watched ? " · Watched" : ""), entries);
 }
 function odEpisodeDialog(show, e) {
@@ -279,6 +285,16 @@ function odEpisodeDialog(show, e) {
   entries.push({ label: "Close", act: closeDialog });
   openDialog(`${show.name} · S${e.season} E${e.episode}`,
     [e.name, fmtLen(e.duration), resume ? `You stopped at ${fmtDur(e.position)}` : e.watched ? "Watched" : ""].filter(Boolean).join(" · "), entries);
+}
+// the same film or show under the playlist's other labels (languages, 4K…)
+function odVersions(d) {
+  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else odMovie(v.id); };
+  openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
+    ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
+      const same = all.filter((x) => x.tag === v.tag), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
+      return { label: `${v.tag || "No label"}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
+    }),
+    { label: "Close", act: closeDialog }]);
 }
 // OK on a movie (from the grid or from Search): its options
 async function odMovie(id) {
@@ -623,13 +639,15 @@ function vodKey(k) {
 function vodSearchItem(v) {
   const len = fmtLen(v.duration);
   const right = `On Demand${v.kind !== "series" && len ? ` · ${len}` : ""}`;
-  const sub = esc([v.year, v.category].filter(Boolean).join(" · "));
+  const many = v.versions && v.versions.length > 1;
+  const sub = esc([odLabel(v), v.year, many ? `${v.versions.length} versions` : v.category].filter(Boolean).join(" · "));
   if (v.kind === "movie") {
     return { html: `<span class="badge movie">MOVIE</span> <span>${esc(v.name)} <small>${sub}</small></span>`, right, act: () => odMovie(v.id) };
   }
   if (v.kind === "series") {
     return { html: `<span class="badge show">SHOW</span> <span>${esc(v.name)} <small>${sub}</small></span>`, right,
-             act: () => { closePanels(); openOD("series", v.id); } };
+             act: () => (many ? odVersions({ ...v, versions: v.versions.map((x, i) => ({ ...x, current: !i })) })
+                              : (closePanels(), openOD("series", v.id))) };
   }
   return { html: `<span class="badge show">EPISODE</span> <span>${esc(v.name)} <small>· ${esc(v.sub)}</small></span>`, right,
            act: () => openDialog(v.name, v.sub, [

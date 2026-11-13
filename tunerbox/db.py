@@ -162,6 +162,7 @@ MIGRATIONS = [
     lambda c: _add_column(c, "sources", "vod_movies", "INTEGER DEFAULT 0"),      # 1.5: On Demand movies on
     lambda c: _add_column(c, "sources", "vod_series", "INTEGER DEFAULT 0"),      # 1.5: On Demand TV shows on
     lambda c: _add_column(c, "sources", "vod_hidden", "TEXT DEFAULT '[]'"),      # 1.5: [kind, category] left out
+    lambda c: _add_column(c, "sources", "vod_tags", "TEXT DEFAULT ''"),          # 1.5: On Demand labels shown ('' = all)
 ]
 
 
