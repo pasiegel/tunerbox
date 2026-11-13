@@ -324,3 +324,41 @@ def test_switching_adult_titles_rereads_on_demand(client, monkeypatch):
     monkeypatch.setattr(jobs, "vod_scan", lambda source_id=None: started.append(1) or True)
     assert client.post("/api/settings", json={"vod_search_first": "EN,FR"}).status_code == 200 and not started
     assert client.post("/api/settings", json={"vod_show_adult": True}).status_code == 200 and started == [1]
+
+
+# ---------------------------------------------------------------- small posters for TVs
+def _big_jpeg():
+    import shutil
+    import subprocess
+    from tunerbox.streaming import ffmpeg_bin
+    if not shutil.which(ffmpeg_bin()):
+        pytest.skip("ffmpeg not installed")
+    r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=1000x1500",
+                        "-frames:v", "1", "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, check=True)
+    return r.stdout
+
+
+def _title(poster):
+    sid = sources.add_source("P", "m3u", "http://host/list.m3u")
+    db.run("INSERT INTO vod_titles(id, source_id, kind, name, poster) VALUES ('t1', ?, 'movie', 'Charade', ?)", (sid, poster))
+
+
+def test_poster_is_shrunk_once_then_served_from_disk(monkeypatch):
+    big = _big_jpeg()
+    fetched = []
+    monkeypatch.setattr(vod, "_download", lambda url: fetched.append(url) or big)
+    _title("http://img/charade.jpg")
+    client = TestClient(api.app)
+    r = client.get("/api/vod/poster/t1")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    assert r.content[:2] == b"\xff\xd8" and len(r.content) < len(big)
+    assert client.get("/api/vod/poster/t1").content == r.content
+    assert fetched == ["http://img/charade.jpg"]           # the second time came from disk
+
+
+def test_poster_falls_back_to_the_original_address(monkeypatch):
+    monkeypatch.setattr(vod, "_download", lambda url: b"not an image")
+    _title("http://img/broken.jpg")
+    r = TestClient(api.app).get("/api/vod/poster/t1", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "http://img/broken.jpg"
+    assert TestClient(api.app).get("/api/vod/poster/nope").status_code == 404

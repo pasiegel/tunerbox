@@ -690,6 +690,19 @@ def api_vod_title(title_id: str):
     return t
 
 
+@app.get("/api/vod/poster/{title_id}")
+async def api_vod_poster(title_id: str):
+    """A small copy of a title's poster for TV grids (made once, then served from disk).
+    Falls back to the provider's own image when it can't be shrunk."""
+    path = await anyio.to_thread.run_sync(vod.poster_file, title_id)
+    if path:
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=2592000"})
+    url = await anyio.to_thread.run_sync(vod.poster_url, title_id)
+    if url.lower().startswith(("http://", "https://")):
+        return RedirectResponse(url, status_code=302)
+    raise HTTPException(404)
+
+
 def _vod_item(item_id, prepare=False):
     it = (vod.prepare if prepare else vod.item)(item_id)
     if not it:

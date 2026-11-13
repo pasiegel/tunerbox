@@ -11,11 +11,14 @@ import hashlib
 import json
 import logging
 import re
+import os
 import subprocess
+import threading
 import time
 import unicodedata
 from urllib.parse import urlparse
 
+import httpx
 from rapidfuzz import fuzz, process
 
 from . import config, db, sources
@@ -711,6 +714,90 @@ def set_listed(title_id, on=True):
     else:
         db.run("DELETE FROM vod_list WHERE title_id=?", (title_id,))
     return {"in_list": bool(on)}
+
+
+# ---------------------------------------------------------------- posters (small copies for TVs)
+# Providers' posters are often full-size (1000x1500 and up). A TV grid shows them at ~200 px wide, so the
+# first request downloads one, shrinks it with ffmpeg and keeps the small JPEG; later requests are a local file.
+POSTER_W = 240
+POSTER_KEEP = 6000                      # small copies kept on disk (the least recently shown go first)
+POSTER_MAX = 15 * 1024 * 1024           # bigger than this isn't a poster
+_poster_slots = threading.BoundedSemaphore(4)
+_poster_made = 0
+
+
+def poster_dir():
+    return config.data_path("posters")
+
+
+def poster_url(title_id):
+    r = db.one("SELECT poster FROM vod_titles WHERE id=?", (title_id,))
+    return (r["poster"] or "").strip() if r else ""
+
+
+def _shrink(data):
+    """JPEG POSTER_W wide (kept small, never enlarged), or None when ffmpeg can't read it."""
+    try:
+        r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0",
+                            "-vf", f"scale='min({POSTER_W},iw)':-2", "-frames:v", "1", "-q:v", "4",
+                            "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+                           input=data, capture_output=True, timeout=20, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 and r.stdout[:2] == b"\xff\xd8" else None
+
+
+def _download(url):
+    try:
+        with httpx.stream("GET", url, timeout=12, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as r:
+            if r.status_code != 200:
+                return None
+            data = bytearray()
+            for chunk in r.iter_bytes():
+                data += chunk
+                if len(data) > POSTER_MAX:
+                    return None
+            return bytes(data)
+    except httpx.HTTPError as e:
+        log.debug("Poster %s: %s", url[:80], e)
+        return None
+
+
+def _prune(folder):
+    files = sorted(folder.glob("*.jpg"), key=lambda f: f.stat().st_mtime)
+    for f in files[:max(0, len(files) - POSTER_KEEP)]:
+        f.unlink(missing_ok=True)
+
+
+def poster_file(title_id):
+    """Path of the small poster for a title (made on first use), or None (no poster, or it couldn't be read)."""
+    global _poster_made
+    url = poster_url(title_id)
+    if not url.lower().startswith(("http://", "https://")):
+        return None
+    folder = poster_dir()
+    path = folder / (hashlib.sha1(url.encode()).hexdigest()[:24] + ".jpg")     # by address: a new poster makes a new file
+    if path.exists():
+        try:
+            os.utime(path)              # recently shown: keep it
+        except OSError:
+            pass
+        return path
+    with _poster_slots:
+        if path.exists():
+            return path
+        data = _download(url)
+        small = _shrink(data) if data else None
+        if not small:
+            return None
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(small)
+        tmp.replace(path)
+        _poster_made += 1
+        if _poster_made % 200 == 0:
+            _prune(folder)
+    return path
 
 
 # ---------------------------------------------------------------- setup
