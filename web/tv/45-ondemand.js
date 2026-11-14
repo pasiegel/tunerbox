@@ -31,8 +31,9 @@ async function openOD(kind, showId) {
     return;
   }
   OD.counts = c; OD.details.clear();
-  hideBanner(); closeMenu(); closePanels(); closeDvr(); $("playback").classList.add("hidden");
+  hideBanner(); closeMenu(); closeDvr(); closeSearch(); closeSports(); $("playback").classList.add("hidden");
   if (top() === "guide") G.close();
+  if (top() === "home") homeCover(); else closeHome();     // from Home: Back comes back to it
   if (top() !== "od") S.layer.push("od");
   $("od").classList.remove("hidden"); video.classList.add("pip");
   const want = kind === "series" ? 1 : kind === "movie" ? 0 : null;
@@ -52,7 +53,8 @@ function closeOD() {
   if (!S.layer.includes("od")) return;
   S.layer = S.layer.filter((l) => l !== "od");
   $("od").classList.add("hidden");
-  if (top() !== "guide") video.classList.remove("pip");
+  if (top() === "home") homeReveal();
+  else if (top() !== "guide") video.classList.remove("pip");
 }
 
 // ---- loading
@@ -494,7 +496,7 @@ async function playVod(id, start, back) {
   closeOD(); closePanels(); closeMenu(); closeDvr();
   if (top() === "guide") G.close();
   vodLeave();
-  S.rec = null; S.mode = "vod"; hideBanner();
+  recLeave(); S.mode = "vod"; hideBanner();
   S.vod = { it, dur: it.duration || 0, base: start, back, retries: 0, target: null, parked: false, paused: false, done: false };
   toast(start > 0 ? `Resuming from ${fmtDur(start)}` : it.title, 2500);
   vodStart(start);

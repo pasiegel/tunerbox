@@ -9,7 +9,7 @@ function tuneNum(num) {
   if (i === undefined) { toast(`Channel ${num} is not available`); return false; }
   tune(i); return true;
 }
-function closePanels() { closeSearch(); closeSports(); }
+function closePanels() { closeSearch(); closeSports(); closeHome(); }
 // a guide listing from search/sports: on now -> watch, later -> record options
 function pickProgram(p) {
   const i = S.byNum.get(p.ch.number);

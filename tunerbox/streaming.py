@@ -173,9 +173,11 @@ def _finish(proc):
 
 
 def stop_client(client_id):
+    from . import tuner
     with _lock:
         p = _sessions.pop(client_id, None)
     kill(p)
+    tuner.stop_client(client_id)
 
 
 def _pump(proc, q, stop, wake):
@@ -221,12 +223,22 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
     `cmd` runs a ready-made ffmpeg command instead (local channel pieces).
 
     Waiting for data never holds a worker thread: the reader thread wakes this coroutine through an
-    asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on."""
+    asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on.
+
+    Channels and feeds (no `cmd`) play from a shared tuner (tuner.py): one provider connection
+    however many screens watch the same one."""
+    if cmd is None:
+        from . import tuner
+        gen = tuner.watch(raw_url, client_id, mode, audio, request, buffer)
+        try:
+            async for chunk in gen:
+                yield chunk
+        finally:
+            await gen.aclose()
+        return
     if client_id:   # stop this viewer's previous channel first (Xtream allows few connections), off the event loop
         await anyio.to_thread.run_sync(stop_client, client_id)
     buffer = buffer_seconds(buffer)
-    if cmd is None:
-        cmd = await anyio.to_thread.run_sync(live_cmd, raw_url, mode, audio, buffer)
     log.info("Stream start for %s: %s", client_id or "-", split_url(raw_url)[0][-60:])
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0)

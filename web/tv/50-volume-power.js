@@ -59,7 +59,7 @@ function keepAwake(on) {
 }
 function powerOff() {
   keepAwake(false);
-  vodLeave(); closeOD();
+  vodLeave(); recLeave(); closeOD(); closeHome();
   destroyPlayer(); S.mode = "off"; hideBanner(); hideStatic(); IDLE.offSince = Date.now();
   $("power").classList.remove("hidden");
 }
@@ -83,6 +83,7 @@ async function powerOn() {
   $("power").classList.add("hidden");
   video.volume = parseFloat(localStorage.getItem("tb.vol") || "0.8");
   try { await loadChannels(); } catch (e) { toast("Can't reach TunerBox server"); return; }
+  await loadServerBindings(); homeButton();   // settings changed in Setup since this page loaded (Home on/off…)
   await loadFavs();
   loadReminders();
   if (!S.channels.length) {
@@ -95,5 +96,7 @@ async function powerOn() {
   const last = parseInt(localStorage.getItem("tb.last") || "", 10);
   const i = !isNaN(last) ? nearestIdx(last) : 0;
   tune(i < 0 ? 0 : i);
+  // like a streaming box: Home first, with the last channel playing in its corner (?ch=N goes straight to TV)
+  if (homeAtStart() && isNaN(want)) openHome();
 }
 

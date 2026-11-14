@@ -57,7 +57,7 @@ function watchReminder() {
   const r = RM.shown; if (!r) return;
   hideReminder();
   closeOverlays();
-  if (S.mode === "playback") { $("playback").classList.add("hidden"); S.rec = null; destroyPlayer(); }   // leave the recording
+  if (S.mode === "playback") { $("playback").classList.add("hidden"); recLeave(); destroyPlayer(); }   // leave the recording
   tuneNum(r.number);
 }
 // OK / Back answer the pop-up while it's up; every other button works as usual underneath

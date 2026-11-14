@@ -85,3 +85,10 @@ def test_phone_can_add_online_guides_but_not_files():
         "xmltv_sources": ["https://g/epg.xml"]}
     with pytest.raises(PermissionError):
         config.clean_changes({"xmltv_sources": ["C:/secret.xml"]}, from_pc=False)
+
+
+def test_home_screen_setting():
+    assert config.get("home_screen") is True                                  # on unless turned off
+    assert config.clean_changes({"home_screen": False}, from_pc=False) == {"home_screen": False}
+    with pytest.raises(ValueError):
+        config.clean_changes({"home_screen": "no"}, from_pc=False)

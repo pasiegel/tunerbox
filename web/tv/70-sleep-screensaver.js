@@ -157,12 +157,13 @@ $("g-rows").addEventListener("click", (e) => {
   const cell = e.target.closest(".g-p"), row = e.target.closest(".g-row");
   if (!row) return;
   const i = +row.dataset.i;
+  G.filterFocus = false;
   if (e.target.closest(".g-fav")) { toggleFav(G.ch(i)); return; }
   if (cell) {
     const s = +cell.dataset.s;
     if (G.row === i && G.selected() && G.selected().start === s) { G.ok(); return; }
     G.row = i; G.focusT = Math.max(s, G.win); G.render();
-  } else { tune(G.list[i]); G.close(); }
+  } else { tune(G.list[i]); closeHome(); G.close(); }
 });
 $("g-rows").addEventListener("wheel", (e) => { e.preventDefault(); G.move(e.deltaY > 0 ? 1 : -1); }, { passive: false });
 // touch: drag up/down to scroll channels, sideways to scroll time. The move/end listeners go on the

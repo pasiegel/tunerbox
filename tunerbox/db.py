@@ -163,6 +163,11 @@ MIGRATIONS = [
     lambda c: _add_column(c, "sources", "vod_series", "INTEGER DEFAULT 0"),      # 1.5: On Demand TV shows on
     lambda c: _add_column(c, "sources", "vod_hidden", "TEXT DEFAULT '[]'"),      # 1.5: [kind, category] left out
     lambda c: _add_column(c, "sources", "vod_tags", "TEXT DEFAULT ''"),          # 1.5: On Demand labels shown ('' = all)
+    lambda c: _add_column(c, "recordings", "image", "TEXT DEFAULT ''"),          # Home: the show's picture
+    lambda c: _add_column(c, "recordings", "position", "INTEGER DEFAULT 0"),     # Home: resume a recording
+    lambda c: _add_column(c, "recordings", "duration", "INTEGER DEFAULT 0"),
+    lambda c: _add_column(c, "recordings", "watched", "INTEGER DEFAULT 0"),
+    lambda c: _add_column(c, "recordings", "watched_at", "INTEGER DEFAULT 0"),
 ]
 
 

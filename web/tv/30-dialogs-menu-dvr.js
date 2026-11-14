@@ -3,12 +3,25 @@ function listNav(listEl, key, onPick) {
   const items = [...listEl.querySelectorAll("li")];
   if (!items.length) return;
   let i = items.findIndex((li) => li.classList.contains("sel"));
+  const at = i;
   if (key === "ArrowDown") i = (i + 1) % items.length;
   else if (key === "ArrowUp") i = (i - 1 + items.length) % items.length;
   else if (key === "ChannelDown") i = Math.min(items.length - 1, Math.max(0, i) + 8);
   else if (key === "ChannelUp") i = Math.max(0, i - 8);
   else if (key === "Enter") { if (i >= 0) onPick(items[i], i); return; }
   else return;
+  // group titles (li.hdr) can't be highlighted: keep going the same way (back, if that runs off the end)
+  const dir = key === "ArrowUp" || key === "ChannelUp" ? -1 : 1, n = items.length;
+  const ok = (j) => j >= 0 && j < n && !items[j].classList.contains("hdr");
+  if (!ok(i)) {
+    let j = i;
+    if (key.startsWith("Arrow")) { do j = (j + dir + n) % n; while (!ok(j) && j !== i); }
+    else {                          // paging: on past the title, or back the other way at the very top / end
+      while (j >= 0 && j < n && !ok(j)) j += dir;
+      if (!ok(j)) { j = i; while (j >= 0 && j < n && !ok(j)) j -= dir; }
+    }
+    i = ok(j) ? j : at;
+  }
   items.forEach((li) => li.classList.remove("sel"));
   items[i].classList.add("sel"); items[i].scrollIntoView({ block: "nearest" });
 }
@@ -18,7 +31,7 @@ function fillList(listEl, entries, sel = 0) {
 
 let dlg = { entries: [] };
 function openDialog(title, sub, entries) {
-  dlg.entries = entries; $("dlg-img").classList.add("hidden");
+  dlg.entries = entries; $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
   $("dlg-title").textContent = title; $("dlg-sub").textContent = sub || "";
   fillList($("dlg-list"), entries);
   if (top() !== "dialog") S.layer.push("dialog");
@@ -67,7 +80,7 @@ function programDialog(ch, p) {
   const sub = `${ch.number} ${ch.name}\n${fmtDay(p.start)} ${fmtTime(p.start)} – ${fmtTime(p.stop)}` + (p.subtitle ? `\n${p.subtitle}` : "");
   const n0 = now();
   const entries = [];
-  if (p.start <= n0 && n0 < p.stop) entries.push({ label: "Watch now", act: () => { closeDialog(); G.close(); tune(S.byNum.get(ch.number)); } });
+  if (p.start <= n0 && n0 < p.stop) entries.push({ label: "Watch now", act: () => { closeDialog(); G.close(); closeHome(); tune(S.byNum.get(ch.number)); } });
   const rec = async (body, msg) => {
     try { await api("/api/recordings", { method: "POST", body: { number: ch.number, start: p.start, ...body } }); toast(msg); }
     catch (e) { toast(`Can't record: ${e.message}`); }
@@ -94,52 +107,85 @@ function programDialog(ch, p) {
                  act: () => { closeDialog(); toggleFav(ch); } });
   entries.push({ label: "Close", act: closeDialog });
   openDialog(p.title, sub, entries);
+  $("dlg-img").classList.add("art"); showArt($("dlg-img"), ch.number, p);
 }
 
-// menu
+// menu, in groups: { head } entries are the group titles ("" = just a dividing line), skipped by the highlight.
+// homeOff: only when Home is turned off in Setup; otherwise Home's shortcuts (and V in the guide) reach them,
+// and leaving them out keeps the menu short enough not to scroll.
 const MENU = [
+  { head: "Watch" },
+  { label: "Home", needsHome: true, act: () => { closeMenu(); openHome(); } },
   { label: "TV Guide", act: () => { closeMenu(); G.open(); } },
-  { label: "★ Favorites guide", act: () => { closeMenu(); G.open(true); } },
-  { label: "On Demand (movies & TV shows)", act: () => { closeMenu(); openOD(); } },
+  { label: "★ Favorites guide", homeOff: true, act: () => { closeMenu(); G.open(true); } },
+  { label: "On Demand (movies & TV shows)", homeOff: true, act: () => { closeMenu(); openOD(); } },
+  { label: "Sports & Events", homeOff: true, act: () => { closeMenu(); openSports(); } },
+  { label: "Search", homeOff: true, act: () => { closeMenu(); openSearch(); } },
+  { label: "My Recordings (DVR)", homeOff: true, act: () => { closeMenu(); openDvr(); } },
+  { head: "This channel" },
   { get label() {
       const ch = S.mode === "live" && curCh();
       if (!ch || ch.feed) return "Add to Favorites (tune to a channel first)";
       return S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`;
     },
     act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
-  { label: "Search", act: () => { closeMenu(); openSearch(); } },
-  { label: "Sports & Events", act: () => { closeMenu(); openSports(); } },
-  { label: "My Recordings (DVR)", act: () => { closeMenu(); openDvr(); } },
-  { label: "Channel Setup (playlists, lineup, guide)", act: openSetup },
-  { label: "Rescan channels", act: async () => { await api("/api/jobs/scan", { method: "POST" }); toast("Scanning channels in the background…"); closeMenu(); watchJob(); } },
-  { label: "Refresh TV guide", act: async () => { await api("/api/jobs/epg", { method: "POST" }); toast("Updating guide in the background…"); closeMenu(); watchJob(); } },
-  { label: "Open current channel in VLC / mpv", notPhone: true, act: async () => {
+  { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
     const url = ch.feed ? `${location.origin}/api/feed/stream?key=${encodeURIComponent(ch.feed)}` : `${location.origin}/api/stream/${ch.number}`;
     try { await navigator.clipboard.writeText(url); } catch (_) {}
     toast(`Stream URL copied: ${url}`, 6000); closeMenu();
   } },
-  { label: "Remote control setup", notPhone: true, act: () => { closeMenu(); openRemote(); } },
-  { label: "Use a phone as the remote…", notPhone: true, act: () => { closeMenu(); pairDialog(); } },
+  { head: "Settings" },
   { get label() { return `Sleep timer & screensaver: ${sleepOn() ? plural(sleepH(), "hour") : "sleep off"} · ${saverOn() ? plural(saverM(), "min") : "saver off"}`; },
     act: () => { closeMenu(); sleepDialog(); } },
   { get label() { const b = bufSecs(); return `Stream cache: ${b ? b + " seconds" : "Off"}${localStorage.getItem("tb.buffer") === null ? " (default)" : " (this screen)"}`; },
     act: () => { closeMenu(); bufferDialog(); } },
-  { label: "Full screen", act: () => { toggleFull(); closeMenu(); } },
+  { id: "homestart", needsHome: true, get label() { return `Start on Home: ${homeAtStart() ? "On" : "Off"} (this screen)`; },
+    act: () => { try { localStorage.setItem("tb.homeStart", homeAtStart() ? "0" : "1"); } catch (_) {} renderMenu(menuShown.indexOf(MENU_HOMESTART)); } },
+  { label: "Remote control setup", notPhone: true, act: () => { closeMenu(); openRemote(); } },
+  { label: "Use a phone as the remote…", notPhone: true, act: () => { closeMenu(); pairDialog(); } },
+  { id: "full", label: "Full screen", act: () => { toggleFull(); closeMenu(); } },
+  { head: "Channels & guide" },
+  { label: "Channel Setup (playlists, lineup, guide)", act: openSetup },
+  { label: "Rescan channels", act: async () => { await api("/api/jobs/scan", { method: "POST" }); toast("Scanning channels in the background…"); closeMenu(); watchJob(); } },
+  { label: "Refresh TV guide", act: async () => { await api("/api/jobs/epg", { method: "POST" }); toast("Updating guide in the background…"); closeMenu(); watchJob(); } },
+  { head: "" },
   { label: "Turn off", act: () => { closeMenu(); powerOff(); } },
 ];
-// Android app: switch to another TunerBox PC
-if (window.TunerBoxApp) MENU.splice(MENU.length - 2, 1, { label: "Change TunerBox server", act: () => window.TunerBoxApp.changeServer() });
-// the entries shown right now (phones hide the ones that only make sense on a TV / PC)
+const MENU_HOMESTART = MENU.find((e) => e.id === "homestart");
+// Android app: switch to another TunerBox PC (in place of Full screen)
+if (window.TunerBoxApp) MENU.splice(MENU.findIndex((e) => e.id === "full"), 1, { label: "Change TunerBox server", act: () => window.TunerBoxApp.changeServer() });
+// the entries shown right now: phones leave out the ones that only make sense on a TV / PC, and a
+// group title goes when nothing is left under it
 let menuShown = MENU;
+function renderMenu(sel) {
+  if (sel === undefined || sel < 0 || menuShown[sel].head !== undefined) sel = menuShown.findIndex((e) => e.head === undefined);
+  fillList($("menu-list"), menuShown.map((e) => (e.head !== undefined ? { cls: e.head ? "hdr" : "hdr line", html: esc(e.head) } : e)), sel);
+}
 function openMenu() {
   hideBanner();
-  menuShown = isPhone() ? MENU.filter((e) => !e.notPhone) : MENU;
-  fillList($("menu-list"), menuShown);
-  S.layer.push("menu"); $("menu").classList.remove("hidden");
+  const items = MENU.filter((e) => !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()));
+  menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
+  renderMenu();
+  S.layer.push("menu"); $("menu").classList.remove("hidden", "two");
+  // still too tall for this screen (a short window, or Home off): two columns instead of scrolling
+  const l = $("menu-list");
+  if (!isPhone() && l.scrollHeight > l.clientHeight + 2) $("menu").classList.add("two");
+  l.scrollTop = 0;
+}
+// two columns: ◀ ▶ go across to the item at about the same height in the other column
+function menuAcross(k) {
+  if (!$("menu").classList.contains("two")) return false;
+  const items = [...$("menu-list").querySelectorAll("li:not(.hdr)")], cur = $("menu-list").querySelector("li.sel");
+  if (!cur) return false;
+  const others = items.filter((li) => (k === "ArrowRight" ? li.offsetLeft > cur.offsetLeft : li.offsetLeft < cur.offsetLeft));
+  if (!others.length) return true;
+  const to = others.reduce((a, b) => (Math.abs(b.offsetTop - cur.offsetTop) < Math.abs(a.offsetTop - cur.offsetTop) ? b : a));
+  cur.classList.remove("sel"); to.classList.add("sel");
+  return true;
 }
 function closeMenu() { S.layer = S.layer.filter((l) => l !== "menu"); $("menu").classList.add("hidden"); }
-$("menu-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) menuShown[+li.dataset.i].act(); });
+$("menu-list").addEventListener("click", (e) => { const li = e.target.closest("li"); const it = li && menuShown[+li.dataset.i]; if (it && it.act) it.act(); });
 
 async function watchJob() {
   for (;;) {
@@ -171,10 +217,8 @@ function closeDvr() { S.layer = S.layer.filter((l) => l !== "dvr"); $("dvr").cla
 function dvrPick(i) {
   const r = dvrRecs[i]; if (!r) return;
   const entries = [];
-  if (r.status === "done" || r.status === "cancelled") {
-    entries.push({ label: "Play", act: () => { closeDialog(); closeDvr(); playRecording(r); } });
-    entries.push({ label: "Delete recording", act: async () => { await api(`/api/recordings/${r.id}?delete=1`, { method: "DELETE" }); closeDialog(); openDvr(); } });
-  } else if (r.status === "recording") {
+  if (r.status === "done" || r.status === "cancelled") { recDialog(r, openDvr); return; }
+  if (r.status === "recording") {
     entries.push({ label: "Watch channel live", act: () => { closeDialog(); closeDvr(); tune(S.byNum.get(r.number)); } });
     entries.push({ label: "Stop recording", act: async () => { await api(`/api/recordings/${r.id}`, { method: "DELETE" }); closeDialog(); openDvr(); } });
   } else if (r.status === "scheduled") {
@@ -185,12 +229,28 @@ function dvrPick(i) {
   entries.push({ label: "Back", act: closeDialog });
   openDialog(r.title, `${r.number} ${r.channel_name || ""}\n${fmtDay(r.start)} ${fmtTime(r.start)} – ${fmtTime(r.stop)}${r.error ? "\n" + r.error : ""}`, entries);
 }
+// a recorded show: resume, play, delete. `after` runs once it's deleted (redraw the list it came from)
+function recDialog(r, after) {
+  const resume = !r.watched && r.position > RESUME_MIN;
+  const play = (from) => () => { closeDialog(); closeDvr(); playRecording(r, from); };
+  const entries = [];
+  if (resume) entries.push({ label: `Resume from ${fmtDur(r.position)}`, act: play(r.position) });
+  entries.push({ label: resume ? "Play from the beginning" : "Play", act: play(0) });
+  entries.push({ label: "Delete recording", act: async () => {
+    try { await api(`/api/recordings/${r.id}?delete=1`, { method: "DELETE" }); } catch (e) { toast(`Can't delete: ${e.message}`); }
+    closeDialog(); after();
+  } });
+  entries.push({ label: "Close", act: closeDialog });
+  openDialog(r.title, `${r.number} ${r.channel_name || ""}\n${fmtDay(r.start)} ${fmtTime(r.start)} – ${fmtTime(r.stop)}`
+    + (resume ? `\nYou stopped at ${fmtDur(r.position)}` : r.watched ? "\nWatched" : "") + (r.error ? "\n" + r.error : ""), entries);
+}
 $("dvr-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) dvrPick(+li.dataset.i); });
 
-function playRecording(r) {
-  vodLeave();
+function playRecording(r, from = 0) {
+  vodLeave(); recLeave(); closeHome();
   destroyPlayer(); hideStatic(); hideBanner();
   S.mode = "playback";
+  if (from > 0) video.addEventListener("loadedmetadata", () => { if (S.rec === r) video.currentTime = from; }, { once: true });
   if (r.file.endsWith(".ts") && window.mpegts) {
     S.player = mpegts.createPlayer({ type: "mpegts", isLive: false, url: `${location.origin}/api/recordings/${r.id}/file` });
     S.player.attachMediaElement(video); S.player.load(); S.player.play();
@@ -199,8 +259,20 @@ function playRecording(r) {
   }
   $("pb-title").textContent = r.title + (r.subtitle ? ` · ${r.subtitle}` : "");
   S.rec = r;
+  clearInterval(S.recSaveT); S.recSaveT = setInterval(recSave, 15000);
   showPlaybackBar();
 }
+// where playback of a recording got to, on the server, so any screen can resume it
+function recSave(ended) {
+  const r = S.rec, d = video.duration;
+  if (!r || S.mode !== "playback" || !isFinite(d) || !d) return;
+  const pos = ended ? d : video.currentTime;
+  if (pos < 5) return;
+  r.position = Math.round(pos); r.duration = Math.round(d);
+  fetch(`/api/recordings/${r.id}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+                                              body: JSON.stringify({ position: pos, duration: d }) }).catch(() => {});
+}
+function recLeave(ended) { if (S.rec) recSave(ended); clearInterval(S.recSaveT); S.rec = null; }
 // Info on a recording: the banner, filled from the recording instead of the live guide
 function recInfo(full = false) {
   const r = S.rec; if (!r) return;
@@ -233,6 +305,6 @@ video.addEventListener("timeupdate", () => {
   $("pb-progress").style.width = d ? `${video.currentTime / d * 100}%` : "0";
   $("pb-time").textContent = `${fmtDur(video.currentTime)} / ${fmtDur(d)}${video.paused ? "   ❚❚ Paused" : ""}`;
 });
-video.addEventListener("ended", () => { if (S.mode === "playback") backToLive(); });
-function backToLive() { $("playback").classList.add("hidden"); hideBanner(); S.rec = null; destroyPlayer(); if (S.idx >= 0) tune(S.idx); }
+video.addEventListener("ended", () => { if (S.mode === "playback") { recLeave(true); backToLive(); } });
+function backToLive() { $("playback").classList.add("hidden"); hideBanner(); recLeave(); destroyPlayer(); if (S.idx >= 0) tune(S.idx); }
 

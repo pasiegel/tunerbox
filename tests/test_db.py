@@ -35,6 +35,29 @@ def test_old_database_is_upgraded(fresh_data):
         assert c.execute("PRAGMA user_version").fetchone()[0] == len(db.MIGRATIONS)
 
 
+def test_old_recordings_get_the_resume_columns(fresh_data):
+    path = config.DATA / "tunerbox.db"
+    path.unlink()
+    for ext in ("-wal", "-shm"):
+        (config.DATA / f"tunerbox.db{ext}").unlink(missing_ok=True)
+    con = sqlite3.connect(path)       # a 1.5 database: recordings without picture / resume / watched
+    con.execute("""CREATE TABLE recordings (id INTEGER PRIMARY KEY AUTOINCREMENT, number INTEGER NOT NULL,
+                   channel_name TEXT, title TEXT, subtitle TEXT, descr TEXT, episode TEXT, start INTEGER NOT NULL,
+                   stop INTEGER NOT NULL, status TEXT DEFAULT 'scheduled', file TEXT DEFAULT '', rule_id INTEGER,
+                   error TEXT DEFAULT '', UNIQUE (number, start))""")
+    con.execute("INSERT INTO recordings(number, title, start, stop, status) VALUES (4, 'Old show', 100, 200, 'done')")
+    con.execute("PRAGMA user_version=6")
+    con.commit()
+    con.close()
+    db.init()
+    new = {"image", "position", "duration", "watched", "watched_at"}
+    assert new <= _cols("recordings")
+    assert db.one("SELECT title, image, position, duration, watched, watched_at FROM recordings") == \
+        {"title": "Old show", "image": "", "position": 0, "duration": 0, "watched": 0, "watched_at": 0}
+    db.init()                         # running again changes nothing
+    assert new <= _cols("recordings")
+
+
 def test_database_from_a_newer_version_is_left_alone():
     with db.conn() as c:
         c.execute(f"PRAGMA user_version={len(db.MIGRATIONS) + 5}")

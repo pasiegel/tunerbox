@@ -14,11 +14,12 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, db, dvr, epg, guide, hls, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
 
 log = logging.getLogger("tunerbox.api")
+ART_W = 480                     # guide show pictures: sharp in the guide panel, still small
 
 
 def _startup():
@@ -93,10 +94,36 @@ def api_guide(start: int, stop: int, numbers: str = ""):
             p["rec"] = recs.get((c["number"], p["start"]), "")
             p["remind"] = (c["number"], p["start"]) in reminded
             p["series"] = (p["title"].lower(), c["number"]) in rules or (p["title"].lower(), None) in rules
+            p["genre"] = epg.genre(p["category"])
             p.pop("channel", None)
             lst.append(p)
         out[c["number"]] = lst
     return out
+
+
+@app.get("/api/art/{number}/{start}")
+async def api_art(number: int, start: int):
+    """A show's picture from the guide, shrunk and kept on disk like On Demand posters."""
+    def find():
+        c = guide.channel(number)
+        return epg.image(c["epg"], start) if c and c["epg"] else ""
+    url = await anyio.to_thread.run_sync(find)
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(404)
+    path = await anyio.to_thread.run_sync(vod.small_image, url, ART_W)
+    if path:
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/api/guide/genre")
+def api_guide_genre(genre: str, start: int, stop: int):
+    """Channel numbers with a show of that genre (movies, sports, news, kids) on in [start, stop)."""
+    if genre not in epg.GENRES:
+        raise HTTPException(400, "Unknown genre")
+    chans = [c for c in guide.channels(True) if c["epg"]]
+    keys = epg.genre_channels(genre, {c["epg"] for c in chans}, start, stop)
+    return sorted(c["number"] for c in chans if c["epg"] in keys)
 
 
 @app.get("/api/now/{number}")
@@ -829,6 +856,32 @@ def api_cancel(request: Request, rid: int, delete: int = 0):
         _trusted(request)        # deleting a recorded file is a setup change; cancelling isn't
     dvr.cancel(rid, bool(delete))
     return {"ok": True}
+
+
+@app.post("/api/recordings/{rid}/progress")
+def api_rec_progress(rid: int, position: float = Body(...), duration: float = Body(0)):
+    """Where playback of a recording got to, so any screen can resume it (Home › Continue Watching)."""
+    dvr.progress(rid, position, duration)
+    return {"ok": True}
+
+
+@app.get("/api/recordings/{rid}/art")
+async def api_rec_art(rid: int):
+    r = await anyio.to_thread.run_sync(db.one, "SELECT image FROM recordings WHERE id=?", (rid,))
+    url = (r or {}).get("image") or ""
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(404)
+    path = await anyio.to_thread.run_sync(vod.small_image, url, ART_W)
+    if path:
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/api/home")
+def api_home(recent: str = ""):
+    """Everything the Home screen shows. `recent`: this screen's last channels, newest first."""
+    nums = [int(n) for n in recent.split(",")[:20] if n.strip().isdigit()]
+    return home.overview(nums)
 
 
 @app.get("/api/recordings/{rid}/file")

@@ -98,3 +98,23 @@ def test_network_name_is_for_tuner_apps_not_home_screen_apps():
     config.update(config.clean_changes({"box_name": "   "}, from_pc=False))          # blank goes back to the default
     assert config.box_name() == "TunerBox"
     assert config.clean_changes({"box_name": "x" * 99}, from_pc=False)["box_name"] == "x" * 40
+
+
+def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path):
+    from tunerbox import guide, vod
+    monkeypatch.setattr(guide, "channel", lambda n: {"number": n, "epg": "gn:7"} if n == 7 else None)
+    db.run("INSERT INTO programs(channel, start, stop, title, image) VALUES ('gn:7', 1000, 2800, 'News', ?)",
+           ("https://img.example/p1.jpg",))
+    db.run("INSERT INTO programs(channel, start, stop, title, image) VALUES ('gn:7', 2800, 4600, 'Late', '')")
+    small = tmp_path / "s.jpg"
+    small.write_bytes(b"\xff\xd8 tiny")
+    asked = []
+    monkeypatch.setattr(vod, "small_image", lambda url, w: asked.append((url, w)) or small)
+    r = client.get("/api/art/7/1500")                       # any time during the show
+    assert r.status_code == 200 and r.content == b"\xff\xd8 tiny"
+    assert asked == [("https://img.example/p1.jpg", api.ART_W)]
+    assert client.get("/api/art/7/3000").status_code == 404     # no picture
+    assert client.get("/api/art/9/1500").status_code == 404     # no such channel
+    monkeypatch.setattr(vod, "small_image", lambda url, w: None)
+    r = client.get("/api/art/7/1500", follow_redirects=False)  # can't shrink it: the original
+    assert r.status_code == 302 and r.headers["location"] == "https://img.example/p1.jpg"

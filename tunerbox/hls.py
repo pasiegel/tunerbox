@@ -1,6 +1,7 @@
 """Live HLS output for players without Media Source Extensions (iPad/iPhone Safari,
 older smart TVs). ffmpeg writes a rolling playlist + 2-second segments into a temp
-folder per viewer; sessions nobody asks for in a while are stopped."""
+folder per viewer; sessions nobody asks for in a while are stopped. Channels and feeds are read
+from a shared tuner (tuner.py), so this ffmpeg only cuts segments; On Demand titles read their own."""
 import asyncio
 import logging
 import re
@@ -26,9 +27,12 @@ _reaper = None
 
 
 def _cmd(raw_url, mode=None, buffer=0, pre=()):
-    inp, vid, aud = play_args(raw_url, mode or config.get("video_mode", "copy"), buffer)
-    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin",
-            *pre, *inp, "-sn", "-dn", *vid, *aud,
+    if raw_url is None:         # from a tuner on stdin: already in the right format
+        src = ["-f", "mpegts", "-i", "pipe:0", "-c", "copy"]
+    else:
+        inp, vid, aud = play_args(raw_url, mode or config.get("video_mode", "copy"), buffer)
+        src = ["-nostdin", *pre, *inp, "-sn", "-dn", *vid, *aud]
+    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", *src,
             "-f", "hls", "-hls_time", "2", "-hls_list_size", str(8 + buffer // 2), "-hls_allow_cache", "0",
             "-hls_flags", "delete_segments+independent_segments+omit_endlist",
             "-hls_segment_filename", "seg%05d.ts", "index.m3u8"]
@@ -38,6 +42,8 @@ def _stop(sid):
     with _lock:
         s = _sessions.pop(sid, None)
     if s:
+        if s.get("sub"):
+            s["sub"].close()
         kill(s["proc"])
         shutil.rmtree(s["dir"], ignore_errors=True)
 
@@ -71,19 +77,50 @@ def start(raw_url, client=None, mode=None, buffer=None, pre=()):
     sid = secrets.token_hex(6)
     d = ROOT / sid
     d.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.Popen(_cmd(raw_url, mode, buffer, pre), cwd=d, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+    sub = None
+    try:
+        if not pre:             # a channel or feed: share its tuner
+            from . import tuner
+            sub = tuner.join(raw_url, mode, "aac", buffer, name=f"hls:{client or sid}")
+        proc = subprocess.Popen(_cmd(None if sub else raw_url, mode, buffer, pre), cwd=d,
+                                stdin=subprocess.PIPE if sub else subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+    except OSError:
+        if sub:
+            sub.close()
+        shutil.rmtree(d, ignore_errors=True)
+        raise
     track(proc)
+    if sub:
+        threading.Thread(target=_feed, args=(sub, proc), daemon=True).start()
     err = []
     threading.Thread(target=lambda: err.extend(proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:]),
                      daemon=True).start()
     with _lock:
         _sessions[sid] = {"proc": proc, "dir": d, "last": time.monotonic(), "client": client, "err": err,
-                          "buffer": buffer}
+                          "buffer": buffer, "sub": sub}
         if _reaper is None:
             _reaper = threading.Thread(target=_reap, daemon=True)
             _reaper.start()
     return sid
+
+
+def _feed(sub, proc):
+    """Tuner -> this session's ffmpeg. Ends (and ffmpeg with it) when the tuner does."""
+    try:
+        while True:
+            chunk = sub.get()
+            if not chunk:
+                break
+            proc.stdin.write(chunk)
+    except (OSError, ValueError):   # ffmpeg stopped
+        pass
+    finally:
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        sub.close()
 
 
 async def wait_ready(sid, timeout=25.0):

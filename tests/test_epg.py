@@ -223,3 +223,24 @@ def test_web_guide_not_modified_reuses_the_cached_copy(monkeypatch):
     assert (path2, v2) == (path, v1)
     assert sent[1] == {"If-None-Match": '"v1"'}
     assert open(path, "rb").read() == XMLTV
+
+
+def test_genres_from_any_guide_category():
+    from tunerbox.epg import genre
+    assert [genre(c) for c in ("Movie", "Sports", "Sports event", "News", "Newsmagazine", "Kids", "Children",
+                                "Family", "Animation", "Series", "", None)] == \
+        ["movies", "sports", "sports", "news", "news", "kids", "kids", "kids", "kids", "", "", ""]
+
+
+def test_channels_showing_a_genre(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tunerbox import api, db, guide
+    chans = [{"number": n, "epg": e} for n, e in ((4, "gn:4"), (24, "gn:24"), (60, "x:tnt"), (99, None))]
+    monkeypatch.setattr(guide, "channels", lambda include_unmapped=None: chans)
+    for ch, start, cat in (("gn:4", 1000, "News"), ("gn:24", 1000, "Sports"), ("x:tnt", 5000, "Sports event"), ("gn:4", 5000, "Series")):
+        db.run("INSERT INTO programs(channel, start, stop, title, category) VALUES (?, ?, ?, 't', ?)", (ch, start, start + 3600, cat))
+    c = TestClient(api.app)
+    assert c.get("/api/guide/genre?genre=sports&start=0&stop=4000").json() == [24]
+    assert c.get("/api/guide/genre?genre=sports&start=0&stop=9000").json() == [24, 60]
+    assert c.get("/api/guide/genre?genre=news&start=5000&stop=9000").json() == []
+    assert c.get("/api/guide/genre?genre=drama&start=0&stop=1").status_code == 400

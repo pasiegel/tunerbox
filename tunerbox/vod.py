@@ -515,7 +515,7 @@ def categories(kind):
 def continue_watching(kind=None):
     """Titles you're part-way through, the latest first. A show appears once, at its latest episode."""
     w, a = (" AND t.kind=?", [kind]) if kind else ("", [])
-    rows = db.rows(f"""SELECT {_COLS}, p.item_id, p.position, p.duration AS pdur, e.season, e.episode, e.name AS ep_name,
+    rows = db.rows(f"""SELECT {_COLS}, p.item_id, p.position, p.duration AS pdur, p.updated, e.season, e.episode, e.name AS ep_name,
                               e.duration AS ep_duration
                        {_FROM} JOIN vod_progress p ON p.title_id=t.id LEFT JOIN vod_episodes e ON e.id=p.item_id
                        WHERE p.watched=0 AND p.position>?{w} ORDER BY p.updated DESC""", (RESUME_MIN, *a))
@@ -528,6 +528,7 @@ def continue_watching(kind=None):
             r["duration"] = r["ep_duration"]
         tile = _tile(r, now)
         tile["resume"] = r["item_id"]
+        tile["at"] = r["updated"] or 0
         if r["kind"] == "series":
             tile["sub"] = ep_label({"season": r["season"], "episode": r["episode"], "name": r["ep_name"]})
         out.append(tile)
@@ -830,11 +831,11 @@ def poster_url(title_id):
     return (r["poster"] or "").strip() if r else ""
 
 
-def _shrink(data):
-    """JPEG POSTER_W wide (kept small, never enlarged), or None when ffmpeg can't read it."""
+def _shrink(data, width=POSTER_W):
+    """JPEG `width` wide (kept small, never enlarged), or None when ffmpeg can't read it."""
     try:
         r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", "pipe:0",
-                            "-vf", f"scale='min({POSTER_W},iw)':-2", "-frames:v", "1", "-q:v", "4",
+                            "-vf", f"scale='min({width},iw)':-2", "-frames:v", "1", "-q:v", "4",
                             "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
                            input=data, capture_output=True, timeout=20, creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
@@ -866,12 +867,18 @@ def _prune(folder):
 
 def poster_file(title_id):
     """Path of the small poster for a title (made on first use), or None (no poster, or it couldn't be read)."""
+    return small_image(poster_url(title_id))
+
+
+def small_image(url, width=POSTER_W):
+    """Path of a small JPEG copy of the image at `url` (made on first use), or None. Also used for
+    the guide's show pictures."""
     global _poster_made
-    url = poster_url(title_id)
     if not url.lower().startswith(("http://", "https://")):
         return None
     folder = poster_dir()
-    path = folder / (hashlib.sha1(url.encode()).hexdigest()[:24] + ".jpg")     # by address: a new poster makes a new file
+    key = url if width == POSTER_W else f"{width}:{url}"
+    path = folder / (hashlib.sha1(key.encode()).hexdigest()[:24] + ".jpg")     # by address: a new poster makes a new file
     if path.exists():
         try:
             os.utime(path)              # recently shown: keep it
@@ -882,7 +889,7 @@ def poster_file(title_id):
         if path.exists():
             return path
         data = _download(url)
-        small = _shrink(data) if data else None
+        small = _shrink(data, width) if data else None
         if not small:
             return None
         folder.mkdir(parents=True, exist_ok=True)

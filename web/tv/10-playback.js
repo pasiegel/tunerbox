@@ -70,13 +70,14 @@ function fillCache(p, secs, then) {
 function tune(idx, alt = 0) {
   if (idx < 0 || idx >= S.channels.length) return;
   clearTimeout(S.stepTimer); S.pendingIdx = undefined;
-  vodLeave();                    // leaving a movie: its position is saved
+  vodLeave(); recLeave();        // leaving a movie or a recording: its position is saved
   const ch = S.channels[idx];
   if (S.idx !== idx && S.idx >= 0 && alt === 0 && !S.feedCh) S.lastIdx = S.idx;
   S.feedCh = null;
   if (S.gameFeed && S.gameFeed.idx !== idx) S.gameFeed = null;
   S.idx = idx; S.alt = alt; S.mode = "live";
   localStorage.setItem("tb.last", ch.number);
+  if (alt === 0) noteRecent(ch.number);
   $("playback").classList.add("hidden");
   destroyPlayer();
   hideStatic();
@@ -191,6 +192,7 @@ function chStep(d) {
   S.stepTimer = setTimeout(() => { const i = S.pendingIdx; S.pendingIdx = undefined; tune(i); }, 350);
 }
 function peekBanner(ch) {
+  showArt($("b-art"), null); $("b-art").dataset.ch = "";
   $("b-num").textContent = ch.number; $("b-name").textContent = ch.name;
   const logo = $("b-logo");
   if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
@@ -209,9 +211,25 @@ async function nowNext(num, force) {
   S.nowCache.set(num, { t: Date.now(), d });
   return d;
 }
+// a show's picture from the guide (shrunk and cached by the server); hidden when there's none or it
+// won't load. Keyed by the original picture, so other airings of the same show don't reload it.
+function showArt(img, num, p) {
+  const key = p && p.image && num ? p.image : "";
+  if (key && img.dataset.key === key) return;
+  img.dataset.key = key;
+  img.classList.add("hidden");
+  if (!key) { img.removeAttribute("src"); return; }
+  img.onload = () => { if (img.dataset.key === key) img.classList.remove("hidden"); };
+  img.onerror = () => { if (img.dataset.key === key) img.classList.add("hidden"); };
+  img.src = `/api/art/${num}/${p.start}`;
+}
+
 async function showBanner(full = false) {
   const ch = curCh(); if (!ch) return;
   const b = $("banner");
+  const art = $("b-art");
+  if (art.dataset.ch !== String(ch.number) || ch.feed) showArt(art, null);   // another channel's picture
+  art.dataset.ch = ch.number;
   $("b-num").textContent = ch.badge || ch.number;
   $("b-name").textContent = ch.name;
   const logo = $("b-logo");
@@ -237,6 +255,7 @@ async function showBanner(full = false) {
     } else {
       $("b-title").textContent = ch.name; $("b-sub").textContent = ch.epg ? "No information available" : "";
     }
+    showArt(art, ch.number, p);
     if (d.next) $("b-next").textContent = `${fmtTime(d.next.start)}  ${d.next.title}`;
   } catch (_) {}
 }
@@ -248,6 +267,7 @@ function tickClock() {
   const day = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   $("b-clock").textContent = t; $("g-clock").textContent = t; $("b-date").textContent = day; $("g-date").textContent = day;
   $("od-clock").textContent = t; $("od-date").textContent = day;
+  $("hm-clock").textContent = t; $("hm-date").textContent = day;
 }
 setInterval(tickClock, 1000); tickClock();
 

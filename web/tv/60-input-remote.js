@@ -6,8 +6,8 @@ const ACTIONS = [
   ["Enter", "OK / Select"], ["Back", "Back / Exit"],
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
-  ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"],
-  ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["o", "On Demand"],
+  ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"], ["c", "Guide: filter by genre"],
+  ["h", "Home"], ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["o", "On Demand"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [String(n), `Number ${n}`]),
@@ -19,13 +19,14 @@ const DEFAULT_BINDINGS = {
   Escape: "Back", Backspace: "Back", BrowserBack: "Back", GoBack: "Back", Exit: "Back",
   PageUp: "ChannelUp", ChannelUp: "ChannelUp", MediaTrackNext: "ChannelUp",
   PageDown: "ChannelDown", ChannelDown: "ChannelDown", MediaTrackPrevious: "ChannelDown",
-  g: "g", Guide: "g", BrowserHome: "g", ColorF1Green: "g",
+  g: "g", Guide: "g", ColorF1Green: "g",
+  h: "h", Home: "h", BrowserHome: "h", GoHome: "h",
   i: "i", Info: "i", ColorF3Blue: "i",
   m: "m", ContextMenu: "m", Settings: "m",
   l: "l", LastNumberRedial: "l", ColorF2Yellow: "l",
   r: "r", MediaRecord: "r", ColorF0Red: "r",
   d: "d", DVR: "d",
-  "*": "*", a: "*", Favorites: "v", v: "v",
+  "*": "*", a: "*", Favorites: "v", v: "v", c: "c",
   "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", o: "o",
   "+": "VolUp", "=": "VolUp", AudioVolumeUp: "VolUp",
   "-": "VolDown", "_": "VolDown", AudioVolumeDown: "VolDown",
@@ -39,7 +40,7 @@ const DEFAULT_BINDINGS = {
   "pad:a1-": "ArrowUp", "pad:a1+": "ArrowDown", "pad:a0-": "ArrowLeft", "pad:a0+": "ArrowRight",
   "pad:b0": "Enter", "pad:b1": "Back", "pad:b2": "i", "pad:b3": "g",
   "pad:b4": "ChannelDown", "pad:b5": "ChannelUp", "pad:b6": "VolDown", "pad:b7": "VolUp",
-  "pad:b8": "l", "pad:b9": "m",
+  "pad:b8": "l", "pad:b9": "m", "pad:b16": "h",
 };
 let serverBindings = {};
 const localBindings = () => { try { return JSON.parse(localStorage.getItem("tb.keys") || "{}"); } catch (_) { return {}; } };
@@ -146,9 +147,15 @@ function handleKey(k, ev) {
   if (k === "Power") { if (S.mode === "off") powerOn(); else powerOff(); return true; }
   if (S.mode === "off") { powerOn(); return true; }
   const layer = top();
-  if (/^[0-9]$/.test(k) && !["dialog", "menu", "dvr", "remotecfg", "search", "sports", "od"].includes(layer) && S.mode === "live") { digit(k); return true; }
+  if (/^[0-9]$/.test(k) && !["dialog", "menu", "dvr", "remotecfg", "search", "sports", "od", "home"].includes(layer) && S.mode === "live") { digit(k); return true; }
   if (S.digits && k === "Enter") { commitDigits(); return true; }
   if (reminderKey(k)) return true;
+  // Home from anywhere except a dialog or the remote setup; Home again goes back to TV
+  if (k === "h" && layer !== "dialog" && layer !== "remotecfg" && homeEnabled()) {
+    if (layer === "home") closeHome(); else { closeOverlays(); openHome(); }
+    return true;
+  }
+  if (layer === "home") { homeKey(k); return true; }
 
   if (layer === "dialog") {
     if (k === "Back") closeDialog(); else listNav($("dlg-list"), k, (_, i) => dlg.entries[i].act());
@@ -166,7 +173,9 @@ function handleKey(k, ev) {
   if (layer === "sports") { sportsKey(k); return true; }
   if (layer === "od") { odKey(k); return true; }
   if (layer === "menu") {
-    if (k === "Back" || k === "m") closeMenu(); else listNav($("menu-list"), k, (_, i) => menuShown[i].act());
+    if (k === "Back" || k === "m") closeMenu();
+    else if ((k === "ArrowLeft" || k === "ArrowRight") && menuAcross(k)) { /* moved to the other column */ }
+    else listNav($("menu-list"), k, (_, i) => menuShown[i].act());
     return true;
   }
   if (layer === "dvr") {
@@ -174,6 +183,7 @@ function handleKey(k, ev) {
     return true;
   }
   if (layer === "guide") {
+    if (G.filterKey(k)) return true;
     switch (k) {
       case "ArrowUp": G.move(-1); break;
       case "ArrowDown": G.move(1); break;
@@ -185,6 +195,7 @@ function handleKey(k, ev) {
       case "r": G.record(); break;
       case "*": G.fav(); break;
       case "v": G.toggleView(); break;
+      case "c": G.cycleGenre(); break;
       case "g": case "Back": G.close(); break;
       case "m": G.close(); openMenu(); break;
       case "d": G.close(); openDvr(); break;
@@ -241,7 +252,7 @@ function handleKey(k, ev) {
   switch (k) {
     case "ArrowUp": case "ChannelUp": chStep(1); break;
     case "ArrowDown": case "ChannelDown": chStep(-1); break;
-    case "g": G.open(); break;
+    case "g": case "h": G.open(); break;          // h: the Home button, when Home is turned off
     case "v": G.open(true); break;
     case "*": toggleFav(curCh()); break;
     case "i": case "Enter":

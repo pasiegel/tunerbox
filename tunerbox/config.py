@@ -110,6 +110,10 @@ DEFAULTS = {
     # screensaver this many minutes after it's off (0 = never). Neither happens while a recording
     # is running or a phone remote is open.
     "sleep_enabled": True,
+    # Home screen (favorites on now, Continue Watching, sports, recordings). Off: screens start on live TV,
+    # the Home button opens the guide, and Home is left out of the menus. Each screen can still choose,
+    # in its Menu, not to start on Home.
+    "home_screen": True,
     "sleep_hours": 4,
     "screensaver_enabled": True,
     "screensaver_minutes": 10,

@@ -21,6 +21,32 @@ log = logging.getLogger("tunerbox.epg")
 GN_GRID = "https://tvlistings.gracenote.com/api/grid"
 GN_PROVIDERS = "https://tvlistings.gracenote.com/gapzap_webapi/api/Providers/getPostalCodeProviders/{country}/{zip}/gapzap/en-us"
 GN_IMG = "https://zap2it.tmsimg.com/assets/{}.jpg"
+# The guide's genre filter. Gracenote's categories are a short fixed list; XMLTV guides send any text
+# ("Children", "Sports event", "Newsmagazine"), so match on words.
+GENRES = {"movies": ("movie", "film"), "sports": ("sport",), "news": ("news",),
+          "kids": ("kids", "children", "family", "animation", "cartoon")}
+
+
+def genre(category):
+    """'movies' / 'sports' / 'news' / 'kids' for a program category, '' for anything else."""
+    c = (category or "").lower()
+    return next((g for g, words in GENRES.items() if any(w in c for w in words)), "")
+
+
+def genre_channels(g, channel_keys, start, stop):
+    """Those of `channel_keys` with a program of genre `g` on between start and stop. Asking by channel
+    lets SQLite use the (channel, stop) index instead of reading every program in the guide."""
+    keys, out = list(channel_keys), set()
+    for i in range(0, len(keys), 400):
+        part = keys[i:i + 400]
+        q = ",".join("?" * len(part))
+        out |= {r["channel"] for r in db.rows(f"""SELECT DISTINCT channel, category FROM programs
+                                                 WHERE channel IN ({q}) AND stop > ? AND start < ? AND category != ''""",
+                                              (*part, start, stop))
+                if genre(r["category"]) == g}
+    return out
+
+
 FILTER_CAT = {"filter-movie": "Movie", "filter-sports": "Sports", "filter-news": "News",
               "filter-kids": "Kids", "filter-family": "Family", "filter-talk": "Talk",
               "filter-reality": "Reality"}
@@ -471,3 +497,9 @@ def programs(channel_keys, start, stop):
                              ORDER BY start""", (*part, start, stop)):
             out.setdefault(r["channel"], []).append(r)
     return out
+
+
+def image(channel_key, when):
+    """Picture of the show on `channel_key` at time `when` (an address, or "")."""
+    r = db.one("SELECT image FROM programs WHERE channel=? AND start<=? AND stop>?", (channel_key, when, when))
+    return (r["image"] or "").strip() if r else ""

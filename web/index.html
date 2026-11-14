@@ -43,6 +43,7 @@
       <div class="b-desc" id="b-desc"></div>
       <div class="b-next"><span id="b-next-l">Next:</span> <span id="b-next"></span></div>
     </div>
+    <img id="b-art" class="art hidden" alt="">
     <div class="b-clock"><div id="b-clock"></div><div id="b-date"></div></div>
   </div>
 
@@ -75,6 +76,7 @@
         <div id="gi-meta"></div>
         <div id="gi-desc"></div>
       </div>
+      <img id="gi-art" class="art hidden" alt="">
       <div class="g-clock"><div id="g-clock"></div><div id="g-date"></div></div>
     </div>
     <div class="g-head">
@@ -84,7 +86,7 @@
     <div id="g-rows"></div>
     <div class="g-foot">
       <span><b>OK</b> Watch / Options</span><span><b>R</b> Record</span><span><b>/</b> Search</span><span><b>T</b> Sports</span><span><b>O</b> On Demand</span><span><b>PgUp/PgDn</b> Page</span>
-      <span><b>&#9664;&#9654;</b> Time</span><span><b>Ch #</b> Jump</span><span><b>*</b> Favorite</span><span><b>V</b> Favorites / All</span><span><b>G</b> Exit</span>
+      <span><b>&#9664;&#9654;</b> Time</span><span><b>Ch #</b> Jump</span><span><b>*</b> Favorite</span><span><b>V</b> Favorites / All</span><span><b>C</b> Genre</span><span><b>G</b> Exit</span>
     </div>
   </div>
 
@@ -158,6 +160,21 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     <div class="g-foot" id="od-foot"></div>
   </div>
 
+  <div id="home" class="hidden">
+    <div class="g-top">
+      <div class="od-pip"></div>
+      <div id="hm-info">
+        <div id="hmi-title"></div>
+        <div id="hmi-sub"></div>
+        <div id="hmi-meta"></div>
+        <div id="hmi-desc"></div>
+      </div>
+      <div class="g-clock"><div id="hm-clock"></div><div id="hm-date"></div></div>
+    </div>
+    <div class="hm-rows" id="hm-rows"></div>
+    <div class="g-foot" id="hm-foot"></div>
+  </div>
+
   <!-- dialog -->
   <div id="dialog" class="panel hidden">
     <div class="p-title" id="dlg-title"></div>
@@ -168,10 +185,14 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
 
   <!-- on-screen remote for mouse / touch -->
   <div id="remote" class="hidden">
-    <button data-k="ChannelUp">CH &#9650;</button><button data-k="ChannelDown">CH &#9660;</button>
-    <button data-k="g">GUIDE</button><button data-k="v">&#9733; FAVS</button><button data-k="i">INFO</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button><button data-k="t">SPORTS</button><button data-k="o">ON DEMAND</button>
-    <button data-k="m">MENU</button><button data-k="l">LAST</button><button data-k="u">MUTE</button><button data-k="*">&#9733; ADD</button>
-    <button data-k="f">FULL</button>
+    <!-- grouped: screens | this channel | favorites | sound, screen & menu -->
+    <button data-k="h">HOME</button><button data-k="g">GUIDE</button><button data-k="o">ON DEMAND</button><button data-k="t">SPORTS</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button>
+    <span class="sep"></span>
+    <button data-k="ChannelUp">CH &#9650;</button><button data-k="ChannelDown">CH &#9660;</button><button data-k="l">LAST</button><button data-k="i">INFO</button>
+    <span class="sep"></span>
+    <button data-k="v" title="Favorites guide">&#9733; GUIDE</button><button data-k="*" title="Add this channel to Favorites (or remove it)">&#9733; ADD</button>
+    <span class="sep"></span>
+    <button data-k="u">MUTE</button><button data-k="f">FULL</button><button data-k="m">MENU</button>
   </div>
 
   <!-- phones: touch way out of the guide / menus (TV remotes and keyboards use Back / Esc) -->

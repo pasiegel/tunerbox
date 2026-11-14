@@ -83,10 +83,12 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | ↑ ↓ / PgUp PgDn | channel up/down | move / page |
 | ← → | volume | move through time |
 | Enter | info banner | watch, or record options |
+| H (Home) | Home | Home |
 | G | guide | close guide |
 | I | full info | |
 | * (or A) | add / remove channel in Favorites | add / remove highlighted channel |
 | V | Favorites guide | switch Favorites only / all channels |
+| ▲ on the first channel, then ◀ ▶ (or C) | | filter by genre: All, Movies, Sports, News, Kids |
 | R | record current show | record options |
 | L / Backspace | last channel | back |
 | D | recordings | |
@@ -102,6 +104,22 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 Mouse and touch also work. Click the video for the banner, move the mouse for an on-screen remote, and swipe up/down to change channel.
 
 **Watching a recording:** Space/OK pause, ← → skip back 10 s / ahead 30 s, PgUp/PgDn 5 minutes. **I** shows the recording's info (episode, when it was recorded, description, how much you've watched), **G** opens the guide over it (closing the guide goes back to the recording, picking a channel switches to live TV), Back hides the info or stops, **S** stops.
+
+## Home
+When the TV turns on it opens on **Home**, with the last channel playing in the corner. Press **H** (or the remote's Home button, **Menu › Home**, or HOME on the on-screen and phone remotes) to get back to it from anywhere; Back or H again returns to full-screen TV.
+
+Home has shortcuts (Guide, On Demand, Sports, Recordings, Search, Menu) and then rows, each shown only when it has something in it:
+* **★ Favorites on now** and **Recent channels** (the ones this screen tuned to): what's on, with the show's picture and how far in it is. OK tunes; * adds or removes a favorite.
+* **Continue Watching:** movies and episodes you stopped part-way through, then recordings in a row of their own, the latest first. OK resumes.
+* **Sports on now:** games one of your channels or event feeds carries, with the score.
+* **Recently recorded** and **Coming up** (scheduled recordings and reminders).
+
+Arrows move, OK opens, number keys tune. To start one screen on live TV instead, turn off **Menu › Settings › Start on Home** there; opening TunerBox with `?ch=<number>` always starts on that channel. To turn Home off for every screen, untick **Setup › Settings › Screens › Home screen**: screens then start on live TV and the Home button opens the guide (each screen picks this up the next time it's turned on).
+
+Recordings remember where you stopped, on the server, so any screen can **Resume** them (from Home or **Recordings**).
+
+## Guide genre filter
+In the guide, press **▲** on the first channel to highlight the genre picker next to the date, then **◀ ▶** to pick **All, Movies, Sports, News or Kids**; **OK** or **▼** goes back to the channels. That needs only the arrows and OK, so it works with any remote. **C** on a keyboard steps through the genres too (or give it a button of its own in **Remote control setup**: *Guide: filter by genre*), and on a touch screen you tap the day at the top left. Only channels with a show of that genre on in the hours shown are listed, and their other shows are dimmed; moving through time updates the list. It works with the Favorites guide too (V). Genres come from the guide's categories, so channels whose guide has none never show up in a filter.
 
 ## Favorites
 Star the channels you watch most, then see just those in the guide.
@@ -129,7 +147,7 @@ Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a
 * Antenna channels are matched to your lineup by callsign, using the local over-the-air lineup from Gracenote. For example a station on antenna 3.1 becomes its cable channel, and its subchannels go to the matching lineup channels. Antenna channels not on your lineup are added as extra channels.
 * Matched local channels play from the antenna first, with any playlist feeds kept as backups.
 * Antenna TV is MPEG-2, which browsers can't play, so tuner channels are re-encoded to H.264 by default. You can change this per playlist with the **Video** setting on its card.
-* Each TV screen watching an antenna channel uses one tuner. When all tuners are busy, the channel shows No Signal.
+* Each antenna channel being watched or recorded uses one tuner, however many screens are on it. When all tuners are busy, the channel shows No Signal.
 
 This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before. That emulated tuner offers Plex as many tuners as your Xtream accounts allow connections (when every playlist is an Xtream account), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself.
 
@@ -152,7 +170,8 @@ For streams that stutter or freeze, turn on the stream cache. TunerBox then hold
 * Default for every screen: **Setup › Settings › Stream cache** (Off, 5, 10, 20, 30 or 60 seconds).
 * One screen only (e.g. the iPad on Wi-Fi): **Menu › Stream cache** on that screen.
 * HLS sources (`.m3u8`) fill the cache almost at once, because TunerBox starts a few segments back. Plain TS streams (most Xtream providers) arrive in real time, so the first picture takes about as long as the cache size.
-* The server also reads ahead for each viewer, so a slow Wi-Fi device never makes the provider connection wait.
+* The server also reads ahead for each viewer, so a slow Wi-Fi device never makes the provider connection (or the other screens) wait.
+* A screen that tunes to a channel another screen is already on fills its cache at once: the server keeps the last few seconds of every channel being watched.
 
 ## Sleep timer and screensaver
 Like a cable box, a TV screen asks **"Are you still watching?"** after 4 hours without a button press. If nobody presses a button within 2 minutes, it turns off and stops streaming. Once a screen is off, a screensaver (a drifting clock) starts after 10 minutes. Any button wakes it and turns the TV back on.
@@ -255,7 +274,8 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 ## Notes
 * The guide refreshes when TunerBox starts (unless it was updated in the last 30 minutes), then every 12 hours (`epg_refresh_hours`) while it runs. A Gracenote block that times out is retried, and if it still fails the listings from the last refresh are kept for that time slot. Menu › **Refresh TV guide** does it right away.
 * Gracenote is a free public endpoint, not an official API. If it ever breaks, add an XMLTV source for locals instead.
-* Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default, and live TV plus a recording each use one connection.
+* Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default.
+* **One connection per channel.** Every screen, Plex and the DVR on the same channel share one provider connection, and a screen joining a channel that's already on starts at once. Different channels each use one. A screen whose playlist **Video** setting differs (say, one re-encoding to 720p) needs its own; a recording joins whatever is already running. Plex gets AAC audio when it shares with a TV.
 
 ## Development
 * Tests: `pip install pytest`, then `python -m pytest`. They use a temporary data folder, never yours, and need no ffmpeg or network.

@@ -1,5 +1,7 @@
-"""DVR: one-off and series recordings, captured with ffmpeg."""
+"""DVR: one-off and series recordings. A recording is one more reader of the channel's shared tuner
+(tuner.py), so recording what a TV is watching doesn't use a second provider connection."""
 import logging
+import queue
 import re
 import shutil
 import subprocess
@@ -8,11 +10,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db, guide
-from .streaming import NO_WINDOW, ffmpeg_bin, kill, play_args, track
+from . import config, db, guide, tuner
+from .streaming import NO_WINDOW, ffmpeg_bin
 
 log = logging.getLogger("tunerbox.dvr")
-_active = {}  # recording id -> Popen
+_active = {}  # recording id -> tuner.Subscriber
 MIN_FREE_START = 2_000_000_000      # don't start a recording with less free space than this
 MIN_FREE_RUNNING = 500_000_000      # stop running recordings (keeping what they have) below this
 MIN_KEEP = 200_000                  # smaller captures are treated as "no data"
@@ -34,12 +36,12 @@ def _safe(s):
 
 
 # ------------------------------------------------------------------ scheduling
-def schedule(number, start, stop, title="", subtitle="", descr="", episode="", rule_id=None):
+def schedule(number, start, stop, title="", subtitle="", descr="", episode="", rule_id=None, image=""):
     ch = guide.channel(number)
     name = ch["name"] if ch else str(number)
     db.run("""INSERT OR IGNORE INTO recordings(number, channel_name, title, subtitle, descr, episode,
-              start, stop, rule_id) VALUES (?,?,?,?,?,?,?,?,?)""",
-           (number, name, title or name, subtitle, descr, episode, int(start), int(stop), rule_id))
+              start, stop, rule_id, image) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+           (number, name, title or name, subtitle, descr, episode, int(start), int(stop), rule_id, image or ""))
     return db.one("SELECT * FROM recordings WHERE number=? AND start=?", (number, int(start)))
 
 
@@ -50,7 +52,7 @@ def schedule_program(number, start):
     p = db.one("SELECT * FROM programs WHERE channel=? AND start<=? AND stop>?", (ch["epg"], start, start))
     if not p:
         return None
-    return schedule(number, p["start"], p["stop"], p["title"], p["subtitle"], p["descr"], p["episode"])
+    return schedule(number, p["start"], p["stop"], p["title"], p["subtitle"], p["descr"], p["episode"], image=p["image"])
 
 
 def add_rule(title, number=None, new_only=False):
@@ -95,7 +97,7 @@ def apply_rules():
             num = r["number"] if r["number"] is not None else by_epg[p["channel"]]["number"]
             before = db.one("SELECT id FROM recordings WHERE number=? AND start=?", (num, p["start"]))
             if not before:
-                schedule(num, p["start"], p["stop"], p["title"], p["subtitle"], p["descr"], p["episode"], r["id"])
+                schedule(num, p["start"], p["stop"], p["title"], p["subtitle"], p["descr"], p["episode"], r["id"], p["image"])
                 made += 1
     return made
 
@@ -134,15 +136,17 @@ def _record(rec, streams, base: Path):
         remaining = stop_at - int(time.time())
         if remaining <= 5:
             break
-        inp, vid, aud = play_args(s["url"], s.get("video_mode") or "copy")
-        cmd = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin",
-               *inp, "-sn", "-dn", *vid, *aud, "-t", str(remaining), "-f", "mpegts", "pipe:1"]
-        with open(ts, "ab") as out:
-            p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
-                                 creationflags=NO_WINDOW)
-            _active[rec["id"]] = track(p)
-            _, e = p.communicate()
-            err = e.decode("utf-8", "ignore")[-300:]
+        try:
+            sub = tuner.join(s["url"], s.get("video_mode") or "copy", "aac", 0, any_mode=True, name=f"dvr:{rec['id']}")
+        except OSError as e:            # ffmpeg missing
+            err = str(e)
+            break
+        _active[rec["id"]] = sub
+        try:
+            _capture(sub, ts, stop_at)
+        finally:
+            sub.close()
+        err = sub.tuner.error()[-300:]
         if _active.pop(rec["id"], None) is None:
             break  # cancelled
         if int(time.time()) >= stop_at - 5:
@@ -154,6 +158,19 @@ def _record(rec, streams, base: Path):
         ts.unlink(missing_ok=True)
         return
     _finish_file(rec["id"], base, cancelled=row["status"] == "cancelled", err=err, note=row["error"] or "")
+
+
+def _capture(sub, ts: Path, stop_at):
+    """Append the tuner's stream to `ts` until stop_at, the tuner ends or the recording is stopped."""
+    with open(ts, "ab") as out:
+        while time.time() < stop_at:
+            try:
+                chunk = sub.get(timeout=1)
+            except queue.Empty:
+                continue
+            if not chunk:
+                return
+            out.write(chunk)
 
 
 def _finish_file(rec_id, base: Path, cancelled=False, err="", note=""):
@@ -189,14 +206,26 @@ def _free_bytes():
         return None
 
 
+def progress(rec_id, position, duration):
+    """Where playback of a recording got to. Near the end counts as watched (and starts over next time)."""
+    position, duration = max(0, int(position)), max(0, int(duration))
+    done = bool(duration) and position >= duration - 60
+    db.run("UPDATE recordings SET position=?, duration=?, watched=?, watched_at=? WHERE id=?",
+           (0 if done else position, duration, int(done), int(time.time()), rec_id))
+
+
+def _halt(sub):
+    if sub:
+        sub.close()
+
+
 def cancel(rec_id, delete_file=False):
     rec = db.one("SELECT * FROM recordings WHERE id=?", (rec_id,))
     if not rec:
         return
     if rec["status"] == "recording":
         db.run("UPDATE recordings SET status='cancelled' WHERE id=?", (rec_id,))
-        p = _active.pop(rec_id, None)
-        kill(p)
+        _halt(_active.pop(rec_id, None))
     elif rec["status"] == "scheduled":
         db.run("DELETE FROM recordings WHERE id=?", (rec_id,))
     elif delete_file:
@@ -212,7 +241,7 @@ def tick():
             for rid in list(_active):
                 log.warning("Disk almost full (%.1f GB free): stopping recording %s", free / 1e9, rid)
                 db.run("UPDATE recordings SET error='Stopped early: disk almost full' WHERE id=?", (rid,))
-                kill(_active.pop(rid, None))
+                _halt(_active.pop(rid, None))
     now = int(time.time())
     pad = int(config.get("dvr_pad_before", 60))
     for rec in db.rows("SELECT * FROM recordings WHERE status='scheduled' AND start-?<=? ORDER BY start", (pad, now)):
