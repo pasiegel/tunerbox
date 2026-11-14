@@ -174,6 +174,15 @@ def test_a_reader_that_falls_behind_is_dropped(fake, monkeypatch):
     b.close()
 
 
+def test_a_slow_reader_alone_on_its_tuner_is_waited_for(fake, monkeypatch):
+    monkeypatch.setattr(tuner, "QUEUE_CHUNKS", 5)
+    a = tuner.join("fake:1000:0.001:0", "copy", name="alone")
+    time.sleep(1.5)                                 # far more than 5 chunks produced meanwhile
+    assert a in a.tuner.subs                        # held the tuner back instead of being dropped
+    assert _read(a, 188 * 300)
+    a.close()
+
+
 def test_recording_shares_the_tuner_a_tv_is_on(fake, tmp_path):
     from tunerbox import dvr
     tv = tuner.join("fake:1000:0.02:0", "copy", name="tv")
