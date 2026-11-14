@@ -53,7 +53,6 @@ async function startJob(name, q = "") {
   } catch (e) { toast(e.message); }
 }
 let polling = false;
-const editing = () => !!document.querySelector(".src-edit:not(.hidden)");     // a playlist's Edit form is open: don't redraw it away
 async function pollJob() {
   if (polling) return; polling = true;
   let wasRunning = false, ticks = 0;
@@ -62,13 +61,13 @@ async function pollJob() {
     if (j.running) {
       wasRunning = true;
       // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
-      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
+      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden")) loaders.sources();
       $("job").classList.remove("hidden");
       $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
       $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
     } else {
       $("job").classList.add("hidden");
-      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
+      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && loaders[cur](); }
       break;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -242,132 +241,115 @@ $("ex-on").onclick = () => bulk(true);
 $("ex-off").onclick = () => bulk(false);
 
 // ---------------------------------------------------------------- sources
+// A playlist's card only shows how it is set up; every change is made in its Edit dialog (below), so nothing
+// changes by a stray click, such as turning On Demand off, which drops the playlist's whole movie list.
+let srcList = [];
+const VIDEO = { "": "Default", copy: "Original", h264: "H.264", roku720: "720p" };
+const srcKind = (s) => ({ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U");
+const connAuto = (s) => (s.conn_auto ? `${s.conn_auto} at a time, from your ${s.type === "hdhomerun" ? "tuner" : "provider"}` : "no limit");
+const noPass = (u) => String(u || "").replace(/(password=)[^&]+/i, "$1…");
+const hostOf = (u) => { try { return new URL(u).host; } catch (_) { return ""; } };
+// The card's settings: label, value, and a fuller explanation on hover
+function srcSettings(s) {
+  const own = +s.max_conn || 0, hd = s.type === "hdhomerun";
+  const set = [["Video", VIDEO[s.video_mode || ""] || s.video_mode, s.video_mode ? "" : "As set under Settings"],
+               [hd ? "Tuners" : "Connections", own || `Auto${s.conn_auto ? ` (${s.conn_auto})` : ""}`, own ? "Set for this playlist" : `Automatic: ${connAuto(s)}`]];
+  if (!hd) {
+    const on = s.type === "xtream" ? (s.vod_movies && s.vod_series ? "Movies & shows" : s.vod_movies ? "Movies" : s.vod_series ? "TV shows" : "")
+      : s.vod_movies ? "On" : "";
+    set.push(["On Demand", on || "Off", ""]);
+  }
+  set.push([hd ? "Channels" : "Groups", s.hidden ? `${s.hidden.toLocaleString()} hidden` : "All shown", `Pick them with ${hd ? "Channels…" : "Channel groups…"}`]);
+  if (s.epg_url) {
+    const g = hostOf(s.epg_url), same = g && g === hostOf(s.url);
+    set.push(["Guide", same ? "From provider" : g || "File", noPass(s.epg_url).replace(/(username=)[^&]+/i, "$1…")]);
+  }
+  return set.map(([k, v, tip]) => `<div${tip ? ` title="${esc(tip)}"` : ""}><dt>${k}</dt><dd class="${v === "Off" ? "muted" : ""}">${esc(v)}</dd></div>`).join("");
+}
+// the last scan: fine (green, when), failed (red, why), or not yet
+function srcStatus(s) {
+  const st = s.status || "";
+  if (st.startsWith("error")) return `<div class="src-st bad" title="${esc(st)}"><span class="dot dead"></span>${esc(st.replace(/^error:\s*/, "Scan failed: "))}</div>`;
+  if (!st) return '<div class="src-st"><span class="dot unknown"></span>Not scanned yet</div>';
+  return `<div class="src-st"><span class="dot ok"></span>Scanned${s.updated_at ? ` ${fmt(s.updated_at)}` : ""}</div>`;
+}
+const stat = (n, what) => `<div><b>${(+n || 0).toLocaleString()}</b><span>${what}</span></div>`;
 loaders.sources = async () => {
-  const list = await api("/api/sources");
-  $("src-list").innerHTML = list.length ? list.map((s) => `<div class="card" data-id="${s.id}">
-      <div class="card-head"><div class="t">${esc(s.name)} <span class="tag">${{ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U"}</span> ${s.enabled ? "" : '<span class="tag none">disabled</span>'}</div>
-        <button class="btn small" data-a="edit">Edit</button>
+  const list = srcList = await api("/api/sources");
+  $("src-list").innerHTML = list.length ? list.map((s) => {
+    const hd = s.type === "hdhomerun";
+    return `<div class="card src-card${s.enabled ? "" : " off"}" data-id="${s.id}">
+      <div class="card-head"><div class="t" title="${esc(s.name)}">${esc(s.name)}</div>
+        <span class="tag">${srcKind(s)}</span>${s.enabled ? "" : '<span class="tag none">Disabled</span>'}</div>
+      <div class="u" title="${esc(noPass(s.url))}">${esc(hostOf(s.url) || noPass(s.url))}${s.username ? ` · ${esc(s.username)}` : ""}</div>
+      ${srcStatus(s)}
+      <div class="src-stats">${stat(s.count, "channels")}${hd ? "" : stat(s.vod.movies, "movies") + stat(s.vod.series, "shows")}</div>
+      <dl class="src-set">${srcSettings(s)}</dl>
+      ${s.exclude_groups ? `<div class="muted small src-skip">Skipping groups matching <code>${esc(s.exclude_groups)}</code></div>` : ""}
+      <div class="src-foot"><button class="btn small" data-a="groups">${hd ? "Channels…" : "Channel groups…"}</button>
+        <span class="src-acts"><button class="btn small primary" data-a="edit">Edit</button>
         <button class="btn small" data-a="toggle">${s.enabled ? "Disable" : "Enable"}</button>
-        <button class="btn small danger" data-a="del">Delete</button></div>
-      <div class="u">${esc(s.url)}${s.username ? " · user " + esc(s.username) : ""}</div>
-      <form class="src-edit hidden" data-type="${s.type}">
-        <label>Name <input name="name" value="${esc(s.name)}" required></label>
-        <label>${{ xtream: "Server", hdhomerun: "Address (IP or name)" }[s.type] || "Playlist URL or file path"} <input name="url" value="${esc(s.url)}" required></label>
-        ${s.type === "xtream" ? `<label>Username <input name="username" value="${esc(s.username)}" autocomplete="off"></label>
-        <label>Password <input name="password" type="password" placeholder="${s.password ? "Unchanged" : ""}" autocomplete="new-password"></label>` : ""}
-        <div class="row"><button class="btn small primary">Save</button><button type="button" class="btn small" data-a="edit-cancel">Cancel</button>
-        <span class="muted small">A new address or login is read right away.</span></div>
-      </form>
-      <div class="muted small">${s.count} channels${s.vod.movies ? ` · ${s.vod.movies.toLocaleString()} movies` : ""}${s.vod.series ? ` · ${s.vod.series.toLocaleString()} shows` : ""} · ${esc(s.status || "not scanned yet")}${s.updated_at ? " · " + fmt(s.updated_at) : ""}</div>
-      ${s.epg_url ? `<div class="muted small">Guide: ${esc(s.epg_url.replace(/password=[^&]+/, "password=…"))}</div>` : ""}
-      <div class="row"><button class="btn small primary" data-a="groups">${s.type === "hdhomerun" ? "Channels…" : "Channel groups…"}</button>
-      <span class="muted small">${((w) => s.hidden ? `${s.hidden} ${w}${s.hidden === 1 ? "" : "s"} hidden` : `All ${w}s shown`)(s.type === "hdhomerun" ? "channel" : "group")}</span></div>
-      ${vodRows(s)}
-      <div class="row"><span class="muted small">Video:</span><select data-a="video" class="small">
-        <option value="" ${!s.video_mode ? "selected" : ""}>Default (Settings)</option>
-        <option value="copy" ${s.video_mode === "copy" ? "selected" : ""}>Original</option>
-        <option value="h264" ${s.video_mode === "h264" ? "selected" : ""}>Re-encode to H.264${s.type === "hdhomerun" ? " (needed for antenna TV)" : ""}</option>
-        <option value="roku720" ${s.video_mode === "roku720" ? "selected" : ""}>Re-encode to 720p (Roku, slow devices)</option></select></div>
-      ${connRow(s)}
-      <details class="adv"${s.exclude_groups ? " open" : ""}><summary class="muted small">Skip pattern (advanced)</summary>
-      <div class="row"><input data-f="exclude_groups" value="${esc(s.exclude_groups)}" placeholder="regex, e.g. ^(UK|AR)|XXX" style="flex:1">
-      <button class="btn small" data-a="save">Save</button></div></details></div>`).join("")
-    : '<p class="muted">No playlists yet. Add your M3U link or Xtream login below, then press <b>Scan playlists now</b>.</p>';
+        <button class="btn small ghost-danger" data-a="del" title="Delete this playlist">Delete</button></span></div></div>`;
+  }).join("")
+    : '<p class="muted">No playlists yet. Press <b>+ Add playlist</b> to add your M3U link, Xtream login or HDHomeRun tuner.</p>';
+  // the Edit dialog is open: its category counts follow (a new On Demand list being read, categories saved)
+  if (srcEditing) { srcEditing = srcList.find((x) => x.id === srcEditing.id) || srcEditing; renderSrcVod(true); }
 };
 // How many streams TunerBox opens on a playlist at once. Automatic: what an Xtream account or HDHomeRun
 // says (no limit for a plain M3U, which can't say). Set it for an M3U provider that has a limit.
-function connRow(s) {
-  const auto = s.conn_auto ? `${s.conn_auto} at a time, from your ${s.type === "hdhomerun" ? "tuner" : "provider"}` : "no limit";
+function connOptions(s) {
   const own = +s.max_conn || 0;
   // 1-10, and a larger number set some other way (backup import, API: up to 99) so it shows as set
   const opts = Array.from({ length: Math.max(10, own) }, (_, i) => i + 1).filter((n) => n <= 10 || n === own)
     .map((n) => `<option value="${n}" ${own === n ? "selected" : ""}>${n}</option>`).join("");
-  return `<div class="row"><span class="muted small">${s.type === "hdhomerun" ? "Tuners" : "Connections"}:</span><select data-a="conn" class="small">
-      <option value="0" ${own ? "" : "selected"}>Automatic (${auto})</option>${opts}</select>
-      <span class="muted small">TunerBox never opens more than this, and tells a TV what's using them.</span></div>`;
+  return `<option value="0" ${own ? "" : "selected"}>Automatic (${s.id ? connAuto(s) : "from your provider or tuner"})</option>${opts}`;
 }
-// On Demand switches on a playlist's card: movies + TV shows for an Xtream login, video files for a plain M3U
-// On Demand on a playlist's card: a row each for movies and TV shows, with its categories and its switch
-// (a plain M3U has one switch for its video files, which can be movies and episodes)
+// On Demand in the dialog: a switch each for movies and TV shows (an Xtream login), or one for the video
+// files of a plain M3U (which can be movies and episodes), with the categories and labels to pick from.
+// The categories can only be picked once On Demand is saved and the list has been read.
 function vodRows(s) {
-  if (s.type === "hdhomerun") return "";
-  const catNote = (kind) => { const [shown, all] = s.vod.cats[kind]; return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "Reading the categories…"; };
-  const btn = (kind, on) => `<button class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>${kind === "tags" ? "Languages…" : "Categories…"}</button>`;
-  const [tShown, tAll] = s.vod.tags || [0, 0];
+  const added = !!s.id;                             // false while adding a playlist
+  const cats = (kind) => (added && s.vod ? s.vod.cats[kind] : [0, 0]);
+  const catNote = (kind) => { const [shown, all] = cats(kind); return all ? (shown === all ? `All ${all} categories shown` : `${shown} of ${all} categories shown`) : "The categories are read with the list"; };
+  const btn = (kind, on) => `<button type="button" class="btn small" data-a="vodcats" data-kind="${kind}" ${on ? "" : "disabled"}>${kind === "tags" ? "Languages…" : "Categories…"}</button>`;
+  const [tShown, tAll] = (added && s.vod && s.vod.tags) || [0, 0];
   const tagNote = tAll < 2 ? "Labels like EN, DE or 4K in front of the names are read with the titles"
     : tShown === tAll ? `All ${tAll} labels shown (languages like EN and DE, and platforms like NF)` : `${tShown} of ${tAll} labels shown`;
   const tagRow = () => (s.vod_movies || s.vod_series) && tAll > 1 ? row("", "tags", "Languages and labels", tagNote, true) : "";
-  const sw = (key) => `<input type="checkbox" class="toggle" id="vod-${s.id}-${key}" data-a="vod" data-k="${key}" ${s[key] ? "checked" : ""}>`;
-  const row = (key, kind, title, note, on) => `<div class="vod-row"><label class="vod-t" for="vod-${s.id}-${key}"><b>${title}</b><small class="muted">${note}</small></label>
+  const sw = (key) => `<input type="checkbox" class="toggle" id="vod-dlg-${key}" name="${key}" ${s[key] ? "checked" : ""}>`;
+  const row = (key, kind, title, note, on) => `<div class="vod-row"><label class="vod-t" for="vod-dlg-${key}"><b>${title}</b><small class="muted">${note}</small></label>
       ${kind ? btn(kind, on) : "<span></span>"}${key ? sw(key) : "<span></span>"}</div>`;
+  const hint = '<p class="muted small hidden" id="src-vod-hint"></p>';
   if (s.type === "xtream") {
-    return `<div class="vod-box"><div class="vod-h">On Demand</div>
-      ${row("vod_movies", "movie", "Movies", s.vod_movies ? catNote("movie") : "Off", s.vod_movies)}
-      ${row("vod_series", "series", "TV shows", s.vod_series ? catNote("series") : "Off", s.vod_series)}
-      ${tagRow()}</div>`;
+    return `<div class="vod-box">
+      ${row("vod_movies", "movie", "Movies", s.vod_movies ? catNote("movie") : "Off", s.vod_movies && added)}
+      ${row("vod_series", "series", "TV shows", s.vod_series ? catNote("series") : "Off", s.vod_series && added)}
+      ${tagRow()}${hint}</div>`;
   }
-  const n = s.vod.files;
-  return `<div class="vod-box"><div class="vod-h">On Demand</div>
+  const n = added && s.vod ? s.vod.files : 0;
+  return `<div class="vod-box">
     ${row("vod_movies", "", "Movie and episode files", `Entries ending in .mp4 or .mkv become titles instead of channels${n ? ` (${n.toLocaleString()} found)` : ""}`)}
-    ${s.vod_movies ? row("", "movie", "Movies", catNote("movie"), true) + row("", "series", "TV shows", catNote("series"), true) + tagRow() : ""}</div>`;
+    ${s.vod_movies && added ? row("", "movie", "Movies", catNote("movie"), true) + row("", "series", "TV shows", catNote("series"), true) + tagRow() : ""}${hint}</div>`;
 }
-$("src-list").addEventListener("change", async (e) => {
-  if (e.target.dataset.a === "vod") {
-    const on = e.target.checked;
-    let r;
-    try { r = await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { [e.target.dataset.k]: on ? 1 : 0 } }); }
-    catch (err) { toast(err.message); e.target.checked = !on; return; }
-    toast(!on ? "On Demand turned off for this playlist" : r.job ? "Reading the list from your provider: the categories show up here in a moment…" : "Saved");
-    if (r.job) pollJob();
-    loaders.sources();
-    return;
-  }
-  if (e.target.dataset.a === "conn") {
-    try { await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { max_conn: +e.target.value } }); }
-    catch (err) { toast(err.message); return; }
-    toast("Saved: applies from the next channel change");
-    return;
-  }
-  if (e.target.dataset.a !== "video") return;
-  await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { video_mode: e.target.value } });
-  toast("Saved: applies from the next channel change");
-});
 $("src-list").addEventListener("click", async (e) => {
   const b = e.target.closest("button"); if (!b) return;
   const card = b.closest(".card"), id = card.dataset.id;
+  if (b.dataset.a === "edit") { openSrcDlg(srcList.find((s) => s.id === +id)); return; }
+  if (b.dataset.a === "groups") { openGroups(+id); return; }
   if (b.dataset.a === "del" && confirm("Delete this playlist?")) await api(`/api/sources/${id}`, { method: "DELETE" });
   if (b.dataset.a === "toggle") await api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: b.textContent === "Enable" ? 1 : 0 } });
-  if (b.dataset.a === "edit" || b.dataset.a === "edit-cancel") {
-    const f = card.querySelector(".src-edit"), open = b.dataset.a === "edit" && f.classList.contains("hidden");
-    if (!open) f.reset();
-    f.classList.toggle("hidden", !open);
-    if (open) f.elements.name.focus();
-    return;
-  }
-  if (b.closest(".src-edit")) return;             // the form's Save: handled by its submit
-  if (b.dataset.a === "groups") { openGroups(+id); return; }
-  if (b.dataset.a === "vodcats") { openGroups(+id, b.dataset.kind); return; }
-  if (b.dataset.a === "save") { await api(`/api/sources/${id}`, { method: "PATCH", body: { exclude_groups: card.querySelector("[data-f]").value } }); toast("Saved - rescan to apply"); }
   loaders.sources();
-});
-$("src-list").addEventListener("submit", async (e) => {
-  const f = e.target.closest(".src-edit"); if (!f) return;
-  e.preventDefault();
-  const body = Object.fromEntries([...f.elements].filter((el) => el.name).map((el) => [el.name, el.value.trim()]));
-  if (!body.password) delete body.password;       // blank: keep the saved one
-  let r;
-  try { r = await api(`/api/sources/${f.closest(".card").dataset.id}`, { method: "PATCH", body }); } catch (err) { toast(err.message); return; }
-  toast(r.job === "scan" ? "Saved. Reading the playlist again…" : "Saved");
-  loaders.sources();
-  if (r.job) pollJob();
 });
 const srcType = () => {
   const t = $("src-type").value, xt = t === "xtream", hd = t === "hdhomerun";
   document.querySelectorAll(".xt").forEach((el) => el.classList.toggle("hidden", !xt));
-  document.querySelectorAll(".hd").forEach((el) => el.classList.toggle("hidden", !hd));
+  document.querySelectorAll(".hd").forEach((el) => el.classList.toggle("hidden", !hd || !!srcEditing));
   document.querySelectorAll(".hd-hide").forEach((el) => el.classList.toggle("hidden", hd));
   $("src-url-label").textContent = xt ? "Server URL (http://host:port)" : hd ? "Tuner address (IP, e.g. 192.168.1.40)" : "Playlist URL or file path";
-  $("src-form").url.placeholder = hd ? "192.168.1.40" : "https://… or C:\\path\\list.m3u";
+  $("src-form").url.placeholder = hd ? "192.168.1.40" : xt ? "http://host:port" : "https://… or C:\\path\\list.m3u";
+  $("src-conn-label").textContent = hd ? "Tuners" : "Connections";
+  $("src-video").options[2].textContent = `Re-encode to H.264${hd ? " (needed for antenna TV)" : ""}`;
+  renderSrcVod(true);
 };
 $("hd-find").onclick = async () => {
   $("hd-found").textContent = "Looking…";
@@ -385,12 +367,105 @@ const pickTuner = (b) => {
 $("hd-found").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-ip]"); if (b) pickTuner(b);
 });
-$("src-type").onchange = srcType; srcType();
+$("src-type").onchange = srcType;
+
+// Adding or editing a playlist happens in one dialog, and everything in it is saved together. Editing can't
+// change the type (an M3U can't turn into an Xtream login), and a blank password keeps the saved one.
+let srcEditing = null;             // the playlist being edited, null = adding a new one
+const vodKeys = (t) => (t === "xtream" ? ["vod_movies", "vod_series"] : t === "hdhomerun" ? [] : ["vod_movies"]);
+// keep = keep what was switched in the dialog (redrawn after a type change or new category counts)
+function renderSrcVod(keep) {
+  const t = $("src-type").value, box = $("src-vod");
+  const now = keep ? Object.fromEntries([...box.querySelectorAll("input.toggle")].map((el) => [el.name, el.checked])) : {};
+  if (t === "hdhomerun") { box.innerHTML = ""; return; }
+  const base = srcEditing || { id: 0, type: t, vod_movies: 0, vod_series: 0 };
+  box.innerHTML = vodRows({ ...base, type: t });
+  for (const [k, on] of Object.entries(now)) { const el = box.querySelector(`input[name="${k}"]`); if (el) el.checked = on; }
+  vodHint();
+}
+// what saving will do to On Demand, said before it happens
+function vodHint() {
+  const el = $("src-vod-hint"); if (!el) return;
+  const saved = srcEditing || {}, sw = [...$("src-vod").querySelectorAll("input.toggle")];
+  const on = sw.some((x) => x.checked && !saved[x.name]), off = sw.some((x) => !x.checked && saved[x.name]);
+  el.textContent = off ? "Saving turns this off and removes these titles from On Demand. Where you stopped and My List are kept."
+    : on ? `When you save, the list is read from your ${$("src-type").value === "xtream" ? "provider" : "playlist"}. Its categories can be picked here afterwards.` : "";
+  el.classList.toggle("hidden", !on && !off);
+}
+$("src-vod").addEventListener("change", vodHint);
+$("src-vod").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-a=vodcats]");
+  if (b && srcEditing) openGroups(srcEditing.id, b.dataset.kind);       // opens over this dialog
+});
+function openSrcDlg(src) {
+  const f = $("src-form");
+  srcEditing = src || null;
+  f.reset(); $("hd-found").textContent = "";
+  if (src) {
+    for (const k of ["type", "name", "url", "username", "xtream_format", "exclude_groups", "video_mode"]) f.elements[k].value = src[k] || "";
+    if (!src.xtream_format) f.elements.xtream_format.value = "ts";
+  }
+  $("src-conn").innerHTML = connOptions(src || { id: 0 });
+  f.elements.type.disabled = !!src;
+  f.elements.password.placeholder = src && src.password ? "Unchanged" : "";
+  $("src-dlg-title").textContent = src ? `Edit ${src.name}` : "Add a playlist";
+  $("src-dlg-sub").textContent = src ? `${srcKind(src)} · nothing changes until you press Save` : "";
+  $("src-save").textContent = src ? "Save" : "Add playlist";
+  $("src-tip").classList.toggle("hidden", !!src);
+  $("src-vod").innerHTML = "";
+  srcType();
+  $("src-dlg").classList.remove("hidden");
+  $("src-dlg").querySelector(".modal-box").scrollTop = 0;
+  (src ? f.elements.name : f.elements.type).focus();
+}
+function closeSrcDlg() { $("src-dlg").classList.add("hidden"); srcEditing = null; }
+$("src-add").onclick = () => openSrcDlg();
+$("src-dlg-close").onclick = closeSrcDlg;
+$("src-cancel").onclick = closeSrcDlg;
+// Escape closes the top window only: the categories list opened over this dialog first
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("groups").classList.contains("hidden") && !$("src-dlg").classList.contains("hidden")) closeSrcDlg();
+});
+srcType();
 $("src-form").onsubmit = async (e) => {
   e.preventDefault();
-  const data = Object.fromEntries(new FormData(e.target));
-  try { await api("/api/sources", { method: "POST", body: data }); e.target.reset(); srcType(); $("hd-found").textContent = ""; toast("Added - scanning…"); loaders.sources(); startJob("scan"); }
-  catch (err) { toast(err.message); }
+  const f = e.target, data = Object.fromEntries(new FormData(f));
+  const t = srcEditing ? srcEditing.type : data.type, xt = t === "xtream", hd = t === "hdhomerun";
+  const vod = Object.fromEntries(vodKeys(t).map((k) => [k, f.elements[k] && f.elements[k].checked ? 1 : 0]));
+  const max_conn = +data.max_conn || 0;
+  if (!srcEditing) {
+    let r;
+    try { r = await api("/api/sources", { method: "POST", body: { ...data, max_conn: undefined } }); } catch (err) { toast(err.message); return; }
+    closeSrcDlg(); toast("Added - scanning…");
+    await startJob("scan");
+    // On Demand and connections are set once it exists: the On Demand list is read after the scan
+    const extra = { ...(max_conn ? { max_conn } : {}), ...Object.fromEntries(Object.entries(vod).filter(([, on]) => on)) };
+    if (Object.keys(extra).length) {
+      try { await api(`/api/sources/${r.id}`, { method: "PATCH", body: extra }); } catch (err) { toast(err.message); }
+    }
+    loaders.sources();
+    return;
+  }
+  const src = srcEditing;
+  const turnedOff = Object.entries(vod).filter(([k, on]) => !on && src[k]);
+  if (turnedOff.length && !confirm(`Turn off On Demand ${xt ? (turnedOff.length === 2 ? "movies and TV shows" : turnedOff[0][0] === "vod_movies" ? "movies" : "TV shows") : "video files"} for ${src.name}?\n\n`
+      + `Its titles are removed from On Demand${xt ? ", and turning it back on reads the whole list from your provider again" : ""}. Where you stopped and My List are kept.`)) return;
+  const body = { name: data.name.trim(), url: data.url.trim(), video_mode: data.video_mode, max_conn, ...vod };
+  if (xt) {
+    body.username = data.username.trim(); body.xtream_format = data.xtream_format;
+    if (data.password.trim()) body.password = data.password.trim();      // blank: keep the saved one
+  }
+  if (!hd) body.exclude_groups = data.exclude_groups.trim();
+  let r;
+  try { r = await api(`/api/sources/${src.id}`, { method: "PATCH", body }); } catch (err) { toast(err.message); return; }
+  closeSrcDlg();
+  const skip = !hd && body.exclude_groups !== (src.exclude_groups || "");
+  toast(r.job === "scan" ? "Saved. Reading the playlist again…"
+    : r.job === "vod" ? "Saved. Reading On Demand from your provider: the categories show up in Edit in a moment…"
+    : r.job === "refresh" ? "Saved. Reading the playlist again for On Demand…"
+    : skip ? "Saved - scan playlists to apply the skip pattern" : "Saved");
+  loaders.sources();
+  if (r.job) pollJob();
 };
 
 // export is a plain download link; a phone that isn't paired gets a message instead of an error page

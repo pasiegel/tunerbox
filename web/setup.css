@@ -55,6 +55,38 @@ table.grid { width: 100%; border-collapse: collapse; }
 .modal { position: fixed; inset: 0; background: #000a; z-index: 20; display: flex; align-items: center; justify-content: center; }
 .modal-box { width: min(1200px, 96vw); height: min(780px, 92vh); background: var(--panel); border: 2px solid #5b82d6; border-radius: 10px; display: flex; flex-direction: column; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+/* a small dialog sized to its form (adding or editing a playlist) */
+.modal-box.fit { width: min(760px, 96vw); height: auto; max-height: 92vh; overflow: auto; }
+.modal .form { border: 0; border-radius: 0 0 10px 10px; background: transparent; }
+.dlg-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 12px; }
+/* a section title with its main action on the right (Playlists: + Add playlist) */
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 22px 0 8px; }
+.sec-head h3 { margin: 0; }
+.nw { white-space: nowrap; }
+/* playlist cards: name and type, where from, last scan, counts, settings, then the actions */
+.src-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
+.src-card .card-head .t { font-size: 17px; }
+.src-card .u { margin: -6px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
+.src-card.off > :not(.src-foot) { opacity: .5; }
+.src-st { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); min-width: 0; }
+.src-st.bad { color: #ff8a95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-stats { display: flex; gap: 28px; }
+.src-stats div { display: flex; flex-direction: column; }
+.src-stats b { font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.src-stats span { font-size: 12px; color: var(--dim); }
+.src-set { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px 14px; margin: 0; padding: 10px 12px; background: #0a1a3f; border-radius: 6px; }
+.src-set dt { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.src-set dd { margin: 2px 0 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-skip code { word-break: break-all; }
+.src-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
+.src-acts { display: flex; gap: 6px; margin-left: auto; }
+.btn.ghost-danger { background: transparent; border-color: #a52030; color: #ff8a95; }
+.btn.ghost-danger:hover { background: #7a1520; color: #fff; filter: none; }
+/* the playlist dialog's sections */
+.dlg-sec { font-weight: 700; color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding-top: 10px; border-top: 1px solid var(--line); }
+.dlg-sec:first-child { padding-top: 0; border-top: 0; }
+.dlg-note { margin: -4px 0 0; }
+#src-vod-hint { grid-column: 1 / -1; margin: 0; }
 .pk-body { flex: 1; display: flex; min-height: 0; }
 .pk-left { flex: 1; display: flex; flex-direction: column; padding: 12px; gap: 8px; min-width: 0; }
 .pk-right { width: 42%; padding: 12px; border-left: 1px solid var(--line); }
@@ -85,8 +117,6 @@ input.numedit { width: 80px; }
 #gr-body tr.off td { color: var(--dim); }
 #gr-body tr.off td:nth-child(2) { text-decoration: line-through; }
 .gr-foot { display: flex; gap: 10px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); }
-.card details.adv { margin-top: 8px; }
-.card details.adv summary { cursor: pointer; }
 .gr-sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
 
 /* phones */
@@ -208,8 +238,7 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 /* On Demand switches on a playlist card */
 .card-head { display: flex; align-items: center; gap: 6px; }
 .card-head .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vod-box { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto auto; gap: 8px 12px; align-items: center; }
-.vod-h { grid-column: 1 / -1; font-weight: 700; color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.vod-box { display: grid; grid-template-columns: 1fr auto auto; gap: 8px 12px; align-items: center; }
 .vod-row { display: contents; }
 .vod-t { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
 .vod-t small { font-size: 12px; }
@@ -221,7 +250,3 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 .tn-meter i { display: block; height: 100%; background: var(--ok); }
 .tn-card.full { border-color: var(--warn); } .tn-card.full .tn-meter i { background: var(--warn); }
 
-/* a playlist card's Edit form */
-.src-edit { display: grid; gap: 8px; margin: 10px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
-.src-edit label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
-.src-edit input { width: 100%; box-sizing: border-box; }
