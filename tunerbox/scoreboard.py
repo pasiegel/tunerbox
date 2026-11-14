@@ -39,6 +39,9 @@ LEAGUES = {
     "ligamx": ("Liga MX", "Liga MX", "Soccer", "soccer/mex.1", {}),
 }
 
+# What the TV and phone head a game with, where the Settings name is longer than needed
+HEADING = {"ncaab": "College Basketball"}
+
 FULL_EVERY = 6 * 3600     # all three days
 BUSY_EVERY = 5 * 60       # today only, while a game is on or about to start
 IDLE_EVERY = 30 * 60
@@ -342,5 +345,6 @@ def public(ev):
     score = ""
     if ev["state"] != "pre" and ev["home"]["score"] != "" and ev["away"]["score"] != "":
         score = f"{ev['away']['abbr']} {ev['away']['score']}, {ev['home']['abbr']} {ev['home']['score']}"
-    return {"id": ev["id"], "league": tag, "league_name": name, "sport": sport, "name": title(ev),
+    return {"id": ev["id"], "league": tag, "league_name": name, "heading": HEADING.get(ev["league"], name),
+            "sport": sport, "name": title(ev),
             "state": ev["state"], "detail": ev["detail"], "score": score, "on": ev["on"]}

@@ -163,6 +163,7 @@ def test_scoreboard_games_in_overview():
     assert (nfl["is_live"], nfl["sport"], nfl["event"]["score"]) == (1, "Football", "DAL 14, PHI 21")
     assert d["on_now"][0]["stop"] > now
     assert d["on_now"][2]["feed"]["key"] == "f1"
+    assert (nfl["heading"], nfl["matchup"]) == ("NFL", "Dallas Cowboys at Philadelphia Eagles")
     assert (nfl["feed"]["key"], nfl["feed"]["kind"]) == ("f2", "ppv")    # on channel 5, and on a PPV feed as a second choice
     # every channel and feed that has the game is offered; the league's own feed group comes first
     assert [c["number"] for c in nfl["also"]] == [6] and [f["key"] for f in nfl["feeds"]] == ["f2", "f3"]
@@ -182,6 +183,20 @@ def test_scoreboard_games_in_overview():
     config.update({"sports_leagues": []})                            # off: the guide alone, as before
     d = sports.overview()
     assert [(p["ch"]["number"], "event" in p) for p in d["on_now"]] == [(6, False)]
+
+
+_EV = {"name": "Iona Gaels at Hofstra Pride", "league_name": "Men's College Basketball", "heading": "College Basketball"}
+
+
+@pytest.mark.parametrize("title, subtitle, event, want", [
+    ("Baloncesto Universitario", "Iona vs. Hofstra", _EV, ("College Basketball", "Iona Gaels at Hofstra Pride")),
+    ("Iona Gaels at Hofstra Pride", "Men's College Basketball", _EV, ("College Basketball", "Iona Gaels at Hofstra Pride")),
+    ("College Basketball", "NCAA Basketball", _EV, ("College Basketball", "Iona Gaels at Hofstra Pride")),
+    ("College Basketball", "ManningCast", _EV, ("College Basketball", "Iona Gaels at Hofstra Pride (ManningCast)")),
+    ("NHL Hockey", "Bruins at Red Wings", None, ("NHL Hockey", "Bruins at Red Wings")),     # no scoreboard game: as listed
+])
+def test_heading(title, subtitle, event, want):
+    assert sports.heading({"title": title, "subtitle": subtitle, "event": event}) == want
 
 
 def test_league_setting_is_cleaned():

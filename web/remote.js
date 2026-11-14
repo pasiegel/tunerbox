@@ -183,7 +183,8 @@ async function loadSports() {
       // every channel showing the game and every event feed named after it. The guide can't tell
       // whether a channel really has it and most feeds are never checked, so with several: ask.
       const feeds = p.feeds || (p.feed ? [p.feed] : []), fb = feeds[0] && feedRow(feeds[0]).cmd.feed;
-      const title = p.title + (p.ch && p.event && p.subtitle ? `: ${p.subtitle}` : "");
+      // a scoreboard game is just its teams ("Iona Gaels at Hofstra Pride"), the rest as the guide lists it
+      const title = (p.event && p.matchup) || p.title + (p.ch && p.event && p.subtitle ? `: ${p.subtitle}` : "");
       const chans = (p.ch ? [p.ch, ...(p.also || [])] : []).map((c) => ({
         title: `${c.number} ${c.label || c.name}`, sub: title, logo: c.logo, badge: "CH",
         cmd: { type: "tune", number: c.number, ...(fb ? { feed: fb, until: p.stop } : {}) } }));      // no signal: the TV tries the first feed

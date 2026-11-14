@@ -307,6 +307,25 @@ def _sports_channels(allc):
     return _sc_cache["list"]
 
 
+_WORD = re.compile(r"[a-z0-9]+")
+_FILLER = {"at", "vs", "v", "the", "of", "and", "live"}
+
+
+def heading(p):
+    """(heading, matchup) to show for a game. One the scoreboard knows is headed by its league
+    ("College Basketball") over its matchup, whatever the guide or feed calls it. A guide subtitle
+    that says something else (an alternate broadcast: "ManningCast", "en Espanol") is kept after it."""
+    e = p.get("event")
+    if not e:
+        return p["title"], p.get("subtitle") or ""
+    sub = (p.get("subtitle") or "").strip()
+    teams = set(_WORD.findall(e["name"].lower())) - _FILLER
+    words = set(_WORD.findall(sub.lower())) - _FILLER
+    # the matchup again, or the league/sport again ("Men's College Basketball", "NCAA Football")
+    extra = sub and not (words & teams) and sub.lower() != e["league_name"].lower() and not sport_type({"title": sub})
+    return e.get("heading") or e["league_name"], f"{e['name']} ({sub})" if extra else e["name"]
+
+
 def _ch_num(p):
     return p["ch"]["number"] if p["ch"] else 10 ** 9
 
@@ -329,11 +348,10 @@ def _games(now, later=True):
     progs += _game_items(evs, taken, now, finder)
     on_now = [p for p in progs if p["start"] <= now]
     upcoming = sorted((p for p in progs if p["start"] > now), key=lambda p: (p["start"], _ch_num(p)))[:300]
-    for p in progs:
-        if p.get("event"):
-            p["sport"] = p["event"]["sport"]
-    for p in on_now:
-        p.setdefault("sport", sport_type(p))
+    for p in on_now + upcoming:
+        e = p.get("event")
+        p["sport"] = e["sport"] if e else sport_type(p)
+        p["heading"], p["matchup"] = heading(p)
     # games nothing here carries go last. Then LIVE broadcasts first, then the rest; within each:
     # earliest start, sport (unknown last), name
     on_now.sort(key=lambda p: (not (p["ch"] or p.get("feed")), not p["is_live"], p["start"], not p["sport"], p["sport"],

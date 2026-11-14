@@ -207,12 +207,25 @@ function closeSports() {
 const spCounts = () => SP_TABS.map(([, , key]) => (SP.data && SP.data[key] ? SP.data[key].length : null));
 const ago = (t) => { const m = Math.round((now() - t) / 60); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
 
+const SPORT_ICONS = {
+  Football: "🏈", Basketball: "🏀", Baseball: "⚾", Softball: "🥎", Hockey: "🏒", Soccer: "⚽", Golf: "⛳",
+  Tennis: "🎾", Motorsports: "🏁", MMA: "🥋", Boxing: "🥊", Wrestling: "🤼", Volleyball: "🏐", Lacrosse: "🥍",
+  Rugby: "🏉", Cricket: "🏏", "Horse Racing": "🏇", Cycling: "🚴", "Track & Field": "🏃", Skiing: "⛷️",
+  "Figure Skating": "⛸️", Gymnastics: "🤸", Swimming: "🏊", Bowling: "🎳", Darts: "🎯", Billiards: "🎱",
+  Rodeo: "🤠", Curling: "🥌", Poker: "🃏",
+};
+const sportEmoji = (p) => SPORT_ICONS[p.sport] || "";
+const sportIcon = (p) => { const i = sportEmoji(p); return i ? `<span class="sp-ic" aria-hidden="true">${i}</span>` : ""; };
+// what a game is headed with: the server's league heading and matchup (sports.heading). A phone has
+// no room for both, so a scoreboard game is just its teams there (the icon still says the sport).
+const spHeading = (p) => (isPhone() && p.event && p.matchup ? [p.matchup, ""] : [p.heading || p.title, p.matchup ?? p.subtitle ?? ""]);
 // A row of On Now / Coming Up. Games from the scoreboard (p.event) carry a score, and may have no
 // guide listing: then they play from an event feed (p.feed), or nothing here carries them.
 function spGame(p, badge, until) {
   const e = p.event, score = e && [e.score, e.detail].filter(Boolean).join(" · ");
+  const [t, s] = spHeading(p);
   // title, matchup and score are separate pieces, so a phone can stack them (tv.css: li.game)
-  const html = `${badge}<span class="sp-main"><span class="sp-t">${esc(p.title)}</span>${p.subtitle ? `<small class="sp-s">${esc(p.subtitle)}</small>` : ""}</span>`
+  const html = `${badge}<span class="sp-main"><span class="sp-t">${sportIcon(p)}${esc(t)}</span>${s ? `<small class="sp-s">${esc(s)}</small>` : ""}</span>`
     + (score ? `<small class="score">${esc(score)}</small>` : "");
   const cls = "game";
   const chans = gameChans(p).length, feeds = gameFeeds(p), more = chans + feeds.length - 1;

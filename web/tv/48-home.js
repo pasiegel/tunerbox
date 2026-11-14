@@ -121,7 +121,9 @@ function hmTile(it, r, i) {
     const p = it.p, e = p.event, score = e && [e.score, e.detail].filter(Boolean).join(" · ");
     pic = p.ch && p.image ? `/api/art/${p.ch.number}/${p.start}` : "";
     live = !!p.is_live; badge = live ? "LIVE" : p.ch ? p.ch.number : "FEED";
-    title = p.title; sub = score || p.subtitle || (p.ch ? p.ch.label || p.ch.name : "Event feed");
+    const [t, s] = spHeading(p);
+    title = [sportEmoji(p), t].filter(Boolean).join(" ");
+    sub = [s, score].filter(Boolean).join(" · ") || (p.ch ? p.ch.label || p.ch.name : "Event feed");
     pct = hmPct(p.start, p.stop); tone = p.title;
   } else {            // sched (a recording to come) / remind
     pic = it.t === "sched" && it.art ? `/api/recordings/${it.id}/art` : `/api/art/${it.number}/${it.start}`;
@@ -183,7 +185,9 @@ function homeInfo(it) {
     desc = it.descr || "";
   } else if (it.t === "game") {
     const p = it.p, e = p.event;
-    title = p.title; sub = (e && [e.score, e.detail].filter(Boolean).join(" · ")) || p.subtitle || "";
+    const [t, s] = spHeading(p);
+    title = [sportEmoji(p), t].filter(Boolean).join(" ");
+    sub = [s, e && e.score, e && e.detail].filter(Boolean).join("  ·  ");
     meta = [p.ch ? `${p.ch.number} ${p.ch.label || p.ch.name}` : "Event feed", `until ${fmtTime(p.stop)}`].join("  ·  ");
     desc = p.descr || "";
   } else {
