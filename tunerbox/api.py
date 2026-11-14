@@ -273,6 +273,23 @@ def api_sports_leagues():
     return scoreboard.league_list()
 
 
+@app.get("/api/sports/teams")
+def api_sports_teams(league: str):
+    """Every team of a league, for Settings › Favorite teams."""
+    if league not in scoreboard.LEAGUES:
+        raise HTTPException(404, "Unknown league")
+    try:
+        return scoreboard.teams(league)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Couldn't get the teams from ESPN: {e}")
+
+
+@app.get("/api/sports/alerts")
+def api_sports_alerts():
+    """Favorite teams' games on now or starting soon; each TV screen pops one up when it starts."""
+    return sports.favorite_alerts()
+
+
 @app.get("/api/sports/group")
 def api_sports_group(name: str):
     g = sports.group_feeds(name)
@@ -614,12 +631,13 @@ def api_save_settings(request: Request, data: dict = Body(...)):
         raise HTTPException(400, str(e))
     before = (config.get("gracenote") or {}).get("lineup_id") or ""
     leagues = scoreboard.selected()
+    fav_teams = config.get("sports_teams")
     adult = config.get("vod_show_adult")
     config.update(data)
     if config.get("vod_show_adult") != adult:
         jobs.vod_scan()             # adult titles are left out (or kept) while the lists are read
-    if scoreboard.selected() != leagues:
-        scoreboard.tick(force=True)     # fetch the newly picked leagues now, not at the next refresh
+    if scoreboard.selected() != leagues or config.get("sports_teams") != fav_teams:
+        scoreboard.tick(force=True)     # fetch the newly picked leagues (and teams' games) now, not at the next refresh
     after = (config.get("gracenote") or {}).get("lineup_id") or ""
     if before and after != before:
         # a different provider has different channel numbers: drop the old ones (your

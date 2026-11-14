@@ -732,6 +732,70 @@ $("league-grid").addEventListener("change", () => {      // runs before the form
   syncLeagues();
 });
 
+// Favorite teams: picked by sport, then league, from ESPN's team lists. Saved as the hidden
+// sports_teams field ("nfl:21,ncaaf:333"), like the leagues above.
+const teamCache = {};          // league key -> [{id, name, abbr, logo}]
+const TEAM_SHOW = 200;         // a college league has hundreds of teams: more than this needs the filter
+const favField = () => $("set-form").elements.sports_teams;
+const favKeys = () => favField().value.split(",").filter(Boolean);
+async function leagueTeams(key) {
+  if (!teamCache[key]) teamCache[key] = await api(`/api/sports/teams?league=${encodeURIComponent(key)}`);
+  return teamCache[key];
+}
+const teamLogo = (t) => (t && t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : "");
+function setFavs(keys) {
+  favField().value = [...new Set(keys)].sort().join(",");
+  renderFavs(); renderTeamList(); syncSettings();
+}
+function renderFavs() {
+  const keys = favKeys(), tag = (lg) => (leagueList || []).find((l) => l.key === lg)?.name || lg.toUpperCase();
+  $("team-count").innerHTML = keys.length ? `<b>${keys.length}</b> selected` : "None";
+  $("fav-teams").innerHTML = keys.map((k) => {
+    const [lg, id] = k.split(":"), t = (teamCache[lg] || []).find((x) => x.id === id);
+    return `<button type="button" class="fav-team" data-k="${esc(k)}" aria-label="Remove ${esc(t ? t.name : k)}">${teamLogo(t)}<span>${esc(t ? t.name : `Team ${id}`)}</span><small>${esc(tag(lg))}</small><span class="x" aria-hidden="true">✕</span></button>`;
+  }).join("");
+}
+async function renderTeamList() {
+  const lg = $("team-league").value, box = $("team-list");
+  if (!lg) { box.innerHTML = ""; return; }
+  let teams;
+  try { teams = await leagueTeams(lg); } catch (e) { box.innerHTML = `<span class="note">${esc(e.message)}</span>`; return; }
+  if ($("team-league").value !== lg) return;          // changed while loading
+  const q = $("team-filter").value.trim().toLowerCase(), want = new Set(favKeys());
+  const hits = teams.filter((t) => !q || t.name.toLowerCase().includes(q) || t.abbr.toLowerCase() === q);
+  const shown = hits.slice(0, TEAM_SHOW);
+  box.innerHTML = shown.map((t) => `<label class="chip"><input type="checkbox" value="${esc(`${lg}:${t.id}`)}"${want.has(`${lg}:${t.id}`) ? " checked" : ""}><span>${teamLogo(t)}${esc(t.name)}</span></label>`).join("")
+    + (!hits.length ? `<span class="note">No team matches “${esc(q)}”.</span>`
+       : hits.length > shown.length ? `<span class="note">${hits.length - shown.length} more · type part of a name to find them</span>` : "");
+}
+function fillTeamLeagues() {
+  const sport = $("team-sport").value, ls = (leagueList || []).filter((l) => l.sport === sport);
+  $("team-league").innerHTML = ls.map((l) => `<option value="${esc(l.key)}">${esc(l.name)}</option>`).join("");
+  $("team-league").classList.toggle("hidden", ls.length < 2);
+  $("team-filter").value = "";
+  renderTeamList();
+}
+async function loadTeams() {
+  if (!$("team-sport").options.length && leagueList) {
+    $("team-sport").innerHTML = [...new Set(leagueList.map((l) => l.sport))].map((s) => `<option>${esc(s)}</option>`).join("");
+    fillTeamLeagues();
+  }
+  renderFavs();
+  // the names of teams already picked come from their leagues' lists
+  await Promise.all([...new Set(favKeys().map((k) => k.split(":")[0]))].map((lg) => leagueTeams(lg).catch(() => null)));
+  renderFavs();
+}
+$("team-sport").addEventListener("change", (e) => { e.stopPropagation(); fillTeamLeagues(); });
+$("team-league").addEventListener("change", (e) => { e.stopPropagation(); $("team-filter").value = ""; renderTeamList(); });
+$("team-filter").addEventListener("input", (e) => { e.stopPropagation(); renderTeamList(); });
+$("team-list").addEventListener("change", (e) => {
+  const b = e.target.closest("input"); if (!b) return;
+  setFavs(b.checked ? [...favKeys(), b.value] : favKeys().filter((k) => k !== b.value));
+});
+$("fav-teams").addEventListener("click", (e) => {
+  const b = e.target.closest(".fav-team"); if (b) setFavs(favKeys().filter((k) => k !== b.dataset.k));
+});
+
 loaders.settings = async () => {
   settings = await api("/api/settings");
   const f = $("set-form");
@@ -746,6 +810,7 @@ loaders.settings = async () => {
     el.value = String(shown);
   }
   try { await loadLeagues(); } catch (e) { $("league-grid").textContent = e.message; }
+  loadTeams();
   rememberSaved(); syncSettings();
   $("u-m3u").textContent = location.origin + "/playlist.m3u";
   $("u-epg").textContent = location.origin + "/epg.xml";

@@ -352,11 +352,36 @@ def _games(now, later=True):
         e = p.get("event")
         p["sport"] = e["sport"] if e else sport_type(p)
         p["heading"], p["matchup"] = heading(p)
-    # games nothing here carries go last. Then LIVE broadcasts first, then the rest; within each:
-    # earliest start, sport (unknown last), name
-    on_now.sort(key=lambda p: (not (p["ch"] or p.get("feed")), not p["is_live"], p["start"], not p["sport"], p["sport"],
-                               _natural(p["title"]), _ch_num(p)))
+    # favorite teams' games first (Settings › Favorite teams), then games nothing here carries go
+    # last. Then LIVE broadcasts first, then the rest; within each: earliest start, sport (unknown last), name
+    on_now.sort(key=lambda p: (not _fav(p), not (p["ch"] or p.get("feed")), not p["is_live"], p["start"],
+                               not p["sport"], p["sport"], _natural(p["title"]), _ch_num(p)))
     return on_now, upcoming
+
+
+def _fav(p):
+    return bool(p.get("event") and p["event"].get("fav"))
+
+
+ALERT_AHEAD = 6 * 3600          # favorite-team games starting within this long are sent to the TV
+_alerts = {"t": 0, "sig": None, "list": []}
+
+
+def favorite_alerts(now=None):
+    """Games of the favorite teams that are on now or start soon, for the TV's pop-up (like a
+    reminder, but nobody has to set it). Each is the Sports screen's row for the game, so the TV
+    can offer the same channels and feeds. Worked out again every two minutes at most."""
+    now = int(now or time.time())
+    sig = (tuple(sorted(config.get("sports_teams") or [])), db.get_meta("sports_quick", ""), db.get_meta("epg_updated", ""))
+    if not sig[0]:
+        return []
+    if _alerts["sig"] == sig and now - _alerts["t"] < 120:
+        return _alerts["list"]
+    on_now, upcoming = _games(now)
+    out = [p for p in on_now + upcoming
+           if _fav(p) and p["start"] < now + ALERT_AHEAD and p["event"]["state"] != "post" and (p["ch"] or p.get("feed"))]
+    _alerts.update(t=now, sig=sig, list=out)
+    return out
 
 
 def _channels_now(now):

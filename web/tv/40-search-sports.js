@@ -225,7 +225,8 @@ function spGame(p, badge, until) {
   const e = p.event, score = e && [e.score, e.detail].filter(Boolean).join(" · ");
   const [t, s] = spHeading(p);
   // title, matchup and score are separate pieces, so a phone can stack them (tv.css: li.game)
-  const html = `${badge}<span class="sp-main"><span class="sp-t">${sportIcon(p)}${esc(t)}</span>${s ? `<small class="sp-s">${esc(s)}</small>` : ""}</span>`
+  const fav = e && e.fav && e.fav.length ? `<span class="sp-fav" title="${esc(e.fav.join(", "))}">★</span>` : "";
+  const html = `${badge}<span class="sp-main"><span class="sp-t">${fav}${sportIcon(p)}${esc(t)}</span>${s ? `<small class="sp-s">${esc(s)}</small>` : ""}</span>`
     + (score ? `<small class="score">${esc(score)}</small>` : "");
   const cls = "game";
   const chans = gameChans(p).length, feeds = gameFeeds(p), more = chans + feeds.length - 1;

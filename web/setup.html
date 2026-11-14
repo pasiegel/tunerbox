@@ -204,6 +204,17 @@
           <input type="hidden" name="sports_leagues" data-list="1">
           <div class="league-grid" id="league-grid"></div>
         </div>
+        <div class="set-block">
+          <div class="set-head"><span class="set-text"><b>Favorite teams</b><small>Their games come first under Sports › On Now, and pop up on the TV when they start so you can switch to them with OK. A team's league is followed even if it isn't picked above.</small></span><output id="team-count"></output></div>
+          <input type="hidden" name="sports_teams" data-list="1">
+          <div class="chips fav-teams" id="fav-teams"></div>
+          <div class="team-pick">
+            <select id="team-sport" aria-label="Sport"></select>
+            <select id="team-league" aria-label="League"></select>
+            <input id="team-filter" type="search" placeholder="Find a team" aria-label="Find a team" autocomplete="off">
+          </div>
+          <div class="chips team-list" id="team-list"></div>
+        </div>
         <label class="set-row"><span class="set-text"><b>List games you have no channel for</b><small>Games that none of your channels or event feeds carry are still listed, with where they air.</small></span><input type="checkbox" class="toggle" name="sports_show_unmatched"></label>
         <label class="set-row"><span class="set-text"><b>Sports &amp; Events countries</b><small>Country codes of playlist groups to show: US, or US,CA,UK, or * for all.</small></span><input name="sports_regions" placeholder="US"></label>
       </div>

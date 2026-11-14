@@ -2,14 +2,22 @@
 // "Remind me" on an upcoming program (guide, search, Sports Coming Up). Reminders live on the server, so
 // one set on any screen pops up on every screen; each screen times its own pop-up. When it pops up:
 // OK switches to the channel, Back dismisses; it goes away by itself after a couple of minutes.
+// Games of the favorite teams (Settings › Sports) pop up the same way without being set: RM.games
+// holds their Sports-screen rows (r.game), and OK plays them like picking the game on that screen.
 const REMIND_LEAD = 60;          // pop up this many seconds before the start
 const REMIND_SHOW = 150 * 1000;  // ... and stay up this long
-const RM = { list: [], shown: null, hideTimer: null };
+const RM = { list: [], games: [], shown: null, hideTimer: null };
 const rmSeen = () => { try { return new Set(JSON.parse(localStorage.getItem("tb.reminded") || "[]")); } catch (_) { return new Set(); } };
-const rmKey = (r) => `${r.number}:${r.start}`;
+const rmKey = (r) => (r.game ? `game:${r.game.event.id}` : `${r.number}:${r.start}`);
+
+// a favorite team's game as a reminder: on its channel if it has one, otherwise on its event feed
+const gameReminder = (p) => ({ game: p, start: p.start, stop: p.stop, title: p.event.name,
+  subtitle: [p.heading, p.event.score, p.event.detail].filter(Boolean).join(" · "),
+  number: p.ch ? p.ch.number : null, channel_name: p.ch ? p.ch.label || p.ch.name : (p.feed ? p.feed.name : "") });
 
 async function loadReminders() {
   try { RM.list = await api("/api/reminders"); } catch (_) { return; }
+  try { RM.games = (await api("/api/sports/alerts")).map(gameReminder); } catch (_) {}
   checkReminders();
 }
 const findReminder = (number, start) => RM.list.find((r) => r.number === number && r.start === start);
@@ -30,7 +38,7 @@ async function toggleReminder(ch, p) {
 function checkReminders() {
   if (RM.shown || S.mode === "off") return;
   const n0 = now(), seen = rmSeen();
-  const due = RM.list.find((r) => !seen.has(rmKey(r)) && r.start - REMIND_LEAD <= n0 && n0 < r.stop);
+  const due = [...RM.list, ...RM.games].find((r) => !seen.has(rmKey(r)) && r.start - REMIND_LEAD <= n0 && n0 < r.stop);
   if (due) showReminder(due);
 }
 
@@ -38,13 +46,14 @@ function showReminder(r) {
   const seen = rmSeen(); seen.add(rmKey(r));
   try { localStorage.setItem("tb.reminded", JSON.stringify([...seen].slice(-100))); } catch (_) {}
   const ch = curCh();
-  if (S.mode === "live" && ch && !ch.feed && ch.number === r.number) return;     // already watching it
+  if (S.mode === "live" && ch && (ch.feed ? r.game && ch.feed === (r.game.feed || {}).key : ch.number === r.number)) return;     // already watching it
   RM.shown = r;
   const n0 = now();
+  $("rm-kind").textContent = r.game ? `⭐ ${r.game.event.fav.join(" & ")}` : "🔔 Reminder";
   $("rm-when").textContent = r.start > n0 ? `Starts at ${fmtTime(r.start)}` : r.start > n0 - 120 ? "Starting now" : `On now · started ${fmtTime(r.start)}`;
   $("rm-title").textContent = r.title;
   $("rm-sub").textContent = r.subtitle || "";
-  $("rm-ch").textContent = `${r.number} ${r.channel_name || ""}`;
+  $("rm-ch").textContent = r.number != null ? `${r.number} ${r.channel_name || ""}` : r.channel_name || "";
   $("reminder").classList.remove("hidden");
   clearTimeout(RM.hideTimer); RM.hideTimer = setTimeout(hideReminder, REMIND_SHOW);
 }
@@ -58,7 +67,8 @@ function watchReminder() {
   hideReminder();
   closeOverlays();
   if (S.mode === "playback") { $("playback").classList.add("hidden"); recLeave(); destroyPlayer(); }   // leave the recording
-  tuneNum(r.number);
+  if (r.game) pickGame({ ...r.game, start: Math.min(r.game.start, now()) });     // counts as on now: watch, not record
+  else tuneNum(r.number);
 }
 // OK / Back answer the pop-up while it's up; every other button works as usual underneath
 function reminderKey(k) {

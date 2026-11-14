@@ -21,6 +21,7 @@ from . import config, db
 log = logging.getLogger("tunerbox.scoreboard")
 
 URL = "https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard"
+TEAMS_URL = "https://site.api.espn.com/apis/site/v2/sports/{path}/teams"
 # key: (name in Settings, short tag, sport, ESPN path, extra query). "groups" asks for every
 # Division I game; without it the college scoreboards only list ranked teams.
 LEAGUES = {
@@ -53,9 +54,68 @@ def league_list():
     return [{"key": k, "name": v[0], "sport": v[2]} for k, v in LEAGUES.items()]
 
 
+def favorites():
+    """{(league, ESPN team id)} of the favorite teams picked in Settings ("nfl:21" each)."""
+    out = set()
+    for f in config.get("sports_teams") or []:
+        league, _, tid = str(f).partition(":")
+        if league in LEAGUES and tid:
+            out.add((league, tid))
+    return out
+
+
 def selected():
-    want = config.get("sports_leagues") or []
+    """Leagues whose games are looked up: the ones picked, plus those of the favorite teams."""
+    want = set(config.get("sports_leagues") or []) | {lg for lg, _ in favorites()}
     return [k for k in LEAGUES if k in want]
+
+
+def favorite_teams(ev, favs=None):
+    """Names of the favorite teams playing in a game (away first), [] when none is."""
+    favs = favorites() if favs is None else favs
+    return [ev[s]["name"] for s in ("away", "home") if ev[s].get("id") and (ev["league"], ev[s]["id"]) in favs]
+
+
+# ------------------------------------------------------------------ teams (Settings › Favorite teams)
+TEAMS_KEEP = 7 * 86400
+_teams_mem = {}
+
+
+def teams(key, now=None):
+    """Every team of a league, by name: [{id, name, abbr, logo}]. Kept a week (they hardly change);
+    an old copy is used when ESPN can't be reached."""
+    now = int(now or time.time())
+    got = _teams_mem.get(key)
+    if got is None:
+        try:
+            got = json.loads(db.get_meta(f"teams:{key}", "") or "null")
+        except ValueError:
+            got = None
+    if got and now - got["t"] < TEAMS_KEEP:
+        _teams_mem[key] = got
+        return got["teams"]
+    _, _, _, path, extra = LEAGUES[key]
+    try:
+        r = httpx.get(TEAMS_URL.format(path=path), params={"limit": 1000, **extra}, timeout=20,
+                      follow_redirects=True, headers={"User-Agent": config.get("user_agent")})
+        r.raise_for_status()
+        out = []
+        for lg in (r.json().get("sports") or [{}])[0].get("leagues") or []:
+            for t in lg.get("teams") or []:
+                tm = t.get("team") or {}
+                if tm.get("id") and tm.get("displayName"):
+                    out.append({"id": str(tm["id"]), "name": tm["displayName"], "abbr": tm.get("abbreviation") or "",
+                                "logo": ((tm.get("logos") or [{}])[0]).get("href") or ""})
+    except (httpx.HTTPError, ValueError, IndexError, AttributeError) as e:
+        log.warning("Teams %s: %s", key, e)
+        if got:
+            return got["teams"]
+        raise
+    out.sort(key=lambda t: t["name"].lower())
+    got = {"t": now, "teams": out}
+    _teams_mem[key] = got
+    db.set_meta(f"teams:{key}", json.dumps(got))
+    return out
 
 
 # ------------------------------------------------------------------ download
@@ -85,7 +145,7 @@ def parse_event(key, e):
     for t in comp.get("competitors") or []:
         tm = t.get("team") or {}
         teams[t.get("homeAway")] = {
-            "name": tm.get("displayName") or "", "short": tm.get("shortDisplayName") or "",
+            "id": str(tm.get("id") or t.get("id") or ""), "name": tm.get("displayName") or "", "short": tm.get("shortDisplayName") or "",
             "nick": tm.get("name") or "", "loc": tm.get("location") or "",
             "abbr": tm.get("abbreviation") or "", "score": str(t.get("score") or "")}
     start = _start(e.get("date"))
@@ -346,5 +406,5 @@ def public(ev):
     if ev["state"] != "pre" and ev["home"]["score"] != "" and ev["away"]["score"] != "":
         score = f"{ev['away']['abbr']} {ev['away']['score']}, {ev['home']['abbr']} {ev['home']['score']}"
     return {"id": ev["id"], "league": tag, "league_name": name, "heading": HEADING.get(ev["league"], name),
-            "sport": sport, "name": title(ev),
+            "sport": sport, "name": title(ev), "fav": favorite_teams(ev),
             "state": ev["state"], "detail": ev["detail"], "score": score, "on": ev["on"]}

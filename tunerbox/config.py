@@ -88,6 +88,9 @@ DEFAULTS = {
     # Leagues whose games are looked up on ESPN's scoreboard and matched to your channels, so they
     # show under Sports > On Now / Coming Up with scores (keys are in scoreboard.py; [] = off)
     "sports_leagues": ["nfl", "ncaaf", "nba", "ncaab", "mlb", "nhl"],
+    # Favorite teams, "league:ESPN team id" ("nfl:21"): their games come first in Sports > On Now and
+    # pop up on the TV when they start. Their leagues are followed even if not picked above.
+    "sports_teams": [],
     # Also list games that none of your channels or event feeds carry
     "sports_show_unmatched": True,
     # Network name: what this box is called when Plex, Jellyfin, Emby or Channels DVR find it as an
@@ -313,6 +316,8 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
             v = [str(u).strip() for u in v if str(u).strip()]
         elif k == "sports_leagues":
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
+        elif k == "sports_teams":
+            v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9]+:[a-z0-9-]+", str(x).strip().lower())})
         elif k == "box_name":
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
         elif k == "favorites":

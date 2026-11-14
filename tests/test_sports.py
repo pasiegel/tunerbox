@@ -218,3 +218,76 @@ def test_refresh_due(monkeypatch):
     assert scoreboard.due(now + 60) == "full"                        # the picked leagues changed
     config.update({"sports_leagues": []})
     assert scoreboard.due(now + 10 ** 6) is None
+
+
+# ---------------------------------------------------------------- favorite teams
+def _fav_team(name, nick, loc, abbr, tid, score=""):
+    return {**_team(name, nick, loc, abbr, score), "id": tid}
+
+
+def test_favorite_teams_first_and_alerted():
+    now = int(time.time())
+    h = 3600
+    lions = _fav_team("Detroit Lions", "Lions", "Detroit", "DET", "8", "7")
+    bears = _fav_team("Chicago Bears", "Bears", "Chicago", "CHI", "3", "3")
+    eagles, cowboys = {**EAGLES, "id": "21"}, {**COWBOYS, "id": "6"}
+    _channel(5, "FOX", [(now - h, now + 2 * h, "NFL Football", "Dallas Cowboys at Philadelphia Eagles", "Sports")])
+    _channel(6, "CBS", [(now - h // 2, now + 2 * h, "NFL Football", "Chicago Bears at Detroit Lions", "Sports")])
+    _channel(7, "NBC", [(now + 2 * h, now + 5 * h, "NFL Football", "Detroit Lions at Chicago Bears", "Sports"),
+                        (now + 30 * h, now + 33 * h, "NFL Football", "Chicago Bears at Detroit Lions", "Sports")])
+    _store(_game(1, "nfl", now - h, eagles, cowboys, "in", "3rd 5:21"),
+           _game(2, "nfl", now - h // 2, lions, bears, "in", "1st 2:00"),
+           _game(3, "nfl", now + 2 * h, bears, lions),
+           _game(4, "nfl", now + 30 * h, lions, bears))               # too far off to pop up yet
+    config.update({"sports_leagues": [], "sports_teams": ["nfl:8"]})   # NFL not picked: the Lions bring it in
+    sports._alerts.update(sig=None)
+    guide.invalidate()
+    assert scoreboard.selected() == ["nfl"]
+
+    on_now = sports.overview()["on_now"]
+    # the Lions game started later and isn't LIVE-first by start time, but a favorite comes first
+    assert [p["event"]["id"] for p in on_now] == ["nfl:2", "nfl:1"]
+    assert on_now[0]["event"]["fav"] == ["Detroit Lions"] and on_now[1]["event"]["fav"] == []
+
+    alerts = sports.favorite_alerts(now)
+    assert [(p["event"]["id"], p["ch"]["number"]) for p in alerts] == [("nfl:2", 6), ("nfl:3", 7)]
+
+    config.update({"sports_teams": []})
+    assert sports.favorite_alerts(now) == []
+
+
+def test_parse_event_keeps_team_ids():
+    raw = {"id": "9", "date": "2026-11-13T01:15Z", "status": {"type": {"state": "pre"}}, "competitions": [{"competitors": [
+        {"homeAway": "home", "team": {"id": "8", "displayName": "Detroit Lions"}},
+        {"homeAway": "away", "team": {"id": "3", "displayName": "Chicago Bears"}}]}]}
+    ev = scoreboard.parse_event("nfl", raw)
+    assert (ev["home"]["id"], ev["away"]["id"]) == ("8", "3")
+    config.update({"sports_teams": ["nfl:3"]})
+    assert scoreboard.favorite_teams(ev) == ["Chicago Bears"]
+    assert scoreboard.favorite_teams({**ev, "league": "ncaaf"}) == []        # same id, other league: not it
+
+
+def test_team_setting_is_cleaned():
+    got = config.clean_changes({"sports_teams": ["NFL:8", " nfl:8 ", "ncaaf:333", "bad", ""]}, from_pc=False)
+    assert got == {"sports_teams": ["ncaaf:333", "nfl:8"]}
+
+
+def test_team_list_is_kept(monkeypatch):
+    calls = []
+
+    class R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"sports": [{"leagues": [{"teams": [
+                {"team": {"id": "8", "displayName": "Detroit Lions", "abbreviation": "DET", "logos": [{"href": "http://l/det.png"}]}},
+                {"team": {"id": "3", "displayName": "Chicago Bears", "abbreviation": "CHI"}}]}]}]}
+
+    monkeypatch.setattr(scoreboard.httpx, "get", lambda *a, **k: calls.append(k["params"]) or R())
+    scoreboard._teams_mem.clear()
+    want = [{"id": "3", "name": "Chicago Bears", "abbr": "CHI", "logo": ""},
+            {"id": "8", "name": "Detroit Lions", "abbr": "DET", "logo": "http://l/det.png"}]
+    assert scoreboard.teams("nfl") == want
+    scoreboard._teams_mem.clear()                     # read back from the database, not downloaded again
+    assert scoreboard.teams("nfl") == want and len(calls) == 1
