@@ -24,6 +24,7 @@ TS = 188                                    # MPEG-TS packet size
 MAX_BACKLOG = 64_000_000                    # most stream kept per tuner for viewers who join later
 MIN_RETAIN = 10                             # seconds always kept, so a cache can fill at once
 QUEUE_CHUNKS = 256                          # per reader: 16 MB and up, rides out Wi-Fi hiccups
+ALONE_WAIT = 30                             # seconds a tuner waits for its only reader before dropping it
 VIDEO_TYPES = {0x01, 0x02, 0x10, 0x1B, 0x24, 0x42, 0xEA}   # MPEG-1/2, MPEG-4, H.264, HEVC, AVS, VC-1
 
 _tuners = []                                # running tuners
@@ -39,10 +40,14 @@ class Subscriber:
         self.q = queue.Queue(maxsize=QUEUE_CHUNKS + buffer * 40)
         self.wake = None                                   # set by an async reader
 
-    def put(self, chunk):
-        """From the tuner's thread. False when this reader has fallen too far behind."""
+    def put(self, chunk, wait=0):
+        """From the tuner's thread. False when this reader has fallen too far behind. `wait`: seconds
+        to hold the tuner for it (only when it's alone on the tuner, so nobody else is held up)."""
         try:
-            self.q.put_nowait(chunk)
+            if wait:
+                self.q.put(chunk, timeout=wait)
+            else:
+                self.q.put_nowait(chunk)
         except queue.Full:
             return False
         if self.wake:
@@ -199,8 +204,12 @@ class Tuner:
             self._trim(now)
             subs = list(self.subs)
         self.sent += len(buf)
+        # A viewer alone on its tuner slows the tuner down instead of being dropped, as before shared
+        # tuners: at startup the guide refresh can starve the server just as the provider's first
+        # burst arrives. Only a viewer holding up others is dropped.
+        wait = ALONE_WAIT if len(subs) == 1 else 0
         for s in subs:
-            if not s.put(buf):
+            if not s.put(buf, wait):
                 log.warning("%s fell too far behind on %s: dropped", s.name or "viewer", split_url(self.url)[0][-40:])
                 s.close()
 
