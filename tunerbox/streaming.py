@@ -17,6 +17,7 @@ from .probe import split_url
 
 log = logging.getLogger("tunerbox.stream")
 _sessions = {}
+_playing = {}           # id(proc) -> what a ready-made-command stream (On Demand) plays, for Setup › Tuners
 _lock = threading.Lock()
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ffmpeg_path = None
@@ -218,9 +219,17 @@ def _waker(loop, event):
     return wake
 
 
-async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None):
+def playing():
+    """On Demand (and other ready-made-command) streams running now: [{url, label, client, since}].
+    `url` holds the provider login: never send it to a page as is."""
+    with _lock:
+        return [dict(v) for v in _playing.values()]
+
+
+async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None, label=""):
     """Async generator yielding MPEG-TS bytes. Kills ffmpeg when the viewer goes away.
-    `cmd` runs a ready-made ffmpeg command instead (local channel pieces).
+    `cmd` runs a ready-made ffmpeg command instead (On Demand, local channel pieces); `label` names
+    what it plays in Setup › Tuners.
 
     Waiting for data never holds a worker thread: the reader thread wakes this coroutine through an
     asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on.
@@ -243,9 +252,11 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0)
     track(proc)
-    if client_id:
-        with _lock:
+    with _lock:
+        if client_id:
             _sessions[client_id] = proc
+        if raw_url:
+            _playing[id(proc)] = {"url": raw_url, "label": label, "client": client_id or "", "since": int(time.time())}
     err = []
     threading.Thread(target=lambda: err.extend(proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:]),
                      daemon=True).start()
@@ -286,6 +297,7 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
         with _lock:
             if client_id and _sessions.get(client_id) is proc:
                 _sessions.pop(client_id, None)
+            _playing.pop(id(proc), None)
         # taskkill takes a moment: never make the whole server wait for it
         threading.Thread(target=_finish, args=(proc,), daemon=True).start()
         log.info("Stream end for %s after %.1f MB", client_id or "-", sent / 1e6)

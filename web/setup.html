@@ -18,6 +18,7 @@
     <button data-tab="media">Local channels</button>
     <button data-tab="guide">TV Guide</button>
     <button data-tab="dvr">DVR</button>
+    <button data-tab="tuners">Tuners</button>
     <button data-tab="phones">Phones</button>
     <button data-tab="settings">Settings</button>
   </nav>
@@ -147,6 +148,16 @@
     <table class="grid"><thead><tr><th>Status</th><th>Program</th><th>Ch</th><th>When</th><th></th></tr></thead><tbody id="rec-body"></tbody></table>
     <h3>Series recordings</h3>
     <table class="grid"><thead><tr><th>Title</th><th>Channel</th><th>New only</th><th></th></tr></thead><tbody id="rule-body"></tbody></table>
+  </section>
+
+  <!-- tuners in use -->
+  <section id="tab-tuners" class="hidden">
+    <h3>Connections</h3>
+    <p class="muted">Each channel being watched or recorded uses one connection to its playlist, however many screens are on it. Each movie or episode playing uses one more. Xtream accounts often allow only 1 or 2, and one more shows No Signal.</p>
+    <div class="cards" id="tn-src"></div>
+    <h3>In use now</h3>
+    <table class="grid"><thead><tr><th>Playing</th><th>Playlist</th><th>Watching</th><th>Since</th></tr></thead><tbody id="tn-body"></tbody></table>
+    <p class="muted small">Updates every few seconds while this tab is open.</p>
   </section>
 
   <!-- phones -->

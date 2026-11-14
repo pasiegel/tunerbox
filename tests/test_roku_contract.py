@@ -34,6 +34,14 @@ ROKU_ROUTES = [
     ("POST", "/api/vod/progress"),
     ("POST", "/api/vod/watched"),
     ("POST", "/api/vod/list"),
+    # Home (HomeView.brs / MainScene.brs)
+    ("GET", "/api/home"),
+    ("GET", "/api/art/{number}/{start}"),
+    ("GET", "/api/recordings/{rid}/art"),
+    ("GET", "/api/recordings/{rid}/file"),
+    ("POST", "/api/recordings/{rid}/progress"),
+    ("DELETE", "/api/recordings/{rid}"),
+    ("DELETE", "/api/reminders/{rid}"),
 ]
 
 
@@ -64,6 +72,17 @@ def test_favorites_is_a_list(client):
 def test_settings_has_sports_show_unmatched(client):
     s = client.get("/api/settings").json()
     assert isinstance(s.get("sports_show_unmatched"), bool)
+
+
+def test_settings_has_home_screen(client):
+    # the Roku shows Home only when this is true (MainScene.brs applySettings)
+    assert isinstance(client.get("/api/settings").json().get("home_screen"), bool)
+
+
+def test_home_lists(client):
+    d = client.get("/api/home").json()
+    for key in ("favorites", "recent", "continue", "sports", "recorded", "coming"):   # HomeView.brs buildRows
+        assert isinstance(d.get(key), list), key
 
 
 def test_sports_lists(client):

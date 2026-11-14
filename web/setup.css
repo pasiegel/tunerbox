@@ -209,3 +209,9 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 .vod-t { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
 .vod-t small { font-size: 12px; }
 .btn:disabled { opacity: .45; cursor: default; filter: none; }
+
+/* Setup › Tuners */
+.tn-count { margin: 8px 0 6px; } .tn-count b { font-size: 20px; }
+.tn-meter { height: 6px; border-radius: 3px; background: #ffffff1a; overflow: hidden; margin-bottom: 6px; }
+.tn-meter i { display: block; height: 100%; background: var(--ok); }
+.tn-card.full { border-color: var(--warn); } .tn-card.full .tn-meter i { background: var(--warn); }

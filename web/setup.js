@@ -498,6 +498,36 @@ document.querySelector("#tab-dvr").addEventListener("click", async (e) => {
   loaders.dvr();
 });
 
+// ---------------------------------------------------------------- tuners in use
+const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙" };
+let tnTimer;
+loaders.tuners = async () => {
+  clearTimeout(tnTimer);
+  if ((location.hash.slice(1) || "channels") !== "tuners") return;
+  let d;
+  try { d = await api("/api/tuners"); } catch (e) { $("tn-body").innerHTML = `<tr><td colspan="4" class="muted">${esc(e.message)}</td></tr>`; }
+  if (d) {
+    const names = Object.fromEntries(d.sources.map((s) => [s.id, s.name]));
+    $("tn-src").innerHTML = d.sources.map((s) => {
+      const full = s.limit && s.used >= s.limit, pct = s.limit ? Math.min(100, s.used / s.limit * 100) : 0;
+      return `<div class="card tn-card${full ? " full" : ""}">
+        <div class="card-head"><div class="t">${esc(s.name)}</div><span class="tag">${{ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U"}</span></div>
+        <div class="tn-count"><b>${s.used}</b> ${s.limit ? `of ${s.limit} connection${s.limit === 1 ? "" : "s"} in use` : `connection${s.used === 1 ? "" : "s"} in use`}</div>
+        ${s.limit ? `<div class="tn-meter"><i style="width:${pct}%"></i></div>` : ""}
+        <div class="muted small">${full ? "Full: another channel or movie on this playlist won't start until one stops."
+          : s.limit ? `${s.limit - s.used} free` : s.type === "xtream" ? "Limit not known yet (it's read when the playlist is scanned)." : "This kind of playlist doesn't report a limit."}</div>
+      </div>`;
+    }).join("") || '<p class="muted">No playlists yet.</p>';
+    $("tn-body").innerHTML = d.tuners.map((t) => `<tr>
+      <td>${t.kind === "ondemand" ? '<span class="tag">On Demand</span> ' : t.kind === "feed" ? '<span class="tag">Feed</span> ' : ""}${esc(t.title)}${t.stream && t.kind === "channel" ? `<div class="muted small">${esc(t.stream)}</div>` : ""}</td>
+      <td>${esc(names[t.source_id] || "Unknown")}</td>
+      <td>${t.viewers.map((v) => `<div>${TN_WHO[v.kind] || ""} ${esc(v.name)}</div>`).join("") || '<span class="muted">Starting…</span>'}</td>
+      <td>${new Date(t.since * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${t.mb ? `<div class="muted small">${t.mb >= 1000 ? (t.mb / 1000).toFixed(1) + " GB" : Math.round(t.mb) + " MB"}</div>` : ""}</td>
+    </tr>`).join("") || '<tr><td colspan="4" class="muted">Nothing is playing or recording right now.</td></tr>';
+  }
+  tnTimer = setTimeout(loaders.tuners, 4000);
+};
+
 // ---------------------------------------------------------------- settings
 // categories on the left; one group of settings is shown at a time (the whole form still saves together)
 const setGroups = [...document.querySelectorAll("#tab-settings .set-group[data-cat]")];

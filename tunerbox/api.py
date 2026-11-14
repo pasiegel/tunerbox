@@ -14,7 +14,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
 
@@ -753,6 +753,10 @@ def _vod_item(item_id, prepare=False):
     return it
 
 
+def _vod_label(it):
+    return " · ".join(str(x) for x in (it.get("title"), it.get("sub")) if x)
+
+
 @app.get("/api/vod/play/{item_id}")
 def api_vod_play(item_id: str):
     """What the player needs before it starts: title, length, where to resume, the next episode."""
@@ -764,7 +768,7 @@ def api_vod_play(item_id: str):
 async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     cmd = vod.stream_cmd(it["url"], max(0.0, ss), mode or it["video_mode"] or None)
-    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, cmd=cmd),
+    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, cmd=cmd, label=_vod_label(it)),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"})
 
 
@@ -772,7 +776,7 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
 async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     sid = await anyio.to_thread.run_sync(hls.start, it["url"], client or None, mode or it["video_mode"] or None, 0,
-                                         vod.hls_pre(max(0.0, ss)))
+                                         vod.hls_pre(max(0.0, ss)), _vod_label(it))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
@@ -818,6 +822,12 @@ def api_remind(number: int = Body(...), start: int = Body(...)):
 def api_remind_cancel(rid: int):
     reminders.remove(rid)
     return {"ok": True}
+
+
+@app.get("/api/tuners")
+def api_tuners():
+    """Setup › Tuners: each running tuner and On Demand stream, who's on it, and each playlist's connection limit."""
+    return connections.in_use()
 
 
 # ------------------------------------------------------------------ DVR

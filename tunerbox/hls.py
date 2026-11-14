@@ -68,8 +68,9 @@ def _reap():
                 _stop(sid)
 
 
-def start(raw_url, client=None, mode=None, buffer=None, pre=()):
-    """`pre`: extra ffmpeg input options (On Demand: play at normal speed, from a start time)."""
+def start(raw_url, client=None, mode=None, buffer=None, pre=(), label=""):
+    """`pre`: extra ffmpeg input options (On Demand: play at normal speed, from a start time).
+    `label` names what it plays in Setup › Tuners."""
     global _reaper
     buffer = buffer_seconds(buffer)
     if client:
@@ -98,11 +99,19 @@ def start(raw_url, client=None, mode=None, buffer=None, pre=()):
                      daemon=True).start()
     with _lock:
         _sessions[sid] = {"proc": proc, "dir": d, "last": time.monotonic(), "client": client, "err": err,
-                          "buffer": buffer, "sub": sub}
+                          "buffer": buffer, "sub": sub, "url": raw_url, "label": label, "since": int(time.time())}
         if _reaper is None:
             _reaper = threading.Thread(target=_reap, daemon=True)
             _reaper.start()
     return sid
+
+
+def playing():
+    """HLS sessions with their own provider connection (On Demand on iPhone / iPad): [{url, label, client, since}].
+    Channels share a tuner, so tuner.running() lists them. `url` holds the provider login."""
+    with _lock:
+        return [{"url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"]}
+                for s in _sessions.values() if not s["sub"] and s.get("url")]
 
 
 def _feed(sub, proc):

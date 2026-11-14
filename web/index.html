@@ -96,13 +96,6 @@
     <ul class="list" id="menu-list"></ul>
   </div>
 
-  <!-- dvr -->
-  <div id="dvr" class="panel wide hidden">
-    <div class="p-title">My Recordings <span id="dvr-space"></span></div>
-    <ul class="list" id="dvr-list"></ul>
-    <div class="p-foot"><b>OK</b> Play / Options &nbsp; <b>Esc</b> Back</div>
-  </div>
-
   <!-- remote control mapping -->
   <div id="remotecfg" class="panel wide hidden">
     <div class="p-title">Remote Control Setup</div>
@@ -173,6 +166,22 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     </div>
     <div class="hm-rows" id="hm-rows"></div>
     <div class="g-foot" id="hm-foot"></div>
+  </div>
+
+  <!-- recordings: laid out like Home -->
+  <div id="dvr" class="hidden">
+    <div class="g-top">
+      <div class="od-pip"></div>
+      <div id="dv-info">
+        <div id="dvi-title"></div>
+        <div id="dvi-sub"></div>
+        <div id="dvi-meta"></div>
+        <div id="dvi-desc"></div>
+      </div>
+      <div class="g-clock"><div id="dv-clock"></div><div id="dv-date"></div></div>
+    </div>
+    <div class="hm-rows" id="dv-rows"></div>
+    <div class="g-foot" id="dv-foot"></div>
   </div>
 
   <!-- dialog -->

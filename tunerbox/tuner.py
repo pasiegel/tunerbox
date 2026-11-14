@@ -87,6 +87,7 @@ class Tuner:
         self.video_pid = None
         self.ended = False
         self.sent = 0
+        self.started = time.time()
         self.err = []
         cmd = live_cmd(url, mode, audio, buffer)
         self.proc = track(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -302,6 +303,20 @@ def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name=""):
             t = Tuner(url, mode, audio, buffer)
             _tuners.append(t)
         return t.add(buffer, name)
+
+
+def running():
+    """The tuners running now and who is on each (Setup › Tuners). Holds the provider login in `url`:
+    never send it to a page as is."""
+    with _lock:
+        ts = [t for t in _tuners if not t.ended]
+    out = []
+    for t in ts:
+        with t.lock:
+            names = [s.name for s in t.subs]
+        out.append({"url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names,
+                    "since": int(t.started), "mb": round(t.sent / 1e6, 1)})
+    return out
 
 
 def stop_client(client_id):

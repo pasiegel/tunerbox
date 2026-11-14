@@ -215,13 +215,22 @@ async function nowNext(num, force) {
 // won't load. Keyed by the original picture, so other airings of the same show don't reload it.
 function showArt(img, num, p) {
   const key = p && p.image && num ? p.image : "";
+  loadArt(img, key, key && `/api/art/${num}/${p.start}`);
+}
+// a recording's picture (kept with the recording, so it outlasts the guide), else the guide's for that airing
+function recArt(img, r) {
+  if (!r) { loadArt(img, ""); return; }
+  if (r.art || r.image) loadArt(img, `rec:${r.id}`, `/api/recordings/${r.id}/art`);
+  else loadArt(img, `${r.number}/${r.start}`, `/api/art/${r.number}/${r.start}`);
+}
+function loadArt(img, key, url) {
   if (key && img.dataset.key === key) return;
   img.dataset.key = key;
   img.classList.add("hidden");
   if (!key) { img.removeAttribute("src"); return; }
   img.onload = () => { if (img.dataset.key === key) img.classList.remove("hidden"); };
   img.onerror = () => { if (img.dataset.key === key) img.classList.add("hidden"); };
-  img.src = `/api/art/${num}/${p.start}`;
+  img.src = url;
 }
 
 async function showBanner(full = false) {
@@ -268,6 +277,7 @@ function tickClock() {
   $("b-clock").textContent = t; $("g-clock").textContent = t; $("b-date").textContent = day; $("g-date").textContent = day;
   $("od-clock").textContent = t; $("od-date").textContent = day;
   $("hm-clock").textContent = t; $("hm-date").textContent = day;
+  $("dv-clock").textContent = t; $("dv-date").textContent = day;
 }
 setInterval(tickClock, 1000); tickClock();
 

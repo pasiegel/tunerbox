@@ -201,34 +201,6 @@ async function watchJob() {
   }
 }
 
-// dvr
-let dvrRecs = [];
-async function openDvr() {
-  dvrRecs = await api("/api/recordings");
-  const entries = dvrRecs.length ? dvrRecs.map((r) => ({
-    html: `<span class="badge ${r.status}">${r.status.toUpperCase()}</span> <span>${esc(r.title)}${r.subtitle ? ` <small>· ${esc(r.subtitle)}</small>` : ""}</span>`,
-    right: `${r.number} · ${fmtDay(r.start)} ${fmtTime(r.start)}`,
-  })) : [{ label: "No recordings yet. Press R on a program in the guide to record it." }];
-  fillList($("dvr-list"), entries);
-  if (top() !== "dvr") S.layer.push("dvr");
-  $("dvr").classList.remove("hidden");
-}
-function closeDvr() { S.layer = S.layer.filter((l) => l !== "dvr"); $("dvr").classList.add("hidden"); }
-function dvrPick(i) {
-  const r = dvrRecs[i]; if (!r) return;
-  const entries = [];
-  if (r.status === "done" || r.status === "cancelled") { recDialog(r, openDvr); return; }
-  if (r.status === "recording") {
-    entries.push({ label: "Watch channel live", act: () => { closeDialog(); closeDvr(); tune(S.byNum.get(r.number)); } });
-    entries.push({ label: "Stop recording", act: async () => { await api(`/api/recordings/${r.id}`, { method: "DELETE" }); closeDialog(); openDvr(); } });
-  } else if (r.status === "scheduled") {
-    entries.push({ label: "Cancel recording", act: async () => { await api(`/api/recordings/${r.id}`, { method: "DELETE" }); closeDialog(); openDvr(); } });
-  } else {
-    entries.push({ label: "Remove from list", act: async () => { await api(`/api/recordings/${r.id}?delete=1`, { method: "DELETE" }); closeDialog(); openDvr(); } });
-  }
-  entries.push({ label: "Back", act: closeDialog });
-  openDialog(r.title, `${r.number} ${r.channel_name || ""}\n${fmtDay(r.start)} ${fmtTime(r.start)} – ${fmtTime(r.stop)}${r.error ? "\n" + r.error : ""}`, entries);
-}
 // a recorded show: resume, play, delete. `after` runs once it's deleted (redraw the list it came from)
 function recDialog(r, after) {
   const resume = !r.watched && r.position > RESUME_MIN;
@@ -243,8 +215,8 @@ function recDialog(r, after) {
   entries.push({ label: "Close", act: closeDialog });
   openDialog(r.title, `${r.number} ${r.channel_name || ""}\n${fmtDay(r.start)} ${fmtTime(r.start)} – ${fmtTime(r.stop)}`
     + (resume ? `\nYou stopped at ${fmtDur(r.position)}` : r.watched ? "\nWatched" : "") + (r.error ? "\n" + r.error : ""), entries);
+  $("dlg-img").classList.add("art"); recArt($("dlg-img"), r);
 }
-$("dvr-list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) dvrPick(+li.dataset.i); });
 
 function playRecording(r, from = 0) {
   vodLeave(); recLeave(); closeHome();
@@ -280,6 +252,7 @@ function recInfo(full = false) {
   $("b-num").textContent = r.number; $("b-name").textContent = r.channel_name || ch.name || "";
   const logo = $("b-logo");
   if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
+  recArt($("b-art"), r); $("b-art").dataset.ch = "";          // the live banner picks its own picture again
   $("b-title").textContent = r.title || "Recording";
   $("b-flags").innerHTML = '<span class="flag rec">RECORDING</span>';
   $("b-sub").textContent = [r.episode, r.subtitle].filter(Boolean).join("  ·  ");

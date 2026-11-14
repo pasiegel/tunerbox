@@ -39,7 +39,7 @@ function homeRows(d) {
   add("coming", "Coming up", d.coming.map((x) => ({ ...x, t: x.type === "rec" ? "sched" : "remind" })));
   return rows;
 }
-const hmKey = (it) => it && ({ nav: `n${it.label}`, chan: `c${it.number}`, vod: `v${it.id}`, rec: `r${it.id}`, sched: `r${it.id}`,
+const hmKey = (it) => it && ({ nav: `n${it.label}`, chan: `c${it.number}`, vod: `v${it.id}`, rec: `r${it.id}`, sched: `r${it.id}`, fail: `r${it.id}`,
                                remind: `m${it.id}`, game: it.p && `g${it.p.title}${it.p.start}` })[it.t];
 const hmPct = (start, stop) => Math.max(0, Math.min(100, (now() - start) / ((stop - start) || 1) * 100));
 
@@ -125,9 +125,10 @@ function hmTile(it, r, i) {
     title = [sportEmoji(p), t].filter(Boolean).join(" ");
     sub = [s, score].filter(Boolean).join(" · ") || (p.ch ? p.ch.label || p.ch.name : "Event feed");
     pct = hmPct(p.start, p.stop); tone = p.title;
-  } else {            // sched (a recording to come) / remind
-    pic = it.t === "sched" && it.art ? `/api/recordings/${it.id}/art` : `/api/art/${it.number}/${it.start}`;
-    live = it.status === "recording"; badge = live ? "● REC" : it.t === "sched" ? "REC" : "REMIND";
+  } else {            // sched (a recording to come) / remind / fail (one that didn't record)
+    pic = it.t !== "remind" && it.art ? `/api/recordings/${it.id}/art` : `/api/art/${it.number}/${it.start}`;
+    live = it.status === "recording";
+    badge = live ? "● REC" : it.t === "fail" ? "FAILED" : it.t === "sched" ? "REC" : "REMIND"; dimBadge = it.t === "fail";
     title = it.title; sub = `${fmtWhen(it.start)} · ${it.number} ${it.channel_name || ""}`; tone = it.title;
   }
   return `<div class="hm-tile t${odTone(String(tone || ""))}${poster ? " poster" : ""}${pic ? " art" : ""}" ${at}${num ? ` data-num="${esc(num)}"` : ""}>`
@@ -167,6 +168,11 @@ function homeSelect() {
     + "<span><b>*</b> Favorite</span><span><b>0-9</b> Tune</span><span><b>Esc</b> Back to TV</span>";
 }
 function homeInfo(it) {
+  const x = hmText(it);
+  $("hmi-title").textContent = x.title; $("hmi-sub").textContent = x.sub; $("hmi-meta").textContent = x.meta; $("hmi-desc").textContent = x.desc;
+}
+// the details shown above the rows for a tile (Home and Recordings)
+function hmText(it) {
   let title = "", sub = "", meta = "", desc = "";
   if (!it) title = "Home";
   else if (it.t === "nav") { title = it.label; sub = it.info; }
@@ -193,10 +199,10 @@ function homeInfo(it) {
   } else {
     title = it.title; sub = it.subtitle || "";
     meta = [`${fmtDay(it.start)} ${fmtTime(it.start)}`, `${it.number} ${it.channel_name || ""}`,
-            it.t === "remind" ? "🔔 Reminder set" : it.status === "recording" ? "● Recording now" : "Will be recorded"].join("  ·  ");
-    desc = it.descr || "";
+            it.t === "remind" ? "🔔 Reminder set" : it.t === "fail" ? "Didn't record" : it.status === "recording" ? "● Recording now" : "Will be recorded"].join("  ·  ");
+    desc = it.t === "fail" && it.error ? it.error : it.descr || "";
   }
-  $("hmi-title").textContent = title; $("hmi-sub").textContent = sub; $("hmi-meta").textContent = meta; $("hmi-desc").textContent = desc;
+  return { title, sub, meta, desc };
 }
 
 // ---- picking
@@ -236,6 +242,8 @@ function homeAct(it) {
   }
   entries.push({ label: "Close", act: closeDialog });
   openDialog(it.title, `${it.number} ${it.channel_name || ""}\n${fmtDay(it.start)} ${fmtTime(it.start)} – ${fmtTime(it.stop)}`, entries);
+  $("dlg-img").classList.add("art");
+  if (it.t === "sched") recArt($("dlg-img"), it); else loadArt($("dlg-img"), `${it.number}/${it.start}`, `/api/art/${it.number}/${it.start}`);
 }
 
 function homeKey(k) {

@@ -423,14 +423,14 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 }
 .phone #b-art, .phone #gi-art { display: none; }
 
-/* Home: TV in the corner and the highlighted tile's details on top (like On Demand), then rows of tiles */
-#home { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: linear-gradient(180deg, #06122e 0%, #0a1a3f 30%, #08142f 100%); padding: 2.5vh 2.2vw 1.5vh; }
-#home .g-top { height: 32vh; }
-#hm-info { flex: 1; min-width: 0; padding: .4em 0; overflow: hidden; }
-#hmi-title { font-size: 2.1em; font-weight: 800; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#hmi-sub { font-size: 1.3em; color: #cfe0ff; margin-top: .25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#hmi-meta { color: var(--hl); margin-top: .5em; font-size: 1.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#hmi-desc { color: #d5e1fb; margin-top: .6em; font-size: 1.12em; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* Home and Recordings: TV in the corner and the highlighted tile's details on top (like On Demand), then rows of tiles */
+#home, #dvr { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: linear-gradient(180deg, #06122e 0%, #0a1a3f 30%, #08142f 100%); padding: 2.5vh 2.2vw 1.5vh; }
+#home .g-top, #dvr .g-top { height: 32vh; }
+#hm-info, #dv-info { flex: 1; min-width: 0; padding: .4em 0; overflow: hidden; }
+#hmi-title, #dvi-title { font-size: 2.1em; font-weight: 800; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hmi-sub, #dvi-sub { font-size: 1.3em; color: #cfe0ff; margin-top: .25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hmi-meta, #dvi-meta { color: var(--hl); margin-top: .5em; font-size: 1.1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hmi-desc, #dvi-desc { color: #d5e1fb; margin-top: .6em; font-size: 1.12em; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .hm-rows { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: .2em 0 .6em; }
 .hm-rows::-webkit-scrollbar, .hm-strip::-webkit-scrollbar, .hm-nav::-webkit-scrollbar { display: none; }
 .hm-nav { display: flex; gap: .7em; padding: .4em .55em 1em; overflow-x: auto; scrollbar-width: none; }
@@ -468,33 +468,33 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
   .hm-chip:not(.sel):hover { background: #ffffff26; border-color: #ffffff59; }
 }
 @media (prefers-reduced-motion: reduce) { .hm-tile, .hm-label { transition: none; } .hm-tile.sel { transform: none; } }
-#home .od-empty { max-width: 40em; margin: 1.2em auto 0; padding: 1.3em 1.8em; text-align: center; line-height: 1.4;
+#home .od-empty, #dvr .od-empty { max-width: 40em; margin: 1.2em auto 0; padding: 1.3em 1.8em; text-align: center; line-height: 1.4;
   background: #ffffff0d; border: 1px solid #ffffff1f; border-radius: 10px; }
 @media (max-aspect-ratio: 1/1) {
-  #home .g-top { height: 26vh; }
+  #home .g-top, #dvr .g-top { height: 26vh; }
   .hm-tile { width: 13em; height: 7.3em; } .hm-tile.poster { width: 4.9em; }
 }
-.phone #home { padding: calc(env(safe-area-inset-top, 0px) + 8px) 8px calc(env(safe-area-inset-bottom, 0px) + 64px); }
-.phone #home .g-top { gap: 10px; padding-bottom: 8px; }
-.phone #hm-info { padding: 0; }
-.phone #hmi-title { font-size: 17px; } .phone #hmi-sub { font-size: 14px; } .phone #hmi-meta { font-size: 13px; }
-.phone #hmi-desc { font-size: 13px; line-height: 1.3; }
+.phone #home, .phone #dvr { padding: calc(env(safe-area-inset-top, 0px) + 8px) 8px calc(env(safe-area-inset-bottom, 0px) + 64px); }
+.phone #home .g-top, .phone #dvr .g-top { gap: 10px; padding-bottom: 8px; }
+.phone #hm-info, .phone #dv-info { padding: 0; }
+.phone #hmi-title, .phone #dvi-title { font-size: 17px; } .phone #hmi-sub, .phone #dvi-sub { font-size: 14px; } .phone #hmi-meta, .phone #dvi-meta { font-size: 13px; }
+.phone #hmi-desc, .phone #dvi-desc { font-size: 13px; line-height: 1.3; }
 .phone .hm-chip { font-size: 14px; padding: 8px 14px; }
 .phone .hm-label { font-size: 15px; }
 .phone .hm-tile { width: 168px; height: 95px; } .phone .hm-tile.poster { width: 63px; }
 .phone .hm-tile .n { font-size: 13px; } .phone .hm-tile .y { font-size: 11px; }
 .phone .hm-tile .big { font-size: 30px; }
-.phone #home .od-empty { padding: 12px 14px; font-size: 14px; }
-@media (max-aspect-ratio: 1/1) { .phone #home .g-top { height: 36vw; } }   /* upright phone: just the corner TV's height */
+.phone #home .od-empty, .phone #dvr .od-empty { padding: 12px 14px; font-size: 14px; }
+@media (max-aspect-ratio: 1/1) { .phone #home .g-top, .phone #dvr .g-top { height: 36vw; } }   /* upright phone: just the corner TV's height */
 @media (min-aspect-ratio: 1/1) {
-  .phone #home { padding: calc(env(safe-area-inset-top, 0px) + 6px) calc(env(safe-area-inset-right, 0px) + 8px)
+  .phone #home, .phone #dvr { padding: calc(env(safe-area-inset-top, 0px) + 6px) calc(env(safe-area-inset-right, 0px) + 8px)
                             calc(env(safe-area-inset-bottom, 0px) + 6px) calc(env(safe-area-inset-left, 0px) + 8px); }
-  .phone:has(#home:not(.hidden)) #video.pip { top: calc(env(safe-area-inset-top, 0px) + 6px); left: calc(env(safe-area-inset-left, 0px) + 8px);
+  .phone:has(#home:not(.hidden)) #video.pip, .phone:has(#dvr:not(.hidden)) #video.pip { top: calc(env(safe-area-inset-top, 0px) + 6px); left: calc(env(safe-area-inset-left, 0px) + 8px);
     height: 27vh; width: 48vh; max-height: none; }
-  .phone #home .g-top { height: 29vh; padding-bottom: 6px; }
-  .phone #hm-info { padding-right: 104px; }
-  .phone #hmi-desc { font-size: 12px; margin-top: 4px; }
-  .phone #hm-foot { display: none; }
-  .phone:has(#home:not(.hidden)) #back { top: calc(env(safe-area-inset-top, 0px) + 6px); bottom: auto; right: calc(env(safe-area-inset-right, 0px) + 8px);
+  .phone #home .g-top, .phone #dvr .g-top { height: 29vh; padding-bottom: 6px; }
+  .phone #hm-info, .phone #dv-info { padding-right: 104px; }
+  .phone #hmi-desc, .phone #dvi-desc { font-size: 12px; margin-top: 4px; }
+  .phone #hm-foot, .phone #dv-foot { display: none; }
+  .phone:has(#home:not(.hidden)) #back, .phone:has(#dvr:not(.hidden)) #back { top: calc(env(safe-area-inset-top, 0px) + 6px); bottom: auto; right: calc(env(safe-area-inset-right, 0px) + 8px);
                  padding: 7px 14px; font-size: 14px; }
 }

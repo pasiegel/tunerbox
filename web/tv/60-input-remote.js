@@ -178,10 +178,7 @@ function handleKey(k, ev) {
     else listNav($("menu-list"), k, (_, i) => menuShown[i].act());
     return true;
   }
-  if (layer === "dvr") {
-    if (k === "Back" || k === "d") closeDvr(); else listNav($("dvr-list"), k, (_, i) => dvrPick(i));
-    return true;
-  }
+  if (layer === "dvr") { dvrKey(k); return true; }
   if (layer === "guide") {
     if (G.filterKey(k)) return true;
     switch (k) {
