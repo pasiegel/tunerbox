@@ -68,41 +68,53 @@ def _reap():
                 _stop(sid)
 
 
-def start(raw_url, client=None, mode=None, buffer=None, pre=(), label=""):
+def start(raw_url, client=None, mode=None, buffer=None, pre=(), label="", source_id=None):
     """`pre`: extra ffmpeg input options (On Demand: play at normal speed, from a start time).
-    `label` names what it plays in Setup › Tuners."""
+    `label` names what it plays in Setup › Tuners; `source_id` is the playlist whose connection it
+    uses. A channel on a full playlist raises connections.Full."""
     global _reaper
+    from . import connections, streaming, tuner
     buffer = buffer_seconds(buffer)
-    if client:
-        stop_client(client)               # one channel per viewer
+    # room first, so a full playlist doesn't cost the viewer what it was watching (checked again below)
+    if pre:
+        connections.check(source_id, client=client or "")
+    else:
+        connections.check(source_id, raw_url, mode or config.get("video_mode", "copy"), "aac", client or "")
+    if client:                  # one channel or movie per viewer, whether it played over HLS or TS
+        stop_client(client)
+        streaming.stop_client(client)
     sid = secrets.token_hex(6)
     d = ROOT / sid
     d.mkdir(parents=True, exist_ok=True)
     sub = None
-    try:
-        if not pre:             # a channel or feed: share its tuner
-            from . import tuner
-            sub = tuner.join(raw_url, mode, "aac", buffer, name=f"hls:{client or sid}")
-        proc = subprocess.Popen(_cmd(None if sub else raw_url, mode, buffer, pre), cwd=d,
-                                stdin=subprocess.PIPE if sub else subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, creationflags=NO_WINDOW)
-    except OSError:
-        if sub:
-            sub.close()
-        shutil.rmtree(d, ignore_errors=True)
-        raise
-    track(proc)
+    # checked and registered as one step, so two screens can't both take a playlist's last connection
+    with connections.admit:
+        try:
+            if not pre:         # a channel or feed: share its tuner (tuner.join checks the limit)
+                sub = tuner.join(raw_url, mode, "aac", buffer, name=f"hls:{client or sid}", source_id=source_id)
+            elif source_id is not None:     # On Demand: a connection of its own
+                connections.check(source_id, client=client or "")
+            proc = subprocess.Popen(_cmd(None if sub else raw_url, mode, buffer, pre), cwd=d,
+                                    stdin=subprocess.PIPE if sub else subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+        except Exception:
+            if sub:
+                sub.close()
+            shutil.rmtree(d, ignore_errors=True)
+            raise
+        track(proc)
+        err = []
+        with _lock:
+            _sessions[sid] = {"proc": proc, "dir": d, "last": time.monotonic(), "client": client, "err": err,
+                              "buffer": buffer, "sub": sub, "url": raw_url, "label": label, "since": int(time.time()),
+                              "source_id": source_id}
+            if _reaper is None:
+                _reaper = threading.Thread(target=_reap, daemon=True)
+                _reaper.start()
     if sub:
         threading.Thread(target=_feed, args=(sub, proc), daemon=True).start()
-    err = []
     threading.Thread(target=lambda: err.extend(proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:]),
                      daemon=True).start()
-    with _lock:
-        _sessions[sid] = {"proc": proc, "dir": d, "last": time.monotonic(), "client": client, "err": err,
-                          "buffer": buffer, "sub": sub, "url": raw_url, "label": label, "since": int(time.time())}
-        if _reaper is None:
-            _reaper = threading.Thread(target=_reap, daemon=True)
-            _reaper.start()
     return sid
 
 
@@ -110,7 +122,8 @@ def playing():
     """HLS sessions with their own provider connection (On Demand on iPhone / iPad): [{url, label, client, since}].
     Channels share a tuner, so tuner.running() lists them. `url` holds the provider login."""
     with _lock:
-        return [{"url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"]}
+        return [{"url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"],
+                 "source_id": s.get("source_id")}
                 for s in _sessions.values() if not s["sub"] and s.get("url")]
 
 

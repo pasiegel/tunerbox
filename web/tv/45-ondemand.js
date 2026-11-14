@@ -545,6 +545,7 @@ function vodDropped() {
   } else {
     v.base = pos; v.parked = true; destroyPlayer();
     showStatic("", "Can't play this title", `${v.it.title}: no video from the provider. Press Back.`);
+    explainBusy({ vod_id: v.it.id }, "", () => S.vod === v && v.parked);
   }
 }
 function vodEnded() {

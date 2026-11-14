@@ -147,9 +147,19 @@ Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a
 * Antenna channels are matched to your lineup by callsign, using the local over-the-air lineup from Gracenote. For example a station on antenna 3.1 becomes its cable channel, and its subchannels go to the matching lineup channels. Antenna channels not on your lineup are added as extra channels.
 * Matched local channels play from the antenna first, with any playlist feeds kept as backups.
 * Antenna TV is MPEG-2, which browsers can't play, so tuner channels are re-encoded to H.264 by default. You can change this per playlist with the **Video** setting on its card.
-* Each antenna channel being watched or recorded uses one tuner, however many screens are on it. When all tuners are busy, the channel shows No Signal.
+* Each antenna channel being watched or recorded uses one tuner, however many screens are on it. When all tuners are busy, the screen says what's using them (see [Connection limits](#connection-limits)).
 
-This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before. That emulated tuner offers Plex as many tuners as your Xtream accounts allow connections (when every playlist is an Xtream account), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself.
+This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before. That emulated tuner offers Plex as many connections as your playlists allow in total (when every playlist has a limit), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself. When they're all in use it answers Plex the way a real HDHomeRun does ("All tuners in use").
+
+## Connection limits
+Xtream accounts usually allow only 1 or 2 streams at once, and an HDHomeRun has a fixed number of tuners. TunerBox keeps to that limit for each playlist, so a channel that can't start tells you why instead of showing No Signal.
+
+* **The limit:** Xtream accounts and HDHomeRun tuners report it themselves. A plain M3U can't, so it has no limit until you set one: **Setup › Playlists › Connections** on its card (this also overrides what an Xtream account reports).
+* **What counts:** one connection per channel or event feed that's on (however many screens, Plex and recordings share it), and one per On Demand title playing. Changing channel gives up the old one first.
+* **When a playlist is full:** a channel with a backup feed on another playlist plays from there. Otherwise the screen shows **All connections in use**, lists what's using them (for example *Recording: The News* on 8) and offers **Watch 8 instead**: a channel that's already on can be watched on more screens for free.
+* **Recordings come first:** a recording that's starting takes a connection from live TV or On Demand when the playlist is full. That screen then gets the same message, with the recording's channel to switch to. Turn this off in **Setup › Settings › DVR › Recordings come first**: the recording then waits for a connection to free up. A recording never takes over from another recording.
+* **Conflicts:** recordings on different channels that overlap by more than a playlist allows are marked **⚠ CONFLICT** under Coming up in Recordings, with the reason, and you're warned when you schedule one. A channel whose backup feed is on another playlist with room doesn't count as a conflict.
+* **Setup › Tuners** shows each playlist's connections in use against its limit, and who is using each one.
 
 ## Phone remote
 Pair a phone once and use it as the remote for any TunerBox screen (the PC window, a browser on the TV, the iPad), or to manage playlists from the sofa.
@@ -274,7 +284,7 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 ## Notes
 * The guide refreshes when TunerBox starts (unless it was updated in the last 30 minutes), then every 12 hours (`epg_refresh_hours`) while it runs. A Gracenote block that times out is retried, and if it still fails the listings from the last refresh are kept for that time slot. Menu › **Refresh TV guide** does it right away.
 * Gracenote is a free public endpoint, not an official API. If it ever breaks, add an XMLTV source for locals instead.
-* Xtream providers often allow only 1-2 connections. Stream checks skip Xtream sources by default.
+* Xtream providers often allow only 1-2 connections (see [Connection limits](#connection-limits)). Stream checks skip Xtream sources by default.
 * **One connection per channel.** Every screen, Plex and the DVR on the same channel share one provider connection, and a screen joining a channel that's already on starts at once. Different channels each use one. A screen whose playlist **Video** setting differs (say, one re-encoding to 720p) needs its own; a recording joins whatever is already running. Plex gets AAC audio when it shares with a TV.
 
 ## Development

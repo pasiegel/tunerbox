@@ -713,7 +713,7 @@ def item(item_id):
     else:
         url = part["url"]
     p = db.one("SELECT * FROM vod_progress WHERE item_id=?", (item_id,)) or {}
-    out = {"id": item_id, "title_id": t["id"], "kind": "episode" if e else "movie", "title": t["name"],
+    out = {"id": item_id, "title_id": t["id"], "source_id": t["source_id"], "kind": "episode" if e else "movie", "title": t["name"],
            "sub": ep_label(e) if e else t["year"], "url": url, "video_mode": src.get("video_mode") or "",
            "duration": part["duration"] or int(p.get("duration") or 0),
            "position": 0 if p.get("watched") else p.get("position", 0), "next": None}

@@ -31,7 +31,7 @@ def test_export_has_every_setting_including_the_login(client, monkeypatch):
     eagle = data["playlists"][0]
     assert eagle == {"name": "Eagle", "type": "xtream", "url": "http://host:8080", "username": "me",
                      "password": "secret", "enabled": True, "exclude_groups": "XXX",
-                     "hidden_groups": ["AR| KIDS", "UK| NEWS"], "xtream_format": "m3u8", "video_mode": "roku720",
+                     "hidden_groups": ["AR| KIDS", "UK| NEWS"], "xtream_format": "m3u8", "video_mode": "roku720", "max_connections": 0,
                      "on_demand": {"movies": False, "series": False, "hidden": [], "tags": None}}
     assert data["playlists"][1]["enabled"] is False
 

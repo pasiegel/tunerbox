@@ -153,13 +153,13 @@ def fetch_xtream(src):
 # ---------------------------------------------------------------- HDHomeRun
 def tuner_count():
     """Tuners TunerBox's HDHomeRun emulation offers Plex: the setting, or - when every enabled
-    playlist is an Xtream account that states its connection limit - the sum of those limits."""
+    playlist has a connection limit (its own, or what the provider or device states) - their sum."""
+    from .connections import limit_of
     n = int(config.get("tuner_count") or 0)
     if n > 0:
         return n
-    srcs = db.rows("SELECT id, type FROM sources WHERE enabled=1")
-    limits = [int(db.get_meta(f"xtream_max_{s['id']}", 0) or 0) for s in srcs if s["type"] == "xtream"]
-    if srcs and len(limits) == len(srcs) and all(limits):
+    limits = [limit_of(s) for s in db.rows("SELECT * FROM sources WHERE enabled=1")]
+    if limits and all(limits):
         return max(1, sum(limits))
     return 4
 
@@ -185,6 +185,10 @@ def hdhr_info(addr, timeout=6):
 
 def fetch_hdhomerun(src):
     d = hdhr_info(src["url"], 15)
+    try:        # each channel being watched or recorded uses one of the device's tuners
+        db.set_meta(f"hdhr_tuners_{src['id']}", int(d.get("TunerCount") or 0))
+    except (TypeError, ValueError):
+        pass
     lineup_url = d.get("LineupURL") or hdhr_base(src["url"]) + "/lineup.json"
     with client(30) as c:
         r = c.get(lineup_url)
@@ -448,6 +452,7 @@ def export_sources():
                     "password": s["password"] or "", "enabled": bool(s["enabled"]),
                     "exclude_groups": s["exclude_groups"] or "", "hidden_groups": sorted(hidden_groups(s)),
                     "xtream_format": s["xtream_format"] or "ts", "video_mode": s.get("video_mode") or "",
+                    "max_connections": int(s.get("max_conn") or 0),
                     "on_demand": {"movies": bool(s.get("vod_movies")), "series": bool(s.get("vod_series")),
                                   "hidden": json.loads(s.get("vod_hidden") or "[]"),
                                   "tags": json.loads(s.get("vod_tags") or "null")}})
@@ -488,6 +493,11 @@ def import_sources(data):
                "hidden_groups": json.dumps(sorted({str(g) for g in hidden})),
                "xtream_format": "m3u8" if p.get("xtream_format") == "m3u8" else "ts",
                "video_mode": p.get("video_mode") if p.get("video_mode") in ("copy", "h264", "roku720") else ""}
+        if "max_connections" in p:      # files from before connection limits don't have it
+            try:
+                row["max_conn"] = max(0, min(int(p["max_connections"] or 0), 99))
+            except (TypeError, ValueError):
+                pass
         od = p.get("on_demand")
         if isinstance(od, dict):        # files from before On Demand don't have it: leave those settings alone
             hidden_od = od.get("hidden") if isinstance(od.get("hidden"), list) else []

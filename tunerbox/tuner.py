@@ -78,8 +78,9 @@ class Subscriber:
 
 
 class Tuner:
-    def __init__(self, url, mode, audio, buffer):
+    def __init__(self, url, mode, audio, buffer, source_id=None):
         self.url, self.mode, self.audio = url, mode, audio
+        self.source_id = source_id          # the playlist whose connection this uses (connections.py)
         self.retain = max(buffer, MIN_RETAIN)   # seconds of stream kept for viewers who join later
         self.subs = []
         self.lock = threading.Lock()
@@ -119,6 +120,17 @@ class Tuner:
         if n > 1:
             log.info("%s joined %s (%d on this tuner)", name or "viewer", split_url(self.url)[0][-40:], n)
         return sub
+
+    def stop(self):
+        """Stop at once (a recording needs the connection): every reader gets the end of the stream."""
+        with _lock:
+            with self.lock:
+                self.ended = True
+            if self in _tuners:
+                _tuners.remove(self)
+        # the reader thread then ends each viewer (_end). In the background: this runs while a
+        # recording holds connections.admit, and taskkill takes a moment, so no other tune waits for it
+        threading.Thread(target=kill, args=(self.proc,), daemon=True).start()
 
     def leave(self, sub, wait=True):
         with _lock:
@@ -302,16 +314,66 @@ def _find(url, mode, audio, any_mode):
     return best
 
 
-def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name=""):
-    """A Subscriber on the tuner for `url`, starting one if none suits."""
+def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name="", source_id=None, take=False):
+    """A Subscriber on the tuner for `url`, starting one if none suits. Starting one when `source_id`'s
+    playlist has no connection left raises connections.Full, unless `take` (a recording) and live TV
+    or On Demand on that playlist can be stopped to make room."""
+    from . import connections
     mode = mode or config.get("video_mode", "copy")
     buffer = buffer_seconds(buffer)
+    client = name[4:] if name.startswith("hls:") else name
+    # Check and start under connections.admit, so nobody else can take the room in between. That
+    # includes a viewer that make_room stopped, whose screen tunes again at once.
+    with connections.admit:
+        with _lock:     # a running tuner: joining it is free. Decided and joined in one go, so it
+            t = _find(url, mode, audio, any_mode)       # can't stop in between and leave a new,
+            if t is not None:                           # uncounted connection to start instead
+                return t.add(buffer, name)
+        for attempt in range(3):
+            try:    # outside _lock: counting what's in use takes it. url=None: a new connection
+                connections.check(source_id, None, client=client)
+                break
+            except connections.Full:
+                if not take or attempt == 2 or not connections.make_room(source_id, name):
+                    raise
+        with _lock:     # nothing else can start a tuner while admit is held; one may have stopped
+            t = _find(url, mode, audio, any_mode)
+            if t is None:
+                t = Tuner(url, mode, audio, buffer, source_id)
+                _tuners.append(t)
+            return t.add(buffer, name)
+
+
+def open_for(url, client_id=None, mode=None, audio="aac", buffer=None, source_id=None):
+    """A screen tunes `url`: take it off whatever it was playing (channel, movie, TS or HLS), then join
+    the tuner. Raises connections.Full when the playlist has no connection left, before any response
+    is sent, so the screen gets a 503 instead of an empty stream. Checked before the old stream is
+    stopped, so a full playlist doesn't cost the screen what it was watching (join checks again)."""
+    from . import connections, hls
+    connections.check(source_id, url, mode or config.get("video_mode", "copy"), audio, client_id or "")
+    if client_id:
+        streaming.stop_client(client_id)
+        hls.stop_client(client_id)
+    sub = join(url, mode, audio, buffer, name=client_id or "", source_id=source_id)
+    if client_id:
+        _clients[client_id] = sub
+    return sub
+
+
+def sharing(url, mode=None, audio="aac", any_mode=False):
+    """True when a reader of `url` would join a running tuner (no new connection)."""
+    mode = mode or config.get("video_mode", "copy")
     with _lock:
-        t = _find(url, mode, audio, any_mode)
-        if t is None:
-            t = Tuner(url, mode, audio, buffer)
-            _tuners.append(t)
-        return t.add(buffer, name)
+        return _find(url, mode, audio, any_mode) is not None
+
+
+def evict(url, mode, audio):
+    """Stop the running tuner for `url` (to free its connection). True if there was one."""
+    with _lock:
+        ts = [t for t in _tuners if t.url == url and t.mode == mode and t.audio == audio and not t.ended]
+    for t in ts:
+        t.stop()
+    return bool(ts)
 
 
 def running():
@@ -323,7 +385,7 @@ def running():
     for t in ts:
         with t.lock:
             names = [s.name for s in t.subs]
-        out.append({"url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names,
+        out.append({"url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names, "source_id": t.source_id,
                     "since": int(t.started), "mb": round(t.sent / 1e6, 1)})
     return out
 
@@ -335,16 +397,21 @@ def stop_client(client_id):
         sub.close()
 
 
-async def watch(url, client_id=None, mode=None, audio="aac", request=None, buffer=None):
-    """Async generator of MPEG-TS bytes from a shared tuner. Waiting never holds a worker thread."""
+async def watch(url, client_id=None, mode=None, audio="aac", request=None, buffer=None, source_id=None, sub=None):
+    """Async generator of MPEG-TS bytes from a shared tuner. Waiting never holds a worker thread.
+    `sub`: already joined (open_for, so the endpoint could refuse a full playlist with a 503). Without
+    it, it joins here and ends at once (no data) if the playlist has no connection left."""
     import asyncio
 
     import anyio
-    if client_id:               # this screen's previous channel or movie, whichever it was
-        await anyio.to_thread.run_sync(streaming.stop_client, client_id)
-    sub = await anyio.to_thread.run_sync(lambda: join(url, mode, audio, buffer, name=client_id or ""))
-    if client_id:
-        _clients[client_id] = sub
+
+    from .connections import Full
+    if sub is None:
+        try:
+            sub = await anyio.to_thread.run_sync(lambda: open_for(url, client_id, mode, audio, buffer, source_id))
+        except Full as e:
+            log.info("Not started: %s", e)
+            return
     ready = asyncio.Event()
     sub.wake = _waker(asyncio.get_running_loop(), ready)
     last_check = time.monotonic()

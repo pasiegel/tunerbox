@@ -177,6 +177,8 @@ def stop_client(client_id):
     from . import tuner
     with _lock:
         p = _sessions.pop(client_id, None)
+        if p is not None:
+            _playing.pop(id(p), None)       # its connection is free now (connections.used)
     kill(p)
     tuner.stop_client(client_id)
 
@@ -226,37 +228,65 @@ def playing():
         return [dict(v) for v in _playing.values()]
 
 
-async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None, label=""):
+def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
+    """Start a ready-made ffmpeg command (On Demand) for a screen, after taking it off whatever it was
+    playing. Raises connections.Full (leaving what it plays alone) when `source_id`'s playlist has no connection left; checking and
+    registering happen under connections.admit, so two screens can't both take the last one."""
+    from . import connections, hls
+    if source_id is not None:   # room first: a full playlist doesn't cost the viewer what it was watching
+        connections.check(source_id, client=client_id or "")
+    if client_id:   # this viewer's previous channel or movie first (Xtream allows few connections)
+        stop_client(client_id)
+        hls.stop_client(client_id)
+    with connections.admit:
+        if source_id is not None:
+            connections.check(source_id, client=client_id or "")
+        log.info("Stream start for %s: %s", client_id or "-", split_url(raw_url)[0][-60:])
+        proc = track(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0))
+        with _lock:
+            if client_id:
+                _sessions[client_id] = proc
+            if raw_url:
+                _playing[id(proc)] = {"url": raw_url, "label": label, "client": client_id or "",
+                                      "since": int(time.time()), "source_id": source_id}
+    return proc
+
+
+def release(proc, client_id=None):
+    """Forget a start_cmd process and stop it (in the background). Safe to call twice."""
+    with _lock:
+        if client_id and _sessions.get(client_id) is proc:
+            _sessions.pop(client_id, None)
+        _playing.pop(id(proc), None)
+    # taskkill takes a moment: never make the whole server wait for it
+    threading.Thread(target=_finish, args=(proc,), daemon=True).start()
+
+
+async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None, label="",
+                        source_id=None, proc=None, sub=None):
     """Async generator yielding MPEG-TS bytes. Kills ffmpeg when the viewer goes away.
     `cmd` runs a ready-made ffmpeg command instead (On Demand, local channel pieces); `label` names
-    what it plays in Setup › Tuners.
+    what it plays in Setup › Tuners. `source_id`: the playlist whose connection it uses. `proc` (from
+    start_cmd) or `sub` (from tuner.open_for): already started by the endpoint.
 
     Waiting for data never holds a worker thread: the reader thread wakes this coroutine through an
     asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on.
 
     Channels and feeds (no `cmd`) play from a shared tuner (tuner.py): one provider connection
     however many screens watch the same one."""
-    if cmd is None:
+    if cmd is None and proc is None:
         from . import tuner
-        gen = tuner.watch(raw_url, client_id, mode, audio, request, buffer)
+        gen = tuner.watch(raw_url, client_id, mode, audio, request, buffer, source_id, sub)
         try:
             async for chunk in gen:
                 yield chunk
         finally:
             await gen.aclose()
         return
-    if client_id:   # stop this viewer's previous channel first (Xtream allows few connections), off the event loop
-        await anyio.to_thread.run_sync(stop_client, client_id)
     buffer = buffer_seconds(buffer)
-    log.info("Stream start for %s: %s", client_id or "-", split_url(raw_url)[0][-60:])
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0)
-    track(proc)
-    with _lock:
-        if client_id:
-            _sessions[client_id] = proc
-        if raw_url:
-            _playing[id(proc)] = {"url": raw_url, "label": label, "client": client_id or "", "since": int(time.time())}
+    if proc is None:    # off the event loop: it stops this viewer's previous stream first
+        proc = await anyio.to_thread.run_sync(lambda: start_cmd(cmd, client_id, raw_url, label, source_id))
     err = []
     threading.Thread(target=lambda: err.extend(proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:]),
                      daemon=True).start()
@@ -294,12 +324,7 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
                     break
     finally:
         stop.set()
-        with _lock:
-            if client_id and _sessions.get(client_id) is proc:
-                _sessions.pop(client_id, None)
-            _playing.pop(id(proc), None)
-        # taskkill takes a moment: never make the whole server wait for it
-        threading.Thread(target=_finish, args=(proc,), daemon=True).start()
+        release(proc, client_id)
         log.info("Stream end for %s after %.1f MB", client_id or "-", sent / 1e6)
         if sent == 0:
             log.warning("No data from %s: %s", split_url(raw_url)[0][:120], " | ".join(err))

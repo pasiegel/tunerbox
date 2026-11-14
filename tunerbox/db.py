@@ -168,6 +168,7 @@ MIGRATIONS = [
     lambda c: _add_column(c, "recordings", "duration", "INTEGER DEFAULT 0"),
     lambda c: _add_column(c, "recordings", "watched", "INTEGER DEFAULT 0"),
     lambda c: _add_column(c, "recordings", "watched_at", "INTEGER DEFAULT 0"),
+    lambda c: _add_column(c, "sources", "max_conn", "INTEGER DEFAULT 0"),        # connections allowed (0 = automatic)
 ]
 
 

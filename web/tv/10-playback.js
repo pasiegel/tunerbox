@@ -99,6 +99,7 @@ function playFeed(f) {
     if (S.feedCh !== ch) return;
     destroyPlayer();
     showStatic(ch.badge, "Event not on right now", `${ch.name}: this feed only carries video while the event is live. Press Last to go back.`);
+    explainBusy({ key: f.key }, ch.badge, () => S.feedCh === ch);
   };
   play(ch, 0, fail, () => S.feedCh === ch && playFeed(f));
 }
@@ -176,7 +177,35 @@ function failOver(idx, alt) {
     // tuned for a game that an event feed carries too (Sports screen): watch it there instead
     const f = S.gameFeed.feed; S.gameFeed = null;
     toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); playFeed(f);
-  } else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); }
+  } else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); explainBusy({ number: ch.number }, ch.number, () => S.idx === idx && !S.feedCh); }
+}
+
+// Nothing played: if that's because the playlist's connections are all in use (a recording, another TV),
+// say what's using them and offer to watch that instead. `q`: { number } | { key } | { vod_id }.
+// `still()`: false once the screen has moved on, so a late answer doesn't pop up over something else.
+async function explainBusy(q, badge, still) {
+  let r;
+  try { r = await api(`/api/busy?${new URLSearchParams({ ...q, client: CID })}`); } catch (_) { return false; }
+  if (!r.full || !r.full.length || !still()) return false;
+  const f = r.full[0];
+  const using = r.full.flatMap((x) => x.using);
+  const who = (u) => u.viewers.map((v) => v.name).join(", ");
+  const lim = `${f.source} allows ${f.limit} connection${f.limit === 1 ? "" : "s"} at a time`;
+  const what = using.map((u) => (u.viewers.some((v) => v.kind === "dvr") ? `recording ${u.title}` : u.title));
+  showStatic(badge, "All connections in use", `${lim}: ${what.join(", ") || "in use"}.`);
+  const entries = [];
+  for (const u of using) {
+    const i = u.number != null ? S.byNum.get(u.number) : undefined;
+    if (i !== undefined) entries.push({ label: `Watch ${u.title} instead`, right: esc(who(u)), act: () => { closeDialog(); tune(i); } });
+    else if (u.feed) entries.push({ label: `Watch ${u.title} instead`, right: esc(who(u)),
+                                    act: () => { closeDialog(); playFeed({ key: u.feed, name: u.title, kind: "events" }); } });
+    else entries.push({ label: u.title, right: esc(who(u)), act: () => {} });
+  }
+  entries.push({ label: "OK", act: closeDialog });
+  openDialog("All connections in use", `${lim}, and ${f.limit === 1 ? "it's" : "they're all"} being used. Channels that are already on can be watched on this screen too.`, entries);
+  const first = entries.findIndex((e) => e.label.startsWith("Watch"));
+  fillList($("dlg-list"), entries, first < 0 ? entries.length - 1 : first);
+  return true;
 }
 video.addEventListener("playing", () => { clearTimeout(S.watchdog); hideStatic(); });
 

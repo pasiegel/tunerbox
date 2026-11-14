@@ -3,7 +3,7 @@ on now, new recordings and what's coming up. One request, so the screen draws in
 import logging
 import time
 
-from . import config, db, epg, guide, reminders, sports, vod
+from . import config, db, dvr, epg, guide, reminders, sports, vod
 
 log = logging.getLogger("tunerbox.home")
 ROW = 20                    # most tiles in a row
@@ -58,9 +58,13 @@ def _games(now):
 
 
 def _coming_up(now):
-    """Scheduled recordings and reminders, soonest first."""
-    items = [{"type": "rec", **_recording(r)} for r in db.rows(
-        "SELECT * FROM recordings WHERE status IN ('scheduled','recording') AND stop > ? ORDER BY start LIMIT ?", (now, ROW))]
+    """Scheduled recordings and reminders, soonest first. `conflict` says why a recording won't get a
+    connection ("" when it will), as on the Recordings screen."""
+    rows = db.rows("SELECT * FROM recordings WHERE status IN ('scheduled','recording') AND stop > ? ORDER BY start LIMIT ?",
+                   (now, ROW))
+    clash = dvr.conflicts() if rows else {}
+    items = [{"type": "rec", **_recording(r), "conflict": clash.get(r["id"], "") if r["status"] == "scheduled" else ""}
+             for r in rows]
     recs = {(r["number"], r["start"]) for r in items}
     for r in reminders.upcoming(now):
         if (r["number"], r["start"]) not in recs:

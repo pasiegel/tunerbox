@@ -102,6 +102,66 @@ def apply_rules():
     return made
 
 
+LIVE_AHEAD = 3600                       # conflicts(): how far ahead live TV is assumed to stay on
+
+
+def conflicts():
+    """Upcoming recordings that won't get a connection: {recording id: why}. Recordings of the same
+    stream share one tuner, so one connection (even on different channel numbers); a channel whose
+    backup feed is on a playlist with room is fine. Earlier recordings get first pick, as they do
+    when they start. Live TV only counts when recordings don't take connections from it (Setup ›
+    Settings › DVR): then what is on now is assumed to stay on for the next LIVE_AHEAD seconds."""
+    from .connections import dvr_takes_over, limit_of, live_used
+    now = int(time.time())
+    before, after = int(config.get("dvr_pad_before", 60)), int(config.get("dvr_pad_after", 180))
+    recs = db.rows("SELECT * FROM recordings WHERE status IN ('scheduled','recording') AND stop > ? ORDER BY start, id", (now,))
+    takes = dvr_takes_over()
+    if not recs or (takes and len(recs) < 2):
+        return {}
+    srcs = {s["id"]: s for s in db.rows("SELECT * FROM sources")}
+    limits = {sid: limit_of(s) for sid, s in srcs.items()}
+    if not any(limits.values()):
+        return {}
+    live = {} if takes else {sid: live_used(sid) for sid, lim in limits.items() if lim}
+    feeds = {}                          # channel number -> its feeds (playlist, stream url), in the order they're tried
+    for n in {r["number"] for r in recs}:
+        c = guide.channel(n)
+        feeds[n] = [(x["source_id"], x["url"]) for x in guide.stream_rows(c["streams"])] if c else []
+    placed, out = [], {}                # placed: (start, stop, stream url, playlist, title)
+
+    def busiest(sid, a, b, overlap):
+        """Most streams on playlist `sid` recording at one moment in [a, b)."""
+        mine = [p for p in overlap if p[3] == sid]
+        return max((len({p[2] for p in mine if p[0] <= t < p[1]}) for t in {a, *(p[0] for p in mine if a <= p[0] < b)}),
+                   default=0)
+
+    def fits(sid, url, a, b, overlap):
+        if any(p[2] == url for p in overlap) or not limits.get(sid):
+            return True                 # joins a recording of the same stream, or no limit
+        return busiest(sid, a, b, overlap) + (live.get(sid, 0) if a < now + LIVE_AHEAD else 0) < limits[sid]
+
+    for r in recs:
+        a, b = r["start"] - before, r["stop"] + after
+        overlap = [p for p in placed if p[0] < b and a < p[1]]
+        mine = feeds.get(r["number"], [])
+        pick = next((f for f in mine if fits(*f, a, b, overlap)), None)
+        if pick is None and mine:
+            first = mine[0][0]
+            sids = {f[0] for f in mine}
+            others = list(dict.fromkeys(p[4] for p in overlap if p[3] in sids))
+            lim = limits.get(first, 0)
+            name = srcs[first]["name"] if first in srcs else "the playlist"
+            rule = f"{name} allows {lim} connection{'' if lim == 1 else 's'} at a time"
+            if others:
+                out[r["id"]] = f"Overlaps {' and '.join(others[:2])}{' and others' if len(others) > 2 else ''}: {rule}"
+            else:
+                out[r["id"]] = f"Live TV is using {name}'s connections ({rule}): the recording waits until one is free"
+            continue
+        if pick:
+            placed.append((a, b, pick[1], pick[0], r["title"]))
+    return out
+
+
 # ------------------------------------------------------------------ recorder
 def _start(rec):
     ch = guide.channel(rec["number"])
@@ -129,18 +189,44 @@ def _start(rec):
 
 
 def _record(rec, streams, base: Path):
+    from .connections import Full, dvr_takes_over
     stop_at = rec["stop"] + int(config.get("dvr_pad_after", 180))
     ts = _ext(base, ".ts")
     err = ""
-    for attempt, s in enumerate(streams * 3):  # cycle through alternates on failure
-        remaining = stop_at - int(time.time())
-        if remaining <= 5:
+    attempt = tries = waiting = 0
+    take = logged = False
+    while attempt < len(streams) * 3:  # cycle through alternates on failure
+        s = streams[tries % len(streams)]
+        tries += 1
+        if stop_at - int(time.time()) <= 5:
             break
         try:
-            sub = tuner.join(s["url"], s.get("video_mode") or "copy", "aac", 0, any_mode=True, name=f"dvr:{rec['id']}")
+            sub = tuner.join(s["url"], s.get("video_mode") or "copy", "aac", 0, any_mode=True, name=f"dvr:{rec['id']}",
+                             source_id=s.get("source_id"), take=take)
         except OSError as e:            # ffmpeg missing
             err = str(e)
             break
+        except Full as e:               # other recordings (or live TV) hold the connections
+            if not take:
+                waiting += 1
+                if waiting % len(streams):
+                    continue            # try the next feed: it may be on a playlist with room
+                if dvr_takes_over():    # every feed is full: now stop live TV on the next one tried
+                    take = True
+                    continue
+            take = False                # nothing could be stopped (only recordings on it): wait
+            if not logged:
+                logged = True
+                log.warning("Recording %s waiting for a connection: %s", rec["title"], e)
+                db.run("UPDATE recordings SET error=? WHERE id=?", (f"No connection free: {e}", rec["id"]))
+            if not _wait_while_recording(rec["id"], 15):
+                break                   # cancelled or deleted while waiting
+            continue
+        if logged:
+            log.info("Recording %s got a connection", rec["title"])
+            db.run("UPDATE recordings SET error='' WHERE id=?", (rec["id"],))
+        waiting, take, logged = 0, False, False
+        attempt += 1
         _active[rec["id"]] = sub
         try:
             _capture(sub, ts, stop_at)
@@ -151,13 +237,23 @@ def _record(rec, streams, base: Path):
             break  # cancelled
         if int(time.time()) >= stop_at - 5:
             break
-        log.warning("Recording %s interrupted (attempt %d): %s", rec["title"], attempt + 1, err)
+        log.warning("Recording %s interrupted (attempt %d): %s", rec["title"], attempt, err)
         time.sleep(3)
     row = db.one("SELECT status, error FROM recordings WHERE id=?", (rec["id"],))
     if not row:                     # deleted while recording
         ts.unlink(missing_ok=True)
         return
     _finish_file(rec["id"], base, cancelled=row["status"] == "cancelled", err=err, note=row["error"] or "")
+
+
+def _wait_while_recording(rec_id, secs):
+    """Sleep up to `secs`; False as soon as the recording is cancelled or deleted."""
+    end = time.time() + secs
+    while time.time() < end:
+        if not db.one("SELECT 1 FROM recordings WHERE id=? AND status='recording'", (rec_id,)):
+            return False
+        time.sleep(1)
+    return True
 
 
 def _capture(sub, ts: Path, stop_at):

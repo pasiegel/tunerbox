@@ -103,6 +103,9 @@ DEFAULTS = {
     "recordings_dir": "recordings",
     "dvr_pad_before": 60,
     "dvr_pad_after": 180,
+    # when a playlist has no connection left, a recording that's starting takes one from live TV
+    # (that screen is told what's recording and offered that channel instead)
+    "dvr_takes_connection": True,
     # Extra stream cache in seconds (0 = fastest channel changes). Each TV screen can override it
     # in its Menu. Also keeps a read-ahead buffer on the server so a slow Wi-Fi viewer never stalls the provider.
     "stream_buffer": 0,

@@ -15,6 +15,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
 from fastapi.staticfiles import StaticFiles
 
 from . import bundle, config, connections, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
 
@@ -44,7 +45,12 @@ app = FastAPI(title="TunerBox", lifespan=_lifespan)
 
 
 class LiveResponse(StreamingResponse):
-    """Closes the ffmpeg generator as soon as the viewer disconnects."""
+    """Closes the ffmpeg generator as soon as the viewer disconnects. `cleanup`: frees what the
+    endpoint opened before responding (a generator that never started doesn't run its own finally)."""
+    def __init__(self, *a, cleanup=None, **kw):
+        super().__init__(*a, **kw)
+        self.cleanup = cleanup
+
     async def __call__(self, scope, receive, send):
         try:
             await super().__call__(scope, receive, send)
@@ -52,6 +58,8 @@ class LiveResponse(StreamingResponse):
             aclose = getattr(self.body_iterator, "aclose", None)
             if aclose:
                 await aclose()
+            if self.cleanup:
+                await anyio.to_thread.run_sync(self.cleanup)
 
 
 # ------------------------------------------------------------------ channels & guide
@@ -140,6 +148,38 @@ def api_now(number: int):
 
 
 # ------------------------------------------------------------------ playback
+def _full(e):
+    """503 for a playlist with no connection left, as a real HDHomeRun answers Plex when all its tuners are busy.
+    The TV then asks /api/busy what is using them."""
+    return HTTPException(503, str(e), headers={"X-HDHomeRun-Error": "805 All Tuners In Use"})
+
+
+async def _started(fn):
+    """Run what opens a stream (off the event loop) before responding: a full playlist is a 503."""
+    try:
+        return await anyio.to_thread.run_sync(fn)
+    except connections.Full as e:
+        raise _full(e) from None
+    except OSError as e:            # ffmpeg missing
+        raise HTTPException(502, str(e)) from None
+
+
+async def _live(request, row, client, mode, audio, buf):
+    mode = mode or row.get("video_mode") or None
+    sub = await _started(lambda: tuner.open_for(row["url"], client or None, mode, audio, buf, row.get("source_id")))
+    return LiveResponse(ffmpeg_stream(row["url"], client or None, mode, audio, request, buf, sub=sub),
+                        media_type="video/mp2t", headers={"Cache-Control": "no-store"},
+                        cleanup=lambda: sub.close(wait=False))
+
+
+async def _hls(row, client, mode, buf, gone="No signal"):
+    sid = await _started(lambda: hls.start(row["url"], client or None, mode or row.get("video_mode") or None,
+                                           buf, source_id=row.get("source_id")))
+    if not await hls.wait_ready(sid):
+        raise HTTPException(502, gone)
+    return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+
+
 @app.get("/api/stream/{number}")
 async def api_stream(request: Request, number: int, alt: int = 0, client: str = "", mode: str = "", audio: str = "aac",
                      buf: int = -1):
@@ -150,9 +190,7 @@ async def api_stream(request: Request, number: int, alt: int = 0, client: str = 
     rows = await anyio.to_thread.run_sync(guide.stream_rows, c["streams"])
     if alt >= len(rows):
         raise HTTPException(404, "No more alternates")
-    return LiveResponse(ffmpeg_stream(rows[alt]["url"], client or None, mode or rows[alt].get("video_mode") or None,
-                                      audio, request, buf),
-                             media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+    return await _live(request, rows[alt], client, mode, audio, buf)
 
 
 @app.get("/api/hls/{number}")
@@ -164,11 +202,7 @@ async def api_hls(number: int, alt: int = 0, client: str = "", mode: str = "", b
     rows = await anyio.to_thread.run_sync(guide.stream_rows, c["streams"])
     if alt >= len(rows):
         raise HTTPException(404, "No more alternates")
-    sid = await anyio.to_thread.run_sync(hls.start, rows[alt]["url"], client or None,
-                                         mode or rows[alt].get("video_mode") or None, buf)
-    if not await hls.wait_ready(sid):
-        raise HTTPException(502, "No signal")
-    return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+    return await _hls(rows[alt], client, mode, buf)
 
 
 @app.get("/api/hls/s/{sid}/{name}")
@@ -194,17 +228,31 @@ def _feed_row(key):
 async def api_feed_stream(request: Request, key: str, client: str = "", mode: str = "", audio: str = "aac",
                           buf: int = -1):
     r = await anyio.to_thread.run_sync(_feed_row, key)
-    return LiveResponse(ffmpeg_stream(r["url"], client or None, mode or r.get("video_mode") or None, audio, request, buf),
-                        media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+    return await _live(request, r, client, mode, audio, buf)
 
 
 @app.get("/api/feed/hls")
 async def api_feed_hls(key: str, client: str = "", mode: str = "", buf: int = -1):
     r = await anyio.to_thread.run_sync(_feed_row, key)
-    sid = await anyio.to_thread.run_sync(hls.start, r["url"], client or None, mode or r.get("video_mode") or None, buf)
-    if not await hls.wait_ready(sid):
-        raise HTTPException(502, "Not live")
-    return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+    return await _hls(r, client, mode, buf, "Not live")
+
+
+@app.get("/api/busy")
+def api_busy(number: int | None = None, key: str = "", vod_id: str = "", client: str = "", mode: str = "",
+             audio: str = "aac"):
+    """After a channel, feed or On Demand title wouldn't start: if that's because every connection its
+    playlists allow is in use, what is using them (so the screen can offer to watch that instead)."""
+    if number is not None:
+        c = guide.channel(number)
+        rows = guide.stream_rows(c["streams"]) if c else []
+    elif key:
+        rows = guide.stream_rows([key])
+    elif vod_id:
+        it = vod.item(vod_id)
+        rows = [{"source_id": it["source_id"]}] if it else []
+    else:
+        rows = []
+    return {"full": connections.busy(rows, client, mode or None, audio)}
 
 
 # ------------------------------------------------------------------ search, sports & PPV
@@ -248,8 +296,7 @@ async def api_preview(request: Request, key: str, client: str = ""):
     rows = await anyio.to_thread.run_sync(guide.stream_rows, [key])
     if not rows:
         raise HTTPException(404)
-    return LiveResponse(ffmpeg_stream(rows[0]["url"], client or None, rows[0].get("video_mode") or None, request=request),
-                        media_type="video/mp2t")
+    return await _live(request, rows[0], client, "", "aac", -1)
 
 
 @app.post("/api/clientlog")
@@ -361,6 +408,7 @@ def api_sources():
         s["count"] = db.one("SELECT count(*) n FROM streams WHERE source_id=?", (s["id"],))["n"]
         s["hidden"] = len(sources.hidden_groups(s))
         s["vod"] = vod.source_stats(s)
+        s["conn_auto"] = connections.auto_limit(s)       # what the provider / device says, shown as "Automatic (2)"
         s.pop("hidden_groups", None)
         s.pop("vod_hidden", None)
     return out
@@ -432,7 +480,12 @@ def api_edit_source(sid: int, data: dict = Body(...)):
             except Exception as e:  # noqa: BLE001
                 raise HTTPException(400, f"Can't reach an HDHomeRun at {data['url']}: {e}") from None
             data["url"] = sources.hdhr_base(data["url"])
-    for k in ("name", "url", "username", "password", "exclude_groups", "xtream_format", "enabled", "video_mode"):
+    if "max_conn" in data:
+        try:
+            data["max_conn"] = max(0, min(int(data["max_conn"] or 0), 99))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Connections must be a number") from None
+    for k in ("name", "url", "username", "password", "exclude_groups", "xtream_format", "enabled", "video_mode", "max_conn"):
         if k in data:
             db.run(f"UPDATE sources SET {k}=? WHERE id=?", (data[k], sid))
     job = ""
@@ -789,15 +842,17 @@ def api_vod_play(item_id: str):
 async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     cmd = vod.stream_cmd(it["url"], max(0.0, ss), mode or it["video_mode"] or None)
-    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, cmd=cmd, label=_vod_label(it)),
-                        media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+    proc = await _started(lambda: streaming.start_cmd(cmd, client or None, it["url"], _vod_label(it), it["source_id"]))
+    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, proc=proc),
+                        media_type="video/mp2t", headers={"Cache-Control": "no-store"},
+                        cleanup=lambda: streaming.release(proc, client or None))
 
 
 @app.get("/api/vod/hls/{item_id}")
 async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
-    sid = await anyio.to_thread.run_sync(hls.start, it["url"], client or None, mode or it["video_mode"] or None, 0,
-                                         vod.hls_pre(max(0.0, ss)), _vod_label(it))
+    sid = await _started(lambda: hls.start(it["url"], client or None, mode or it["video_mode"] or None, 0,
+                                           vod.hls_pre(max(0.0, ss)), _vod_label(it), it["source_id"]))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
@@ -854,8 +909,19 @@ def api_tuners():
 # ------------------------------------------------------------------ DVR
 @app.get("/api/recordings")
 def api_recordings():
-    return db.rows("SELECT * FROM recordings ORDER BY CASE status WHEN 'recording' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, "
+    """Every recording; `conflict` says why an upcoming one won't get a connection ("" when it will)."""
+    rows = db.rows("SELECT * FROM recordings ORDER BY CASE status WHEN 'recording' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, "
                    "CASE WHEN status IN ('scheduled','recording') THEN start ELSE -start END")
+    clash = dvr.conflicts()
+    for r in rows:
+        r["conflict"] = clash.get(r["id"], "") if r["status"] == "scheduled" else ""
+    return rows
+
+
+def _clashes(ids):
+    """Conflict texts for the given recording ids, for the message after scheduling."""
+    clash = dvr.conflicts()
+    return [clash[i] for i in ids if i in clash]
 
 
 @app.post("/api/recordings")
@@ -866,14 +932,16 @@ def api_record(number: int = Body(...), start: int = Body(...), series: bool = B
         p = db.one("SELECT * FROM programs WHERE channel=? AND start<=? AND stop>?", (c["epg"], start, start)) if c and c["epg"] else None
         if not p:
             raise HTTPException(400, "No guide data for that program")
-        dvr.add_rule(p["title"], None if any_channel else number, new_only)
+        rid = dvr.add_rule(p["title"], None if any_channel else number, new_only)
         dvr.schedule_program(number, start)
-        return {"ok": True}
+        ids = [r["id"] for r in db.rows("SELECT id FROM recordings WHERE status='scheduled' AND (rule_id=? OR (number=? AND start=?))",
+                                        (rid, number, p["start"]))]
+        return {"ok": True, "conflicts": _clashes(ids)}
     rec = dvr.schedule_program(number, start)
     if not rec:
         raise HTTPException(400, "No guide data for that program")
     dvr.tick()
-    return rec
+    return {**rec, "conflicts": _clashes([rec["id"]])}
 
 
 @app.post("/api/recordings/manual")

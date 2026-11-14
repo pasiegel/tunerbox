@@ -82,7 +82,12 @@ function programDialog(ch, p) {
   const entries = [];
   if (p.start <= n0 && n0 < p.stop) entries.push({ label: "Watch now", act: () => { closeDialog(); G.close(); closeHome(); tune(S.byNum.get(ch.number)); } });
   const rec = async (body, msg) => {
-    try { await api("/api/recordings", { method: "POST", body: { number: ch.number, start: p.start, ...body } }); toast(msg); }
+    try {
+      const r = await api("/api/recordings", { method: "POST", body: { number: ch.number, start: p.start, ...body } });
+      const clash = (r && r.conflicts) || [];
+      if (clash.length) toast(`${msg}. ⚠ ${clash.length > 1 ? `${clash.length} recordings won't get a connection. ` : ""}${clash[0]}`, 8000);
+      else toast(msg);
+    }
     catch (e) { toast(`Can't record: ${e.message}`); }
     closeDialog(); G.forget(ch.number); if (top() === "guide") G.render();
   };

@@ -208,3 +208,229 @@ def test_hls_session_that_cant_start_leaves_no_folder(monkeypatch, tmp_path):
     with pytest.raises(OSError):
         hls.start("http://x/1")
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- connection limits (connections.py)
+def _account(limit, kind="xtream", own=0):
+    """A playlist allowing `limit` connections (Xtream's max_connections, or an HDHomeRun's tuners)."""
+    from tunerbox import db
+    sid = db.run("INSERT INTO sources(name, type, url, max_conn) VALUES ('Prov', ?, 'http://prov', ?)", (kind, own))
+    db.set_meta(f"{'xtream_max' if kind == 'xtream' else 'hdhr_tuners'}_{sid}", limit)
+    return sid
+
+
+def test_full_account_refuses_a_second_channel(fake):
+    from tunerbox.connections import Full
+    sid = _account(1)
+    a = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    b = tuner.join("fake:1000:0.05:0", "copy", name="tv2", source_id=sid)     # same channel: shared, free
+    with pytest.raises(Full, match="Prov allows 1 connection"):
+        tuner.join("fake:1000:0.05:1", "copy", name="tv3", source_id=sid)
+    assert len(fake) == 1
+    tuner.join("fake:1000:0.05:2", "copy", name="tv3", source_id=None).close()  # another playlist: no limit
+    a.close(); b.close()
+
+
+def test_a_screens_own_channel_doesnt_count_against_it(fake):
+    from tunerbox import connections
+    sid = _account(1)
+    a = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    connections.check(sid, "fake:1000:0.05:1", "copy", client="tv1")            # tv1 gives it up when it tunes
+    with pytest.raises(connections.Full):
+        connections.check(sid, "fake:1000:0.05:1", "copy", client="tv2")
+    a.close()
+
+
+def test_own_limit_overrides_what_the_provider_says(fake):
+    from tunerbox import connections, db
+    sid = _account(1, own=3)
+    assert connections.limit_of(db.one("SELECT * FROM sources WHERE id=?", (sid,))) == 3
+    subs = [tuner.join(f"fake:1000:0.05:{i}", "copy", name=f"tv{i}", source_id=sid) for i in range(3)]
+    with pytest.raises(connections.Full):
+        tuner.join("fake:1000:0.05:9", "copy", name="tv9", source_id=sid)
+    for s in subs:
+        s.close()
+
+
+def test_recording_takes_the_connection_from_live_tv(fake):
+    sid = _account(1, "hdhomerun")
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    _read(tv, 20000)
+    rec = tuner.join("fake:1000:0.05:1", "copy", any_mode=True, name="dvr:7", source_id=sid, take=True)
+    assert rec.tuner is not tv.tuner and tv.tuner.proc.poll() is not None    # live TV stopped
+    end = time.monotonic() + 5
+    while time.monotonic() < end and tv.get(timeout=5) != b"":
+        pass                                        # the screen sees the end of its stream
+    assert [t["viewers"] for t in tuner.running()] == [["dvr:7"]]
+    rec.close()
+
+
+def test_recording_never_takes_another_recordings_connection(fake):
+    from tunerbox.connections import Full
+    sid = _account(1)
+    first = tuner.join("fake:1000:0.05:0", "copy", any_mode=True, name="dvr:1", source_id=sid, take=True)
+    with pytest.raises(Full):
+        tuner.join("fake:1000:0.05:1", "copy", any_mode=True, name="dvr:2", source_id=sid, take=True)
+    assert first.tuner.proc.poll() is None
+    first.close()
+
+
+def test_api_refuses_a_full_playlist_and_says_whats_using_it(fake):
+    from fastapi.testclient import TestClient
+
+    from tunerbox import api, db, guide
+    sid = _account(1)
+    for n, url in ((8, "fake:1000:0.05:0"), (9, "fake:1000:0.05:1")):
+        db.run("INSERT INTO streams(key, source_id, name, url) VALUES (?, ?, ?, ?)", (f"k{n}", sid, f"Ch {n}", url))
+        db.run("INSERT INTO lineup(number, name) VALUES (?, ?)", (n, f"Ch {n}"))
+        db.run("INSERT INTO mappings(number, stream_key, mode) VALUES (?, ?, 'manual')", (n, f"k{n}"))
+    guide.invalidate()
+    rec = tuner.join("fake:1000:0.05:0", "copy", any_mode=True, name="dvr:5", source_id=sid)
+    c = TestClient(api.app)
+    r = c.get("/api/stream/9?client=tv2")
+    assert r.status_code == 503 and r.headers["X-HDHomeRun-Error"].startswith("805")
+    busy = c.get("/api/busy?number=9&client=tv2")
+    full = busy.json()["full"]
+    assert full[0]["source"] == "Prov" and full[0]["limit"] == 1
+    assert full[0]["using"][0]["number"] == 8 and full[0]["using"][0]["viewers"] == [{"kind": "dvr", "name": "Recording"}]
+    assert "fake:" not in busy.text                                     # never a provider address
+    assert c.get("/api/busy?number=8&client=tv2").json()["full"] == []  # channel 8 is on: it can be watched
+    rec.close()
+
+
+def test_two_screens_tuning_at_once_cant_both_take_the_last_connection(fake, monkeypatch):
+    import threading
+
+    from tunerbox import connections
+    sid = _account(1)
+    real = connections.check
+    gate = threading.Barrier(2, timeout=5)
+
+    def slow_check(*a, **k):                    # both screens pass the check before either starts a tuner
+        real(*a, **k)
+        try:
+            gate.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            pass
+    monkeypatch.setattr(connections, "check", slow_check)
+    got, refused = [], []
+
+    def tune(i):
+        try:
+            got.append(tuner.join(f"fake:1000:0.05:{i}", "copy", name=f"tv{i}", source_id=sid))
+        except connections.Full:
+            refused.append(i)
+    ts = [threading.Thread(target=tune, args=(i,)) for i in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(10)
+    assert len(got) == 1 and len(refused) == 1 and len(fake) == 1
+    for s in got:
+        s.close()
+
+
+def test_screen_stopped_for_a_recording_cant_take_the_connection_back(fake, monkeypatch):
+    import threading
+
+    from tunerbox import connections
+    sid = _account(1)
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    real_make_room = connections.make_room
+    retried = []
+
+    def make_room(*a, **k):                     # the stopped screen retunes the moment its channel stops
+        ok = real_make_room(*a, **k)
+        t = threading.Thread(target=lambda: retried.append(_try_join(sid)))
+        t.start()
+        t.join(0.5)                             # it must wait for the recording to start its tuner
+        return ok
+    monkeypatch.setattr(connections, "make_room", make_room)
+    rec = tuner.join("fake:1000:0.05:1", "copy", any_mode=True, name="dvr:7", source_id=sid, take=True)
+    end = time.monotonic() + 5
+    while not retried and time.monotonic() < end:
+        time.sleep(0.05)
+    assert retried == ["full"]
+    assert [t["viewers"] for t in tuner.running()] == [["dvr:7"]]
+    rec.close()
+    tv.close()
+
+
+def _try_join(sid):
+    from tunerbox import connections
+    try:
+        tuner.join("fake:1000:0.05:2", "copy", name="tv1", source_id=sid).close()
+        return "joined"
+    except connections.Full:
+        return "full"
+
+
+def test_hls_channel_stops_the_screens_on_demand_stream(fake, monkeypatch, tmp_path):
+    from tunerbox import connections, hls
+    sid = _account(1)
+    monkeypatch.setattr(hls, "ROOT", tmp_path)
+    proc = streaming.start_cmd([sys.executable, "-c", "import time; time.sleep(30)"], "tv1", "http://prov/movie.mkv",
+                               "A movie", sid)
+    assert connections.used(sid) == 1
+    monkeypatch.setattr(hls, "_cmd", lambda *a, **k: [sys.executable, "-c", "import sys; sys.stdin.read()"])
+    s = hls.start("fake:1000:0.05:0", "tv1", "copy", 0, source_id=sid)
+    assert streaming.playing() == [] and proc.wait(5) is not None   # the movie's connection was given up
+    assert connections.used(sid) == 1                                 # only the channel's tuner
+    hls._stop(s)
+
+
+def test_busy_uses_the_mode_the_screen_asked_for(fake):
+    from tunerbox import connections
+    sid = _account(1)
+    a = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    row = {"url": "fake:1000:0.05:0", "source_id": sid, "video_mode": "copy"}
+    assert connections.busy([row], "tv2") == []                           # copy is already on: free to watch
+    full = connections.busy([row], "tv2", mode="roku720")                 # 720p needs a tuner of its own
+    assert full and full[0]["limit"] == 1
+    a.close()
+
+
+def test_joining_a_running_tuner_is_decided_and_done_in_one_step(fake, monkeypatch):
+    from tunerbox import connections
+    sid = _account(1)
+    a = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    real = connections.check
+
+    def no_check(*a_, **k):     # sharing is settled under tuner._lock, not by a check that can go stale
+        raise AssertionError("checked")
+    monkeypatch.setattr(connections, "check", no_check)
+    b = tuner.join("fake:1000:0.05:0", "copy", name="tv2", source_id=sid)
+    assert b.tuner is a.tuner and len(fake) == 1
+    monkeypatch.setattr(connections, "check", real)
+    a.close()
+    b.close()                   # the tuner stops: the next viewer needs a counted, new connection
+    rec = tuner.join("fake:1000:0.05:1", "copy", any_mode=True, name="dvr:1", source_id=sid)
+    with pytest.raises(connections.Full):
+        tuner.join("fake:1000:0.05:0", "copy", name="tv3", source_id=sid)
+    rec.close()
+
+
+def test_full_playlist_doesnt_cost_the_screen_its_channel(fake):
+    from tunerbox import connections
+    sid = _account(1)
+    rec = tuner.join("fake:1000:0.05:0", "copy", any_mode=True, name="dvr:1", source_id=sid)
+    tv = tuner.open_for("fake:1000:0.05:1", "tv1", "copy", source_id=None)     # tv1 on another playlist
+    with pytest.raises(connections.Full):
+        tuner.open_for("fake:1000:0.05:2", "tv1", "copy", source_id=sid)
+    assert tuner._clients["tv1"] is tv and not tv.tuner.ended                  # still watching
+    tuner.stop_client("tv1")
+    rec.close()
+
+
+def test_stopping_a_tuner_for_a_recording_doesnt_wait_for_ffmpeg(fake, monkeypatch):
+    sid = _account(1)
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
+    slow = []
+    monkeypatch.setattr(tuner, "kill", lambda p: (time.sleep(1), slow.append(p), p.kill()))
+    t0 = time.monotonic()
+    tv.tuner.stop()
+    assert time.monotonic() - t0 < 0.5 and tuner.running() == []
+    end = time.monotonic() + 3
+    while not slow and time.monotonic() < end:
+        time.sleep(0.05)
+    assert slow                                         # ffmpeg still stopped, in the background

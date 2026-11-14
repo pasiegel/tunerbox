@@ -128,7 +128,7 @@ function hmTile(it, r, i) {
   } else {            // sched (a recording to come) / remind / fail (one that didn't record)
     pic = it.t !== "remind" && it.art ? `/api/recordings/${it.id}/art` : `/api/art/${it.number}/${it.start}`;
     live = it.status === "recording";
-    badge = live ? "● REC" : it.t === "fail" ? "FAILED" : it.t === "sched" ? "REC" : "REMIND"; dimBadge = it.t === "fail";
+    badge = live ? "● REC" : it.t === "fail" ? "FAILED" : it.conflict ? "⚠ CONFLICT" : it.t === "sched" ? "REC" : "REMIND"; dimBadge = it.t === "fail";
     title = it.title; sub = `${fmtWhen(it.start)} · ${it.number} ${it.channel_name || ""}`; tone = it.title;
   }
   return `<div class="hm-tile t${odTone(String(tone || ""))}${poster ? " poster" : ""}${pic ? " art" : ""}" ${at}${num ? ` data-num="${esc(num)}"` : ""}>`
@@ -199,8 +199,10 @@ function hmText(it) {
   } else {
     title = it.title; sub = it.subtitle || "";
     meta = [`${fmtDay(it.start)} ${fmtTime(it.start)}`, `${it.number} ${it.channel_name || ""}`,
-            it.t === "remind" ? "🔔 Reminder set" : it.t === "fail" ? "Didn't record" : it.status === "recording" ? "● Recording now" : "Will be recorded"].join("  ·  ");
-    desc = it.t === "fail" && it.error ? it.error : it.descr || "";
+            it.t === "remind" ? "🔔 Reminder set" : it.t === "fail" ? "Didn't record" : it.status === "recording" ? "● Recording now"
+              : it.conflict ? "⚠ Won't get a connection" : "Will be recorded"].join("  ·  ");
+    // a clash with other recordings, or a recording waiting for a connection, says why
+    desc = it.conflict || ((it.t === "fail" || it.status === "recording") && it.error ? it.error : it.descr || "");
   }
   return { title, sub, meta, desc };
 }

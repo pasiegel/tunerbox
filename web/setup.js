@@ -268,11 +268,24 @@ loaders.sources = async () => {
         <option value="copy" ${s.video_mode === "copy" ? "selected" : ""}>Original</option>
         <option value="h264" ${s.video_mode === "h264" ? "selected" : ""}>Re-encode to H.264${s.type === "hdhomerun" ? " (needed for antenna TV)" : ""}</option>
         <option value="roku720" ${s.video_mode === "roku720" ? "selected" : ""}>Re-encode to 720p (Roku, slow devices)</option></select></div>
+      ${connRow(s)}
       <details class="adv"${s.exclude_groups ? " open" : ""}><summary class="muted small">Skip pattern (advanced)</summary>
       <div class="row"><input data-f="exclude_groups" value="${esc(s.exclude_groups)}" placeholder="regex, e.g. ^(UK|AR)|XXX" style="flex:1">
       <button class="btn small" data-a="save">Save</button></div></details></div>`).join("")
     : '<p class="muted">No playlists yet. Add your M3U link or Xtream login below, then press <b>Scan playlists now</b>.</p>';
 };
+// How many streams TunerBox opens on a playlist at once. Automatic: what an Xtream account or HDHomeRun
+// says (no limit for a plain M3U, which can't say). Set it for an M3U provider that has a limit.
+function connRow(s) {
+  const auto = s.conn_auto ? `${s.conn_auto} at a time, from your ${s.type === "hdhomerun" ? "tuner" : "provider"}` : "no limit";
+  const own = +s.max_conn || 0;
+  // 1-10, and a larger number set some other way (backup import, API: up to 99) so it shows as set
+  const opts = Array.from({ length: Math.max(10, own) }, (_, i) => i + 1).filter((n) => n <= 10 || n === own)
+    .map((n) => `<option value="${n}" ${own === n ? "selected" : ""}>${n}</option>`).join("");
+  return `<div class="row"><span class="muted small">${s.type === "hdhomerun" ? "Tuners" : "Connections"}:</span><select data-a="conn" class="small">
+      <option value="0" ${own ? "" : "selected"}>Automatic (${auto})</option>${opts}</select>
+      <span class="muted small">TunerBox never opens more than this, and tells a TV what's using them.</span></div>`;
+}
 // On Demand switches on a playlist's card: movies + TV shows for an Xtream login, video files for a plain M3U
 // On Demand on a playlist's card: a row each for movies and TV shows, with its categories and its switch
 // (a plain M3U has one switch for its video files, which can be movies and episodes)
@@ -307,6 +320,12 @@ $("src-list").addEventListener("change", async (e) => {
     toast(!on ? "On Demand turned off for this playlist" : r.job ? "Reading the list from your provider: the categories show up here in a moment…" : "Saved");
     if (r.job) pollJob();
     loaders.sources();
+    return;
+  }
+  if (e.target.dataset.a === "conn") {
+    try { await api(`/api/sources/${e.target.closest(".card").dataset.id}`, { method: "PATCH", body: { max_conn: +e.target.value } }); }
+    catch (err) { toast(err.message); return; }
+    toast("Saved: applies from the next channel change");
     return;
   }
   if (e.target.dataset.a !== "video") return;
@@ -585,7 +604,7 @@ loaders.tuners = async () => {
         <div class="tn-count"><b>${s.used}</b> ${s.limit ? `of ${s.limit} connection${s.limit === 1 ? "" : "s"} in use` : `connection${s.used === 1 ? "" : "s"} in use`}</div>
         ${s.limit ? `<div class="tn-meter"><i style="width:${pct}%"></i></div>` : ""}
         <div class="muted small">${full ? "Full: another channel or movie on this playlist won't start until one stops."
-          : s.limit ? `${s.limit - s.used} free` : s.type === "xtream" ? "Limit not known yet (it's read when the playlist is scanned)." : "This kind of playlist doesn't report a limit."}</div>
+          : s.limit ? `${s.limit - s.used} free` : s.type === "xtream" ? "Limit not known yet (it's read when the playlist is scanned). You can set one under Playlists." : "No limit set. If your provider has one, set it under Playlists › Connections."}</div>
       </div>`;
     }).join("") || '<p class="muted">No playlists yet.</p>';
     $("tn-body").innerHTML = d.tuners.map((t) => `<tr>

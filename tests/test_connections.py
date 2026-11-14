@@ -62,8 +62,28 @@ def test_nothing_running(monkeypatch):
 
 def test_running_lists_tuner_viewers(monkeypatch):
     t = tuner.Tuner.__new__(tuner.Tuner)                  # no ffmpeg: just the fields running() reads
-    t.url, t.mode, t.audio, t.ended, t.sent, t.started = "u", "copy", "aac", False, 2_500_000, 123.9
+    t.url, t.mode, t.audio, t.ended, t.sent, t.started, t.source_id = "u", "copy", "aac", False, 2_500_000, 123.9, 3
     t.lock = threading.Lock()
     t.subs = [type("S", (), {"name": "tv1"})(), type("S", (), {"name": "dvr:4"})()]
     monkeypatch.setattr(tuner, "_tuners", [t])
-    assert tuner.running() == [{"url": "u", "mode": "copy", "audio": "aac", "viewers": ["tv1", "dvr:4"], "since": 123, "mb": 2.5}]
+    assert tuner.running() == [{"url": "u", "mode": "copy", "audio": "aac", "viewers": ["tv1", "dvr:4"], "source_id": 3,
+                                "since": 123, "mb": 2.5}]
+
+
+def test_playlist_limit_is_saved_exported_and_offered_to_plex():
+    from tunerbox import sources
+    c = TestClient(api.app)
+    a = db.run("INSERT INTO sources(name, type, url) VALUES ('Plain', 'm3u', 'http://plain/list.m3u')")
+    b = db.run("INSERT INTO sources(name, type, url) VALUES ('Antenna', 'hdhomerun', 'http://10.0.0.5')")
+    db.set_meta(f"hdhr_tuners_{b}", 4)
+    assert sources.tuner_count() == 4                      # the M3U has no limit: Plex gets the default
+    assert c.patch(f"/api/sources/{a}", json={"max_conn": 2}).status_code == 200
+    assert sources.tuner_count() == 6                      # 2 set by hand + the antenna's 4 tuners
+    listed = {s["id"]: s for s in c.get("/api/sources").json()}
+    assert listed[a]["max_conn"] == 2 and listed[a]["conn_auto"] == 0 and listed[b]["conn_auto"] == 4
+    assert c.patch(f"/api/sources/{a}", json={"max_conn": "lots"}).status_code == 400
+    exported = sources.export_sources()
+    assert {p["name"]: p["max_connections"] for p in exported["playlists"]} == {"Plain": 2, "Antenna": 0}
+    db.run("UPDATE sources SET max_conn=0 WHERE id=?", (a,))
+    sources.import_sources(exported)
+    assert db.one("SELECT max_conn FROM sources WHERE id=?", (a,))["max_conn"] == 2
