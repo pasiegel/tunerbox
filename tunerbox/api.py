@@ -300,8 +300,8 @@ def api_lineup():
 
 
 @app.get("/api/suggest")
-def api_suggest(number: int | None = None, q: str = "", limit: int = 60):
-    return matcher.suggest(number, q, limit)
+def api_suggest(number: int | None = None, q: str = "", limit: int = 60, source_id: int | None = None):
+    return matcher.suggest(number, q, limit, source_id)
 
 
 @app.post("/api/mapping")
@@ -413,11 +413,32 @@ def api_hdhr_discover():
 
 @app.patch("/api/sources/{sid}")
 def api_edit_source(sid: int, data: dict = Body(...)):
+    before = db.one("SELECT * FROM sources WHERE id=?", (sid,))
+    if not before:
+        raise HTTPException(404)
+    for k in ("name", "url", "username", "password"):
+        if isinstance(data.get(k), str):
+            data[k] = data[k].strip()
+    if "password" in data and data["password"] in ("", "••••"):
+        data.pop("password")                    # left blank in the Edit form: keep the saved one
+    if "name" in data and not data["name"]:
+        raise HTTPException(400, "Give the playlist a name")
+    if "url" in data:
+        if not data["url"]:
+            raise HTTPException(400, "URL / server is required")
+        if before["type"] == "hdhomerun" and data["url"] != before["url"]:
+            try:
+                sources.hdhr_info(data["url"])      # fail now, with a clear message, if it isn't a tuner
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(400, f"Can't reach an HDHomeRun at {data['url']}: {e}") from None
+            data["url"] = sources.hdhr_base(data["url"])
     for k in ("name", "url", "username", "password", "exclude_groups", "xtream_format", "enabled", "video_mode"):
-        if k in data and not (k == "password" and data[k] == "••••"):
+        if k in data:
             db.run(f"UPDATE sources SET {k}=? WHERE id=?", (data[k], sid))
     job = ""
     src = db.one("SELECT * FROM sources WHERE id=?", (sid,))
+    if any(k in data and data[k] != before[k] for k in ("url", "username", "password", "xtream_format")):
+        job = "scan" if jobs.scan() else ""      # a new address or login: read the playlist again
     turned = {k: int(bool(data[k])) for k in ("vod_movies", "vod_series") if src and k in data and int(bool(data[k])) != src[k]}
     if turned:              # On Demand switched on or off for this playlist
         for k, on in turned.items():

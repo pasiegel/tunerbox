@@ -3,6 +3,26 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// Search that forgives how a name is typed: case, accents, spaces and punctuation don't matter, and "&" or
+// "+" match "and" or "plus" or nothing. "a & e", "ae" and "a and e" find A&E; "espn 2" finds ESPN2;
+// "espanol" finds Español; "today’s" (a phone's curly apostrophe) finds Today's. One or two letters
+// only match the start of a word, so "e!" finds E! and A&E but not every name with an e in it.
+const fold = (s) => String(s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const searchForms = (s) => { const f = fold(s); return [f.replace(/&/g, " and ").replace(/\+/g, " plus "), f]; };
+const squash = (s) => s.replace(/[^a-z0-9]+/g, "");
+// an antenna feed's own channel number, from its key ("3:xhd8.1" -> "8.1"), shown before its name
+const antNum = (st) => { const m = /:xhd(\d+(?:\.\d+)?)$/.exec(st && st.key || ""); return m ? m[1] : ""; };
+const feedName = (st) => (antNum(st) ? `${antNum(st)} ` : "") + (st ? st.name : "");
+function matcher(q) {
+  const qs = [...new Set(searchForms(q).map(squash))].filter(Boolean);
+  if (!qs.length) { const raw = q.trim().toLowerCase(); return (...f) => f.some((x) => String(x ?? "").toLowerCase().includes(raw)); }
+  const short = qs.every((k) => k.length < 3);
+  return (...fields) => fields.some((x) => searchForms(x).some((f) => {
+    if (!short) { const n = squash(f); return qs.some((k) => n.includes(k)); }
+    const w = f.split(/[^a-z0-9]+/).filter(Boolean);       // from each word start to the end, squashed
+    return w.some((_, i) => { const n = w.slice(i).join(""); return qs.some((k) => n.startsWith(k)); });
+  }));
+}
 const CID = "setup-" + Math.random().toString(36).slice(2);
 const api = async (url, opts = {}) => {
   const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts,
@@ -33,6 +53,7 @@ async function startJob(name, q = "") {
   } catch (e) { toast(e.message); }
 }
 let polling = false;
+const editing = () => !!document.querySelector(".src-edit:not(.hidden)");     // a playlist's Edit form is open: don't redraw it away
 async function pollJob() {
   if (polling) return; polling = true;
   let wasRunning = false, ticks = 0;
@@ -41,13 +62,13 @@ async function pollJob() {
     if (j.running) {
       wasRunning = true;
       // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
-      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden")) loaders.sources();
+      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
       $("job").classList.remove("hidden");
       $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
       $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
     } else {
       $("job").classList.add("hidden");
-      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && loaders[cur](); }
+      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
       break;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -67,8 +88,8 @@ loaders.channels = async () => {
 };
 const isWeak = (c) => c.stream && c.mode === "auto" && (c.score < 92 || /network/i.test(c.reason));
 function renderLineup() {
-  const q = $("ch-search").value.trim().toLowerCase();
-  const f = $("ch-filter").value;
+  const q = $("ch-search").value.trim();
+  const f = $("ch-filter").value, hit = matcher(q);
   const rows = lineup.filter((c) => {
     if (f === "mapped" && !c.stream) return false;
     if (f === "unmapped" && (c.stream || c.mode === "none")) return false;
@@ -76,8 +97,7 @@ function renderLineup() {
     if (f === "none" && c.mode !== "none") return false;
     if (f === "weak" && !isWeak(c)) return false;
     if (!q) return true;
-    return String(c.number).startsWith(q) || c.name.toLowerCase().includes(q) || (c.callsign || "").toLowerCase().includes(q)
-      || (c.stream && c.stream.name.toLowerCase().includes(q));
+    return String(c.number).startsWith(q) || hit(c.name, c.callsign, c.affiliate, c.stream && feedName(c.stream));
   });
   const mapped = lineup.filter((c) => c.stream).length;
   $("ch-stats").textContent = `${mapped} of ${lineup.length} lineup channels have a feed · showing ${rows.length}`;
@@ -87,7 +107,7 @@ function renderLineup() {
       : c.mode === "manual" ? '<span class="tag manual">MANUAL</span>'
       : s ? `<span class="tag ${isWeak(c) ? "weak" : "auto"}" title="${esc(c.reason)}">AUTO ${c.score}${c.alts ? ` +${c.alts}` : ""}</span>` : "";
     const feed = s ? `<div class="feed"><span class="dot ${s.status}" title="${s.status}"></span>${s.logo ? `<img src="${esc(s.logo)}" onerror="this.remove()">` : ""}
-        <div><div>${esc(s.name)}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div></div>`
+        <div><div>${esc(feedName(s))}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div></div>`
       : '<span class="muted">—</span>';
     return `<tr data-n="${c.number}"><td class="num">${c.number}</td>
       <td>${esc(c.name)}<div class="cs">${esc(c.callsign || "")}${c.affiliate ? " · " + esc(c.affiliate) : ""}</div></td>
@@ -104,18 +124,19 @@ $("ch-body").addEventListener("click", async (e) => {
   const n = +b.closest("tr").dataset.n;
   const c = lineup.find((x) => x.number === n);
   if (b.dataset.a === "pick") openPicker(c);
-  if (b.dataset.a === "play") { openPicker(c); preview(c.stream.key, c.stream.name); }
+  if (b.dataset.a === "play") { openPicker(c); preview(c.stream.key, feedName(c.stream)); }
   if (b.dataset.a === "off") { await api("/api/mapping", { method: "POST", body: { number: n, mode: "none" } }); loaders.channels(); }
   if (b.dataset.a === "auto") { await api("/api/mapping", { method: "POST", body: { number: n, mode: "auto" } }); toast("Re-matching…"); pollJob(); }
 });
 
 // ---------------------------------------------------------------- picker
-let pickFor = null, player = null, searchT;
+let pickFor = null, player = null, searchT, pkSeq = 0;
 function openPicker(c) {
   pickFor = c;
+  pkSources();
   $("pk-title").textContent = `${c.number}  ${c.name}`;
-  $("pk-sub").textContent = c.stream ? `Currently: ${c.stream.name} (${c.stream.source_name})` : "No feed assigned";
-  $("pk-search").value = ""; $("pk-now").textContent = "";
+  $("pk-sub").textContent = c.stream ? `Currently: ${feedName(c.stream)} (${c.stream.source_name})` : "No feed assigned";
+  $("pk-search").value = ""; $("pk-now").textContent = ""; $("pk-src").value = "";
   $("picker").classList.remove("hidden");
   loadSuggestions();
   $("pk-search").focus();
@@ -125,13 +146,26 @@ $("pk-close").onclick = closePicker;
 $("picker").addEventListener("click", (e) => { if (e.target.id === "picker") closePicker(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && pickFor) closePicker(); });
 $("pk-search").oninput = () => { clearTimeout(searchT); searchT = setTimeout(loadSuggestions, 250); };
+$("pk-src").onchange = () => { $("pk-search").focus(); loadSuggestions(); };
+// the playlists to pick from (enabled ones: the only ones a channel can play from). Hidden with just one.
+async function pkSources() {
+  let list = [];
+  try { list = (await api("/api/sources")).filter((s) => s.enabled); } catch (_) { /* keep "All playlists" */ }
+  const sel = $("pk-src"), keep = sel.value;
+  sel.innerHTML = '<option value="">All playlists</option>' + list.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("");
+  sel.value = list.some((s) => String(s.id) === keep) ? keep : "";
+  sel.classList.toggle("hidden", list.length < 2);
+}
 async function loadSuggestions() {
-  const q = $("pk-search").value.trim();
-  $("pk-hint").textContent = q ? `Results for "${q}":` : "Best guesses for this channel:";
-  const list = await api(`/api/suggest?limit=80&${q ? "q=" + encodeURIComponent(q) : "number=" + pickFor.number}`);
-  $("pk-results").innerHTML = list.length ? list.map((s) => `<li data-k="${esc(s.key)}" data-n="${esc(s.name)}">
+  const q = $("pk-search").value.trim(), src = $("pk-src").value, seq = ++pkSeq;
+  const sel = $("pk-src").selectedOptions[0], where = src && sel ? ` in ${sel.textContent}` : "";
+  $("pk-hint").textContent = q ? `Results for "${q}"${where}:` : `Best guesses for this channel${where}:`;
+  $("pk-search").placeholder = where ? `Search channels${where}…` : "Search all playlist channels…";
+  const list = await api(`/api/suggest?limit=80&${q ? "q=" + encodeURIComponent(q) : "number=" + pickFor.number}${src ? "&source_id=" + src : ""}`);
+  if (seq !== pkSeq) return;          // a newer search or playlist pick already asked
+  $("pk-results").innerHTML = list.length ? list.map((s) => `<li data-k="${esc(s.key)}" data-n="${esc(feedName(s))}">
       <span class="dot ${s.status}" title="${s.status}"></span>
-      <div class="nm"><div>${esc(s.name)}</div><div class="muted small">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div>
+      <div class="nm"><div>${esc(feedName(s))}</div><div class="muted small">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div>
       <span class="sc">${s.score}</span>
       <button class="btn small" data-a="prev">&#9654;</button><button class="btn small primary" data-a="use">Use</button></li>`).join("")
     : '<li class="muted">Nothing found. Try another search.</li>';
@@ -170,8 +204,8 @@ loaders.extras = async () => {
   renderExtras();
 };
 function renderExtras() {
-  const q = $("ex-search").value.trim().toLowerCase(), g = $("ex-group").value;
-  const rows = extras.filter((e) => (!g || e.grp === g) && (!q || e.name.toLowerCase().includes(q) || String(e.number).startsWith(q)));
+  const q = $("ex-search").value.trim(), g = $("ex-group").value, hit = matcher(q);
+  const rows = extras.filter((e) => (!g || e.grp === g) && (!q || String(e.number).startsWith(q) || hit(e.name)));
   $("ex-stats").textContent = `${extras.filter((e) => e.enabled).length} shown of ${extras.length} · listing ${Math.min(rows.length, 1500)}`;
   $("ex-body").innerHTML = rows.slice(0, 1500).map((e) => `<tr data-k="${esc(e.stream_key)}">
     <td><input class="numedit" type="number" value="${e.number}"></td>
@@ -212,13 +246,22 @@ loaders.sources = async () => {
   const list = await api("/api/sources");
   $("src-list").innerHTML = list.length ? list.map((s) => `<div class="card" data-id="${s.id}">
       <div class="card-head"><div class="t">${esc(s.name)} <span class="tag">${{ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U"}</span> ${s.enabled ? "" : '<span class="tag none">disabled</span>'}</div>
+        <button class="btn small" data-a="edit">Edit</button>
         <button class="btn small" data-a="toggle">${s.enabled ? "Disable" : "Enable"}</button>
         <button class="btn small danger" data-a="del">Delete</button></div>
       <div class="u">${esc(s.url)}${s.username ? " · user " + esc(s.username) : ""}</div>
+      <form class="src-edit hidden" data-type="${s.type}">
+        <label>Name <input name="name" value="${esc(s.name)}" required></label>
+        <label>${{ xtream: "Server", hdhomerun: "Address (IP or name)" }[s.type] || "Playlist URL or file path"} <input name="url" value="${esc(s.url)}" required></label>
+        ${s.type === "xtream" ? `<label>Username <input name="username" value="${esc(s.username)}" autocomplete="off"></label>
+        <label>Password <input name="password" type="password" placeholder="${s.password ? "Unchanged" : ""}" autocomplete="new-password"></label>` : ""}
+        <div class="row"><button class="btn small primary">Save</button><button type="button" class="btn small" data-a="edit-cancel">Cancel</button>
+        <span class="muted small">A new address or login is read right away.</span></div>
+      </form>
       <div class="muted small">${s.count} channels${s.vod.movies ? ` · ${s.vod.movies.toLocaleString()} movies` : ""}${s.vod.series ? ` · ${s.vod.series.toLocaleString()} shows` : ""} · ${esc(s.status || "not scanned yet")}${s.updated_at ? " · " + fmt(s.updated_at) : ""}</div>
       ${s.epg_url ? `<div class="muted small">Guide: ${esc(s.epg_url.replace(/password=[^&]+/, "password=…"))}</div>` : ""}
-      <div class="row"><button class="btn small primary" data-a="groups">Channel groups…</button>
-      <span class="muted small">${s.hidden ? `${s.hidden} group${s.hidden === 1 ? "" : "s"} hidden` : "All groups shown"}</span></div>
+      <div class="row"><button class="btn small primary" data-a="groups">${s.type === "hdhomerun" ? "Channels…" : "Channel groups…"}</button>
+      <span class="muted small">${((w) => s.hidden ? `${s.hidden} ${w}${s.hidden === 1 ? "" : "s"} hidden` : `All ${w}s shown`)(s.type === "hdhomerun" ? "channel" : "group")}</span></div>
       ${vodRows(s)}
       <div class="row"><span class="muted small">Video:</span><select data-a="video" class="small">
         <option value="" ${!s.video_mode ? "selected" : ""}>Default (Settings)</option>
@@ -275,10 +318,29 @@ $("src-list").addEventListener("click", async (e) => {
   const card = b.closest(".card"), id = card.dataset.id;
   if (b.dataset.a === "del" && confirm("Delete this playlist?")) await api(`/api/sources/${id}`, { method: "DELETE" });
   if (b.dataset.a === "toggle") await api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: b.textContent === "Enable" ? 1 : 0 } });
+  if (b.dataset.a === "edit" || b.dataset.a === "edit-cancel") {
+    const f = card.querySelector(".src-edit"), open = b.dataset.a === "edit" && f.classList.contains("hidden");
+    if (!open) f.reset();
+    f.classList.toggle("hidden", !open);
+    if (open) f.elements.name.focus();
+    return;
+  }
+  if (b.closest(".src-edit")) return;             // the form's Save: handled by its submit
   if (b.dataset.a === "groups") { openGroups(+id); return; }
   if (b.dataset.a === "vodcats") { openGroups(+id, b.dataset.kind); return; }
   if (b.dataset.a === "save") { await api(`/api/sources/${id}`, { method: "PATCH", body: { exclude_groups: card.querySelector("[data-f]").value } }); toast("Saved - rescan to apply"); }
   loaders.sources();
+});
+$("src-list").addEventListener("submit", async (e) => {
+  const f = e.target.closest(".src-edit"); if (!f) return;
+  e.preventDefault();
+  const body = Object.fromEntries([...f.elements].filter((el) => el.name).map((el) => [el.name, el.value.trim()]));
+  if (!body.password) delete body.password;       // blank: keep the saved one
+  let r;
+  try { r = await api(`/api/sources/${f.closest(".card").dataset.id}`, { method: "PATCH", body }); } catch (err) { toast(err.message); return; }
+  toast(r.job === "scan" ? "Saved. Reading the playlist again…" : "Saved");
+  loaders.sources();
+  if (r.job) pollJob();
 });
 const srcType = () => {
   const t = $("src-type").value, xt = t === "xtream", hd = t === "hdhomerun";
@@ -292,12 +354,17 @@ $("hd-find").onclick = async () => {
   $("hd-found").textContent = "Looking…";
   let list; try { list = await api("/api/hdhomerun/discover"); } catch (e) { $("hd-found").textContent = e.message; return; }
   if (!list.length) { $("hd-found").textContent = "No tuners found. Type its address instead (see the HDHomeRun app or your router)."; return; }
-  $("hd-found").innerHTML = list.map((d) => `<button type="button" class="btn small" data-ip="${esc(d.ip)}" data-name="${esc(d.name)}">${esc(d.name)} ${esc(d.model)} · ${esc(d.ip)} · ${d.tuners} tuners</button>`).join(" ");
+  $("hd-found").innerHTML = list.map((d) => `<button type="button" class="btn small" aria-pressed="false" data-ip="${esc(d.ip)}" data-name="${esc(d.name)}">${esc(d.name)} ${esc(d.model)} · ${esc(d.ip)} · ${d.tuners} tuners</button>`).join(" ");
+  if (list.length === 1) pickTuner($("hd-found").querySelector("button[data-ip]"));   // only one: fill it in for them
 };
-$("hd-found").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-ip]"); if (!b) return;
+// fill the address (and the name, if blank) from a discovered tuner, and mark it as the one picked
+const pickTuner = (b) => {
+  $("hd-found").querySelectorAll("button[data-ip]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   $("src-form").url.value = b.dataset.ip;
   if (!$("src-form").elements.name.value) $("src-form").elements.name.value = b.dataset.name;
+};
+$("hd-found").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-ip]"); if (b) pickTuner(b);
 });
 $("src-type").onchange = srcType; srcType();
 $("src-form").onsubmit = async (e) => {
@@ -341,7 +408,7 @@ $("src-import-file").onchange = async (e) => {
 // ---------------------------------------------------------------- playlist groups
 // Tick/untick whole groups. "US| SPORTS", "DE: NEWS"… can be filtered by their country prefix.
 // The same picker edits a playlist's On Demand movie or TV show categories (GR.vod = "movie" / "series").
-const GR = { id: 0, vod: false, all: [], shown: new Map(), orig: new Set() };
+const GR = { id: 0, vod: false, chans: false, all: [], shown: new Map(), orig: new Set() };   // chans: an antenna, one row per channel
 // ... and (GR.vod = "tags") which labels in front of the titles are shown: "EN", "4K-FR", "NF".
 const grUrl = () => `/api/sources/${GR.id}/${GR.vod === "tags" ? "vod-tags" : GR.vod ? `vod-cats?kind=${GR.vod}` : "groups"}`;
 // "US| NEWS", "DE: SPORT" and, in On Demand categories, "EN - MOVIES"
@@ -350,17 +417,19 @@ async function openGroups(id, vod = "") {
   let d;
   GR.id = id; GR.vod = vod;
   try { d = await api(grUrl()); } catch (e) { toast(e.message); return; }
-  GR.all = d.groups;
+  GR.all = d.groups; GR.chans = !!d.channels;
   GR.shown = new Map(d.groups.map((g) => [g.name, !g.hidden]));
   GR.orig = new Set(d.groups.filter((g) => g.hidden).map((g) => g.name));
   const [what, these] = { movie: ["Movie", "movies"], series: ["TV show", "TV shows"] }[vod] || [];
   const tags = vod === "tags";
-  $("gr-title").textContent = tags ? `On Demand languages and labels in ${d.source.name}` : `${vod ? `${what} categories` : "Channel groups"} in ${d.source.name}`;
+  $("gr-title").textContent = tags ? `On Demand languages and labels in ${d.source.name}` : `${vod ? `${what} categories` : GR.chans ? "Channels" : "Channel groups"} in ${d.source.name}`;
   $("gr-sub").textContent = tags ? "Most providers put a label in front of every title: a language (EN, DE, FR), a language and quality (4K-EN) or a platform (NF = Netflix, D+ = Disney+). Tick the ones you want. Labels the provider adds later start unticked."
-    : vod ? `Untick a category to leave its ${these} out of On Demand.` : "Untick a group to leave its channels out of TunerBox.";
-  $("gr-search").placeholder = tags ? "Search labels…" : vod ? "Search categories…" : "Search groups…";
-  $("gr-th").textContent = tags ? "Label · example" : vod ? "Category" : "Group"; $("gr-th-n").textContent = vod ? "Titles" : "Channels";
-  $("gr-region").classList.toggle("hidden", tags);
+    : vod ? `Untick a category to leave its ${these} out of On Demand.`
+    : GR.chans ? "Untick a channel to leave it out of TunerBox." : "Untick a group to leave its channels out of TunerBox.";
+  $("gr-search").placeholder = tags ? "Search labels…" : vod ? "Search categories…" : GR.chans ? "Search channels…" : "Search groups…";
+  $("gr-th").textContent = tags ? "Label · example" : vod ? "Category" : GR.chans ? "Channel" : "Group"; $("gr-th-n").textContent = vod ? "Titles" : "Channels";
+  $("gr-region").classList.toggle("hidden", tags || GR.chans);
+  $("groups").classList.toggle("chans", GR.chans);
   const note = $("gr-note");
   note.textContent = d.partial ? "Groups skipped by an older version aren't listed yet. They appear after the next scan." : "";
   note.classList.toggle("hidden", !d.partial);
@@ -376,8 +445,8 @@ async function openGroups(id, vod = "") {
   $("gr-search").focus();
 }
 function listedGroups() {
-  const q = $("gr-search").value.trim().toLowerCase(), reg = $("gr-region").value, show = $("gr-show").value;
-  return GR.all.filter((g) => (!q || g.name.toLowerCase().includes(q))
+  const q = $("gr-search").value.trim(), reg = $("gr-region").value, show = $("gr-show").value, hit = matcher(q);
+  return GR.all.filter((g) => (!q || hit(g.name))
     && (!reg || (reg === "-" ? !regionOf(g.name) : regionOf(g.name) === reg))
     && (!show || (show === "shown") === GR.shown.get(g.name)));
 }
@@ -398,8 +467,9 @@ function groupStats(listed) {
   let gs = 0, cs = 0, ct = 0;
   for (const g of GR.all) { ct += g.count; if (GR.shown.get(g.name) && !g.pattern) { gs++; cs += g.count; } }
   const changed = GR.all.filter((g) => GR.orig.has(g.name) === GR.shown.get(g.name)).length;
-  $("gr-stats").textContent = `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} ${GR.vod === "tags" ? "labels" : GR.vod ? "categories" : "groups"} `
-    + `(${cs.toLocaleString()} of ${ct.toLocaleString()} ${GR.vod ? "titles" : "channels"}) · listing ${(listed ?? listedGroups().length).toLocaleString()}`
+  $("gr-stats").textContent = (GR.chans ? `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} channels `
+    : `Keeping ${gs.toLocaleString()} of ${GR.all.length.toLocaleString()} ${GR.vod === "tags" ? "labels" : GR.vod ? "categories" : "groups"} `
+    + `(${cs.toLocaleString()} of ${ct.toLocaleString()} ${GR.vod ? "titles" : "channels"}) `) + `· listing ${(listed ?? listedGroups().length).toLocaleString()}`
     + (changed ? ` · ${changed} unsaved change${changed === 1 ? "" : "s"}` : "");
 }
 function setListed(on, others) {
@@ -434,8 +504,8 @@ $("gr-save").onclick = async () => {
   closeGroups(); loaders.sources();
   if (GR.vod === "tags") toast(`Saved: On Demand shows ${r.hidden ? `${r.shown} label${r.shown === 1 ? "" : "s"}` : "every label"}`);
   else if (GR.vod) toast(r.job ? "Saved. Reading those categories from your provider…" : "Saved");
-  else if (r.shown_again) toast(r.job ? "Saved. Rescanning to add the groups back…" : "Saved. Press Scan playlists when the current job finishes to add the groups back.");
-  else if (r.newly_hidden) toast(r.job ? `Saved. Removed ${r.newly_hidden} group${r.newly_hidden === 1 ? "" : "s"}, re-matching channels…` : "Saved. Press Re-run auto match when the current job finishes.");
+  else if (r.shown_again) { const w = GR.chans ? "channels" : "groups"; toast(r.job ? `Saved. Rescanning to add the ${w} back…` : `Saved. Press Scan playlists when the current job finishes to add the ${w} back.`); }
+  else if (r.newly_hidden) toast(r.job ? `Saved. Removed ${r.newly_hidden} ${GR.chans ? "channel" : "group"}${r.newly_hidden === 1 ? "" : "s"}, re-matching channels…` : "Saved. Press Re-run auto match when the current job finishes.");
   else toast("Saved");
   if (r.job) pollJob();
 };

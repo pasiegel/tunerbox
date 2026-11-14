@@ -84,7 +84,7 @@
       <label class="xt">Password <input name="password" type="password" autocomplete="off"></label>
       <label class="xt">Stream format <select name="xtream_format"><option value="ts">MPEG-TS (.ts)</option><option value="m3u8">HLS (.m3u8)</option></select></label>
       <label class="wide hd-hide">Skip groups pattern (optional regex; after adding, use Groups… to pick groups) <input name="exclude_groups" placeholder="e.g. ^(UK|AR|IN)\b|Adult|XXX"></label>
-      <div class="wide"><button class="btn primary">Add playlist</button> <span class="muted">Tip: an Xtream <code>get.php?username=…</code> link pasted as M3U is converted automatically.</span></div>
+      <div class="wide"><button class="btn primary">Add playlist</button> <span class="muted hd-hide">Tip: an Xtream <code>get.php?username=…</code> link pasted as M3U is converted automatically.</span></div>
     </form>
     <div class="toolbar">
       <button class="btn primary" id="btn-scan2">Scan playlists now</button>
@@ -289,7 +289,8 @@
     </div>
     <div class="pk-body">
       <div class="pk-left">
-        <input id="pk-search" placeholder="Search all playlist channels…">
+        <div class="pk-find"><input id="pk-search" placeholder="Search all playlist channels…">
+          <select id="pk-src" title="Which playlist to look in"><option value="">All playlists</option></select></div>
         <div class="muted small" id="pk-hint">Best guesses for this channel:</div>
         <ul id="pk-results"></ul>
       </div>

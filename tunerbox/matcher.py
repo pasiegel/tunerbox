@@ -396,8 +396,10 @@ def rebuild_extras(streams=None):
 
 
 # ------------------------------------------------------------------ manual picker
-def suggest(number=None, q="", limit=60):
+def suggest(number=None, q="", limit=60, source_id=None):
     streams = load_streams_all()
+    if source_id:               # one playlist only: filtered first, so its own best matches fill the list
+        streams = [s for s in streams if s["source_id"] == source_id]
     if not streams:
         return []
     names = [s["norm"] or norm(s["name"]) for s in streams]
@@ -410,6 +412,11 @@ def suggest(number=None, q="", limit=60):
         for i, s in enumerate(streams):
             if ql in s["name"].lower() or ql in (s["tvg_id"] or "").lower():
                 scores[i] = max(scores.get(i, 0), 90 + (5 if s["norm"] == qn else 0))
+        if re.fullmatch(r"\d+(\.\d+)?", q.strip()):        # an antenna channel by number: "8" or "8.1"
+            ant = re.compile(rf":xhd{re.escape(q.strip())}(\.\d+)?$")
+            for i, s in enumerate(streams):
+                if ant.search(s["key"]):
+                    scores[i] = 100 if s["key"].endswith(f":xhd{q.strip()}") else max(scores.get(i, 0), 96)
     elif number is not None:
         ch = db.one("SELECT * FROM lineup WHERE number=?", (number,))
         if not ch:
@@ -431,6 +438,11 @@ def suggest(number=None, q="", limit=60):
             for i, s in enumerate(streams):
                 if s["norm"] in {inf["network"] + x for x in NET_SUFFIX}:
                     scores[i] = max(scores.get(i, 0), 78)
+    if q:
+        # fuzzy matches forgive typos ("discvery"), but next to real matches they're only noise ("wotv"
+        # also finding WOOD TV and CourtTV). Keep them only when nothing contains what was typed.
+        floor = 90 if any(sc >= 90 for sc in scores.values()) else 70
+        scores = {i: sc for i, sc in scores.items() if sc >= floor}
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], streams[kv[0]]["status"] != "ok"))[:limit]
     out = []
     for i, sc in ranked:

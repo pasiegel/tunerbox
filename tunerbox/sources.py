@@ -209,8 +209,10 @@ def fetch_hdhomerun(src):
         call = calls.get(major)
         tvg = ota.get(num) or ((call if not minor or minor == "1" else f"{call}DT{minor}") if call else "")
         tvg = f"ota:{tvg}" if tvg else ""
+        # "num"/"label": Setup lists an antenna's channels one by one, not its single group
         out.append({"name": it.get("GuideName") or num, "url": it["URL"], "tvg_id": tvg, "logo": "",
-                    "grp": f"Antenna ({d.get('FriendlyName') or 'HDHomeRun'})", "xid": f"hd{num}"})
+                    "grp": f"Antenna ({d.get('FriendlyName') or 'HDHomeRun'})", "xid": f"hd{num}",
+                    "num": num, "label": f"{num} {it.get('GuideName') or ''}".strip()})
     return out, ""
 
 
@@ -280,8 +282,9 @@ def refresh_source(src):
     now = int(time.time())
     all_groups = {}
     for it in items:
-        all_groups[it["grp"] or ""] = all_groups.get(it["grp"] or "", 0) + 1
-    kept = [it for it in items if not ((it["grp"] or "") in hidden or (rx and rx.search(it["grp"] or "")))]
+        unit = it.get("label") or it["grp"] or ""
+        all_groups[unit] = all_groups.get(unit, 0) + 1
+    kept = [it for it in items if not left_out(it, hidden, rx)]
     keys = stream_keys(src, kept)
     seen = set(keys)
     with db.conn() as c:
@@ -341,6 +344,22 @@ def exclude_regex(src):
         return None
 
 
+def _num(name):
+    """An antenna channel's number from its Setup label: '8.1 WOOD-HD' -> '8.1' (else '')."""
+    first = (name or "").split(" ", 1)[0]
+    return first if re.fullmatch(r"\d+(\.\d+)?", first) else ""
+
+
+def left_out(it, hidden, rx):
+    """A playlist entry the person has left out: its group is unticked or matches the skip pattern, or (an
+    antenna channel) the channel itself is unticked. Channels are matched by number, so one the tuner
+    renames stays left out."""
+    grp = it["grp"] or ""
+    if grp in hidden or (rx and rx.search(grp)):
+        return True
+    return bool(it.get("num")) and it["num"] in {_num(h) for h in hidden}
+
+
 def hidden_groups(src):
     try:
         return set(json.loads(src.get("hidden_groups") or "[]"))
@@ -361,6 +380,18 @@ def groups(source_id):
         rows = db.rows("SELECT grp, count(*) AS count FROM streams WHERE source_id=? GROUP BY grp", (source_id,))
         known = {r["grp"] for r in rows}
         rows += [{"grp": g, "count": 0} for g in hidden if g not in known]
+    channels = src["type"] == "hdhomerun"
+    if channels and any(_num(r["grp"]) for r in rows):
+        # an antenna: one row per channel, in channel order. A channel counts as hidden by its number.
+        nums = {_num(h) for h in hidden} - {""}
+        out = [{"name": r["grp"], "count": r["count"], "hidden": r["grp"] in hidden or _num(r["grp"]) in nums,
+                "pattern": False} for r in rows]
+        known = {r["grp"] for r in rows} | {_num(r["grp"]) for r in rows}
+        # hidden before the switch to channels (the whole "Antenna (…)" group), so it can be ticked again
+        out += [{"name": h, "count": 0, "hidden": True, "pattern": False} for h in hidden
+                if h not in known and _num(h) not in known]
+        out.sort(key=lambda g: tuple(int(x) for x in _num(g["name"]).split(".")) if _num(g["name"]) else (1e9,))
+        return {"source": {"id": src["id"], "name": src["name"]}, "groups": out, "partial": False, "channels": True}
     out = [{"name": r["grp"], "count": r["count"], "hidden": r["grp"] in hidden,
             "pattern": bool(rx and rx.search(r["grp"] or ""))} for r in rows]
     out.sort(key=lambda g: g["name"].lower())
@@ -380,6 +411,9 @@ def set_hidden_groups(source_id, names):
         with db.conn() as c:
             q = ",".join("?" * len(dropped))
             c.execute(f"DELETE FROM streams WHERE source_id=? AND grp IN ({q})", (source_id, *dropped))
+            keys = [f"{source_id}:xhd{n}" for n in {_num(h) for h in dropped} - {""}]     # antenna channels
+            if keys:
+                c.execute(f"DELETE FROM streams WHERE key IN ({','.join('?' * len(keys))})", keys)
     return {"hidden": len(new), "newly_hidden": len(dropped), "shown_again": len(old - new)}
 
 
