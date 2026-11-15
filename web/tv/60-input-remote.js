@@ -50,6 +50,7 @@ function setLocalBinding(id, action) {
 }
 async function loadServerBindings() {
   try { S.settings = await api("/api/settings"); serverBindings = S.settings.keymap || {}; } catch (_) {}
+  if (window.tbTheme) tbTheme.server(S.settings.theme);
 }
 
 function inputId(ev) {

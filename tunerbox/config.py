@@ -130,6 +130,8 @@ DEFAULTS = {
     # the Home button opens the guide, and Home is left out of the menus. Each screen can still choose,
     # in its Menu, not to start on Home.
     "home_screen": True,
+    # colour theme for every screen (web/theme.js); each TV screen can pick its own in Menu › Theme
+    "theme": "midnight",
     "sleep_hours": 4,
     "screensaver_enabled": True,
     "screensaver_minutes": 10,
@@ -264,6 +266,7 @@ def update(changes: dict):
 
 # Settings that name a program to run, or a place on disk to read or write: only the PC itself can
 # change them, so another device on the network can't point TunerBox at its own program or folder.
+THEMES = ("midnight", "classic", "retro", "contrast", "light")     # same list as web/theme.js
 PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
            "https_enabled", "https_port", "https_hosts"}
 # Managed through their own API calls, never through /api/settings
@@ -331,6 +334,8 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "sports_teams":
             v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9]+:[a-z0-9-]+", str(x).strip().lower())})
+        elif k == "theme" and v not in THEMES:
+            raise ValueError(f"Unknown theme: {v}")
         elif k == "https_hosts":
             v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9.:-]{1,253}", str(x).strip().lower())})
         elif k == "https_port" and not (1 <= v <= 65535):

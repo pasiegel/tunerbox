@@ -39,6 +39,16 @@ function openDialog(title, sub, entries) {
 }
 function closeDialog() { S.layer = S.layer.filter((l) => l !== "dialog"); $("dialog").classList.add("hidden"); $("dlg-img").classList.add("hidden"); clearInterval(S.pairPoll); }
 
+// this screen's colours: follow Setup's theme, or pick one just for this screen (kept in this browser)
+function themeDialog() {
+  const own = tbTheme.own(), def = S.settings.theme || "midnight";
+  const set = (t) => { tbTheme.pick(t); closeDialog(); toast(`Theme: ${tbTheme.label(t || def)}`); };
+  openDialog("Theme", "Colours for this screen. Setup › Settings › Screens sets the theme for every screen.", [
+    { label: `Use the default (${tbTheme.label(def)})${own ? "" : "  ✓"}`, act: () => set("") },
+    ...tbTheme.list.filter(([id]) => id !== "light")          // TV screens stay dark: text sits on pictures and video
+      .map(([id, name]) => ({ label: `${name}${own === id ? "  ✓" : ""}`, act: () => set(id) })),
+  ]);
+}
 function bufferDialog() {
   const cur = localStorage.getItem("tb.buffer");
   const set = (v) => {
@@ -157,6 +167,8 @@ const MENU = [
     act: () => { closeMenu(); bufferDialog(); } },
   { id: "homestart", needsHome: true, get label() { return `Start on Home: ${homeAtStart() ? "On" : "Off"} (this screen)`; },
     act: () => { try { localStorage.setItem("tb.homeStart", homeAtStart() ? "0" : "1"); } catch (_) {} renderMenu(menuShown.indexOf(MENU_HOMESTART)); } },
+  { get label() { const own = tbTheme.own(); return `Theme: ${tbTheme.label(own || S.settings.theme)}${own ? " (this screen)" : " (default)"}`; },
+    act: () => { closeMenu(); themeDialog(); } },
   { label: "Remote control setup", notPhone: true, act: () => { closeMenu(); openRemote(); } },
   { label: "Use a phone as the remote…", notPhone: true, act: () => { closeMenu(); pairDialog(); } },
   { id: "full", label: "Full screen", act: () => { toggleFull(); closeMenu(); } },
