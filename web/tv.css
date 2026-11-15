@@ -207,11 +207,45 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .learn-box { background: var(--surface); border: 1px solid var(--hl); border-radius: 1.2em; padding: 2em 4em; text-align: center; font-size: 1.5em; }
 #learn-action { font-size: 2em; font-weight: 800; color: var(--hl); margin: .3em 0; }
 .learn-box small { color: var(--dim); font-size: .7em; }
-#remote { position: absolute; top: 2vh; left: 50%; transform: translateX(-50%); z-index: 45; display: flex; gap: .4em; background: var(--surface); backdrop-filter: blur(14px); padding: .45em; border-radius: 2em; border: 1px solid var(--line); box-shadow: 0 1em 3em #000a; }
-#remote button { background: transparent; color: var(--text); border: 0; border-radius: 2em; padding: .65em 1.05em; font: 600 1em var(--font); cursor: pointer; }
+/* on-screen controls (mouse / touch): where to go at the top, this channel at the bottom, like a video player */
+#remote { position: absolute; inset: 0; z-index: 45; pointer-events: none; }
+#remote .rm-pill { pointer-events: auto; display: flex; align-items: center; gap: .15em; padding: .35em; border-radius: 2.2em;
+  background: var(--surface); backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: 0 .8em 2.4em #0009; }
+#remote button { display: inline-flex; align-items: center; gap: .5em; height: 2.6em; padding: 0 1em; border: 0; border-radius: 2em;
+  background: transparent; color: var(--text); font: 600 1.05em var(--font); cursor: pointer; white-space: nowrap; }
+#remote button svg { width: 1.3em; height: 1.3em; flex: none; }
+#remote button.ico { width: 2.6em; padding: 0; justify-content: center; }
 #remote button:hover { background: #ffffff1a; }
-#remote button:active { background: var(--hl); color: #000; }
-#remote .sep { flex: 0 0 1px; margin: .45em .3em; background: var(--line); }   /* between groups */
+#remote button:active { background: var(--hl); color: var(--hl-text); }
+#remote .sep { flex: 0 0 1px; height: 1.5em; margin: 0 .3em; background: var(--line); }
+.rm-top { position: absolute; top: 2.5vh; left: 2.5vw; right: 2.5vw; display: flex; justify-content: space-between; align-items: center; }
+.rm-brand { font-size: 1.35em; font-weight: 800; letter-spacing: -.03em; padding: 0 .7em 0 .55em; }
+.rm-brand span { color: var(--hl); }
+.rm-bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 7em 2.5vw 3vh; background: linear-gradient(0deg, #07090ff2 0%, #07090fb3 55%, #07090f00 100%); }
+.rm-now { display: flex; align-items: center; gap: 1em; margin: 0 0 1.1em .3em; min-height: 3.6em; }
+.rm-num { font-size: 3em; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.rm-logo { max-height: 2.6em; max-width: 6em; object-fit: contain; background: #fff; border-radius: .5em; padding: .3em .5em; }
+.rm-label { background: #fff; color: #000; font-weight: 900; border-radius: .5em; padding: .35em .6em; font-size: .9em; }
+.rm-what { min-width: 0; }
+.rm-title { font-size: 1.6em; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rm-title .flag { font-size: .45em; }
+.rm-sub { color: var(--dim); margin-top: .15em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rm-bar { width: 22em; max-width: 50vw; height: .3em; border-radius: 1em; background: #ffffff26; overflow: hidden; margin-top: .5em; }
+.rm-bar i { display: block; height: 100%; background: var(--hl); }
+.rm-ctrls { display: flex; align-items: center; gap: .6em; }
+.rm-ctrls .grow { flex: 1; }
+#rm-fav.on { color: var(--hl); }
+#rm-fav.on svg path { fill: currentColor; }
+#remote .rm-rec { color: #ff6b78; }
+.rm-vol { padding-right: 1.1em !important; }
+#rm-volume { width: 8em; accent-color: #fff; cursor: pointer; }
+.rm-menu { pointer-events: auto; position: absolute; right: 2.5vw; bottom: calc(3vh + 4.2em); min-width: 15em; padding: .4em; border-radius: 1em;
+  background: var(--surface); backdrop-filter: blur(14px); border: 1px solid var(--line); box-shadow: 0 1em 3em #000a; }
+#remote .rm-menu button { display: flex; width: 100%; justify-content: space-between; border-radius: .6em; font-weight: 500; color: #c9d1e3; }
+#remote .rm-menu button small { color: var(--dim); }
+#remote:not(.live) .rm-live { display: none; }
+#remote:not(.live) .rm-bottom { background: none; padding-top: 0; bottom: auto; top: calc(2.5vh + 4em); }   /* movies and recordings have their own bar at the bottom */
+html:not(.phone) #tv:has(#remote.live:not(.hidden)) #banner { display: none; }                 /* the controls show what's on instead */
 
 #playback { position: absolute; left: 0; right: 0; bottom: 0; z-index: 20; background: linear-gradient(0deg, #07090ff7 0%, #07090fcc 55%, #07090f00 100%); padding: 5em 3.5vw 4vh; }
 #pb-title { font-size: 1.5em; font-weight: 700; margin-bottom: .5em; }
@@ -279,12 +313,16 @@ html, body { margin: 0; height: 100%; background: #000; color: var(--text); font
 .list li.sel .badge.off { color: #333; background: #0000001a; }
 
 /* phones: bigger touch targets, fewer buttons, panels that fit the screen */
-.phone #remote { top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px; right: 8px; transform: none;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 6px; padding: 6px; font-size: 14px; }
-.phone #remote button { padding: 11px 4px; font-size: 14px; white-space: nowrap; }
-.phone #remote button:hover { background: #232b3d; color: #fff; }
+.phone .rm-top { top: calc(env(safe-area-inset-top, 0px) + 8px); left: 8px; right: 8px; gap: 6px; }
+.phone .rm-nav { overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.phone .rm-nav::-webkit-scrollbar { display: none; }
+.phone #remote .rm-brand, .phone #remote .rm-now, .phone #remote .rm-vol, .phone #remote [data-k="i"] { display: none; }
+.phone #remote button { height: 40px; font-size: 14px; padding: 0 12px; }
+.phone #remote button.ico { width: 40px; }
+.phone #remote button:hover { background: transparent; }
 .phone #remote button:active { background: var(--hl); color: #000; }
-.phone #remote [data-k="u"], .phone #remote [data-k="i"], .phone #remote .sep { display: none; }
+.phone .rm-bottom { top: calc(env(safe-area-inset-top, 0px) + 62px); bottom: auto; padding: 0 8px; background: none; }
+.phone .rm-menu { top: 52px; bottom: auto; right: 8px; }
 .phone .panel { min-width: 0; width: calc(100vw - 16px); max-width: none;
   max-height: calc(100% - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); padding: 12px; }
 .phone .panel.wide, .phone .panel.xwide { width: calc(100vw - 16px); }
@@ -551,3 +589,8 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 .phone #g-filters { margin: 0 0 8px; }
 .phone .g-pill { font-size: 13px; padding: 6px 12px; }
 .phone #g-filters .g-fhint { display: none; }
+/* phones: the channel buttons become icons so CH, Last, Favorite, Record and More fit on one row */
+.phone .rm-ctrls { gap: 6px; }
+.phone #remote .rm-ctrls .grow { display: none; }
+.phone #remote .rm-ctrls button:not(.ico) { font-size: 0; gap: 0; width: 40px; padding: 0; justify-content: center; }
+.phone #remote button svg { width: 20px; height: 20px; }

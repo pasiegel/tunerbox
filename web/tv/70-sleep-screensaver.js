@@ -107,8 +107,61 @@ $("tv").addEventListener("touchstart", () => { IDLE.last = Date.now(); }, { pass
 let idleTimer, lastTouch = 0;
 function hideRemoteLater(ms) {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { $("tv").classList.add("idle"); $("remote").classList.add("hidden"); }, ms);
+  idleTimer = setTimeout(() => {
+    // not while the pointer rests on the controls or the More menu is open
+    if ($("remote").matches(":hover") || !$("rm-menu").classList.contains("hidden")) { hideRemoteLater(1500); return; }
+    $("tv").classList.add("idle"); hideRemote();
+  }, ms);
 }
+// the on-screen controls: navigation at the top; this channel, volume and More at the bottom
+function showRemote() {
+  const r = $("remote"), wasHidden = r.classList.contains("hidden");
+  r.classList.remove("hidden");
+  r.classList.toggle("live", S.mode === "live");
+  if (wasHidden) remoteSync();
+}
+function hideRemote() { $("remote").classList.add("hidden"); $("rm-menu").classList.add("hidden"); }
+let rmSeq = 0;
+async function remoteSync() {
+  const vol = $("rm-volume");
+  vol.value = Math.round((video.muted ? 0 : video.volume) * 100);
+  $("rm-mute").querySelector("use").setAttribute("href", video.muted || video.volume === 0 ? "#i-mute" : "#i-vol");
+  const ch = curCh();
+  if (S.mode !== "live" || !ch) { $("rm-now").innerHTML = ""; return; }
+  const fav = S.favs.has(ch.number);
+  $("rm-fav").classList.toggle("on", fav);
+  $("rm-fav").querySelector("span").textContent = fav ? "Favorite" : "Favorite";
+  $("rm-fav").title = fav ? "Remove from Favorites (*)" : "Add to Favorites (*)";
+  const head = `<span class="rm-num">${esc(String(ch.badge || ch.number))}</span>`
+    + (ch.logo ? `<img class="rm-logo" src="${esc(ch.logo)}" alt="" onerror="this.remove()">` : `<span class="rm-label">${esc(ch.label || ch.name)}</span>`);
+  $("rm-now").innerHTML = `${head}<div class="rm-what"><div class="rm-title">${esc(ch.name)}</div></div>`;
+  if (ch.feed || !ch.epg) return;
+  const seq = ++rmSeq;
+  try {
+    const d = await nowNext(ch.number);
+    if (seq !== rmSeq || curCh() !== ch) return;
+    const p = d.now;
+    if (!p) return;
+    const pct = Math.min(100, Math.max(0, (now() - p.start) / (p.stop - p.start) * 100));
+    const sub = [p.episode, p.subtitle].filter(Boolean).join(" · ");
+    const meta = [`${fmtTime(p.start)} – ${fmtTime(p.stop)}`, d.next && `up next: ${d.next.title}`].filter(Boolean).join(" · ");
+    $("rm-now").innerHTML = `${head}<div class="rm-what"><div class="rm-title">${esc(p.title || ch.name)} ${flags(p)}</div>`
+      + `<div class="rm-sub">${esc([sub, meta].filter(Boolean).join("  ·  "))}</div>`
+      + `<div class="rm-bar"><i style="width:${pct}%"></i></div></div>`;
+  } catch (_) {}
+}
+$("rm-volume").addEventListener("input", (e) => {
+  video.volume = +e.target.value / 100; video.muted = video.volume === 0;
+  try { localStorage.setItem("tb.vol", video.volume); } catch (_) {}
+  $("rm-mute").querySelector("use").setAttribute("href", video.muted ? "#i-mute" : "#i-vol");
+});
+$("remote").addEventListener("wheel", (e) => {          // the mouse wheel over the controls: volume
+  if (!e.target.closest(".rm-vol")) return;
+  e.preventDefault();
+  const v = Math.max(0, Math.min(1, video.volume + (e.deltaY < 0 ? 0.05 : -0.05)));
+  video.volume = v; video.muted = v === 0; $("rm-volume").value = Math.round(v * 100);
+  try { localStorage.setItem("tb.vol", v); } catch (_) {}
+}, { passive: false });
 document.addEventListener("mousemove", () => {
   IDLE.last = Date.now();
   if (IDLE.saver) stopSaver();
@@ -116,27 +169,31 @@ document.addEventListener("mousemove", () => {
   // tap's click, so touch input manages the remote bar itself (see touchend below)
   if (Date.now() - lastTouch < 1000) return;
   $("tv").classList.remove("idle");
-  if (S.mode !== "off" && !top()) $("remote").classList.remove("hidden");
+  if (S.mode !== "off" && !top()) showRemote();
   hideRemoteLater(3000);
 });
 $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  // picking an option puts the bar away (CH up/down keep it, for flipping through channels)
-  if (b.dataset.k !== "ChannelUp" && b.dataset.k !== "ChannelDown") { clearTimeout(idleTimer); $("remote").classList.add("hidden"); }
+  if (b.id === "rm-more") { $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return; }
+  if (!b.dataset.k) return;
+  // CH up/down, favorite and mute keep the controls up (flipping through channels); others put them away
+  const stay = ["ChannelUp", "ChannelDown", "*", "u"].includes(b.dataset.k);
+  if (!stay) { clearTimeout(idleTimer); hideRemote(); }
   handleKey(b.dataset.k);
+  if (stay) setTimeout(remoteSync, b.dataset.k.startsWith("Channel") ? 400 : 150);
 });
 // tap / click on the picture while watching: show the button bar and the info banner together,
 // or put both away if either is showing
 function toggleOverlay() {
   const r = $("remote"), shown = !r.classList.contains("hidden") || !$("banner").classList.contains("hidden");
   if (shown) {
-    r.classList.add("hidden"); clearTimeout(idleTimer);
+    hideRemote(); clearTimeout(idleTimer);
     hideBanner(); clearTimeout(S.bannerTimer); $("playback").classList.add("hidden");
     return;
   }
-  r.classList.remove("hidden"); hideRemoteLater(6000);
+  showRemote(); hideRemoteLater(6000);
   if (S.mode === "live") showBanner();
   else if (S.mode === "vod") showVodBar();
   else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
