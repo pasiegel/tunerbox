@@ -6,6 +6,8 @@ qrcode>=7.4
 # HTTPS on a second port: TunerBox's own certificate (https.py)
 cryptography>=42
 numpy>=1.26
+# Local library: reads movie and TV folders straight from a NAS share (SMB), no mount needed
+smbprotocol>=1.13
 # desktop app window (Linux also needs GTK or Qt: see pywebview docs)
 pywebview>=5.0
 # Windows server-only mode: notification-area icon (Open / Setup / Exit)

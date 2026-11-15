@@ -122,17 +122,31 @@ def buffer_seconds(value=None):
 
 def input_args(raw_url, buffer=0):
     url, headers = split_url(raw_url)
-    args = ["-user_agent", headers.pop("User-Agent")]
-    if headers:
-        args += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
+    args = []
+    if url.lower().startswith("http"):               # newer ffmpeg refuses these options for files and udp://
+        args = ["-user_agent", headers.pop("User-Agent")]
+        if headers:
+            args += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
     if url.lower().startswith("http"):
         args += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_on_network_error", "1",
                  "-reconnect_delay_max", "4", "-rw_timeout", "15000000"]
         if buffer and ".m3u8" in url.lower().split("?")[0]:
             # HLS sources keep a few segments of history: start further back so the cache fills at once
             args += ["-live_start_index", str(-(3 + buffer // 4))]
+    # only the kinds of input a TV stream can be: a playlist entry can't make ffmpeg use its other
+    # protocols (reading through concat:, subfile:, data:, or files named inside a remote playlist)
+    args += ["-protocol_whitelist", protocols_for(url)]
     args += ["-fflags", "+genpts+discardcorrupt", "-i", url]
     return args
+
+
+def protocols_for(url):
+    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    if scheme in ("http", "https"):
+        return "http,https,tcp,tls,crypto"
+    if scheme in ("udp", "rtp", "rtsp", "rtsps", "rtmp", "rtmps", "srt", "mms", "mmsh"):
+        return "udp,rtp,srtp,rtsp,rtsps,rtmp,rtmps,rtmpt,srt,mms,mmsh,mmst,http,https,tcp,tls,crypto"
+    return "file,crypto"            # a file on this computer (or file://)
 
 
 def video_args(mode=None):

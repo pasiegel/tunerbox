@@ -7,12 +7,17 @@
   * Paired phones (and this PC) can send remote-control commands to any TunerBox TV screen.
   * Optional lock ("require_pairing"): only this PC and paired phones can change setup. Watching TV
     stays open to every device on the network, so the iPad, Android app and Plex keep working.
+  * On a server with no screen of its own (Docker on a NAS: TUNERBOX_TRUST_LAN=1, set by the image),
+    nobody ever browses from "this PC". There, any device on the home network may pair phones (and
+    browsers) until the lock is turned on; paired devices may also turn the lock on and off. Everything
+    else that needs "this PC" stays that way.
 """
 import asyncio
 import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import secrets
 import socket
 import threading
@@ -72,6 +77,37 @@ def is_pc(request):
     except ValueError:
         return False
     return a.is_loopback or str(a) in local_ips()
+
+
+def _home_network(request):
+    host = request.client.host if request.client else ""
+    try:
+        a = ipaddress.ip_address(host.split("%")[0])
+        if a.version == 6 and a.ipv4_mapped:
+            a = a.ipv4_mapped
+    except ValueError:
+        return False
+    return a.is_private and not a.is_link_local
+
+
+def can_pair(request):
+    """Who may pair phones and see the paired list: this PC and paired devices; on a server without a
+    screen (TUNERBOX_TRUST_LAN), also any browser on the home network until the lock is turned on.
+    Deliberately narrower than is_pc: PC-only settings (ffmpeg, folders, port) and exporting logins
+    still need this PC or a paired device."""
+    if trusted(request):
+        return True
+    return trust_lan() and not _locked() and _home_network(request)
+
+
+def trust_lan():
+    """A server without a screen (Docker): the home network stands in for "this PC"."""
+    return os.environ.get("TUNERBOX_TRUST_LAN", "").strip().lower() in ("1", "true", "yes")
+
+
+def _locked():
+    from . import config
+    return bool(config.get("require_pairing"))
 
 
 def _hash(token):

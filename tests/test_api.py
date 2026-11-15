@@ -118,3 +118,82 @@ def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path)
     monkeypatch.setattr(vod, "small_image", lambda url, w: None)
     r = client.get("/api/art/7/1500", follow_redirects=False)  # can't shrink it: the original
     assert r.status_code == 302 and r.headers["location"] == "https://img.example/p1.jpg"
+
+
+def test_nas_server_lets_home_network_pair_until_locked(monkeypatch):
+    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network may pair
+    phones until the lock is on. It doesn't get the other PC-only powers. The pairing link uses the
+    address the browser used, not the container's."""
+    from fastapi.testclient import TestClient
+    lan = TestClient(api.app, client=("192.168.10.50", 5000), base_url="http://192.168.10.9:8642")
+    assert lan.post("/api/pair/start").status_code == 403           # a desktop install: only the PC itself
+    monkeypatch.setenv("TUNERBOX_TRUST_LAN", "1")
+    me = lan.get("/api/me").json()
+    assert me["manage"] and me["server"] and not me["pc"]
+    assert lan.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403     # still PC-only
+    assert lan.get("/api/sources/export").status_code == 403                            # logins stay put
+    r = lan.post("/api/pair/start")
+    assert r.status_code == 200 and r.json()["address"] == "http://192.168.10.9:8642/pair"
+    phone = TestClient(api.app, client=("192.168.10.77", 5000), base_url="http://192.168.10.9:8642")
+    assert phone.post("/api/pair/complete", json={"code": r.json()["code"], "name": "Pixel"}).status_code == 200
+    assert phone.post("/api/settings", json={"require_pairing": True}).status_code == 200   # paired: may lock
+    assert phone.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403      # but nothing else PC-only
+    assert lan.post("/api/pair/start").status_code == 403           # locked: the home network can't pair now
+    assert phone.post("/api/pair/start").status_code == 200         # the paired phone still can
+    assert phone.post("/api/settings", json={"require_pairing": False}).status_code == 200
+    outside = TestClient(api.app, client=("8.8.8.8", 5000))
+    assert not outside.get("/api/me").json()["manage"]              # only private addresses count
+
+
+def test_other_websites_cant_change_things(monkeypatch):
+    """Cross-site requests (another site's page making your browser POST here) are refused."""
+    from tunerbox import jobs
+    monkeypatch.setattr(jobs, "scan", lambda *a, **k: True)
+    c = TestClient(api.app, base_url="http://192.168.10.9:8642")
+    assert c.post("/api/jobs/scan", headers={"Origin": "http://evil.example"}).status_code == 403
+    assert c.post("/api/jobs/scan", headers={"Origin": "null"}).status_code == 403
+    assert c.post("/api/jobs/scan", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+    assert c.post("/api/jobs/scan", headers={"Sec-Fetch-Site": "same-site"}).status_code == 403   # another port on the NAS
+    assert c.post("/api/jobs/scan", headers={"Origin": "http://192.168.10.9:8642"}).status_code == 200
+    assert c.post("/api/jobs/scan", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+    assert c.post("/api/jobs/scan").status_code == 200              # apps and scripts send neither
+    assert c.get("/api/jobs", headers={"Origin": "http://evil.example"}).status_code == 200   # reading is GET: not a change
+
+
+def test_only_answers_to_local_names(monkeypatch):
+    """DNS rebinding: a site pointing its own name at TunerBox gets nothing."""
+    def get(host):
+        return TestClient(api.app, base_url=f"http://{host}").get("/api/jobs").status_code
+    for ok in ("192.168.10.9:8642", "127.0.0.1:8642", "[::1]:8642", "nas:8642", "nas.local", "tunerbox.lan:8642", "localhost"):
+        assert get(ok) == 200, ok
+    for bad in ("evil.example", "rebind.evil.example:8642", "192.168.10.9.nip.io:8642"):
+        assert get(bad) == 403, bad
+    config.update({"allowed_hosts": ["tv.example.com", "*.tail1234.ts.net"]})
+    assert get("tv.example.com:8642") == 200 and get("nas.tail1234.ts.net") == 200 and get("other.ts.net") == 403
+    monkeypatch.setenv("TUNERBOX_ALLOWED_HOSTS", "box.home.example")
+    assert get("box.home.example") == 200
+
+
+def test_files_on_disk_need_the_pc_or_a_paired_phone(monkeypatch):
+    """Playlist files and folders on the TunerBox computer: a phone on the Wi-Fi can't point TunerBox at them."""
+    from tunerbox import sources
+    monkeypatch.setattr(sources, "add_source", lambda *a, **k: 1)
+    c = TestClient(api.app)
+    r = c.post("/api/sources", json={"type": "m3u", "url": "/data/settings.json"})
+    assert r.status_code == 403 and "web address" in r.json()["detail"]
+    assert c.post("/api/sources", json={"type": "m3u", "url": "http://host/list.m3u"}).status_code == 200
+    assert c.post("/api/sources/import", json={"kind": "tunerbox-playlists", "playlists": [
+        {"name": "x", "type": "m3u", "url": r"C:\\Users\\me\\list.m3u"}]}).status_code == 403
+    config.update({"require_pairing": True})
+    assert c.get("/api/media/folder?path=/etc").status_code == 401             # probing paths: locked too
+    monkeypatch.setattr(remote, "is_pc", lambda request: True)
+    assert c.post("/api/sources", json={"type": "m3u", "url": "/srv/list.m3u"}).status_code == 200
+
+
+def test_ffmpeg_only_takes_stream_protocols():
+    from tunerbox import streaming
+    args = streaming.input_args("http://host/live/1.ts")
+    assert args[args.index("-protocol_whitelist") + 1] == "http,https,tcp,tls,crypto"
+    assert "udp" in streaming.protocols_for("udp://239.0.0.1:1234")
+    assert streaming.protocols_for("/srv/video.mkv") == "file,crypto"
+    assert streaming.protocols_for("concat:/etc/passwd|x") == "file,crypto"     # can't reach concat:

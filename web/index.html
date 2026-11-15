@@ -79,14 +79,15 @@
       <img id="gi-art" class="art hidden" alt="">
       <div class="g-clock"><div id="g-clock"></div><div id="g-date"></div></div>
     </div>
+    <div id="g-filters"></div>
     <div class="g-head">
       <div class="g-day" id="g-day"></div>
       <div class="g-times" id="g-times"></div>
     </div>
     <div id="g-rows"></div>
     <div class="g-foot">
-      <span><b>OK</b> Watch / Options</span><span data-feat="dvr"><b>R</b> Record</span><span><b>/</b> Search</span><span><b>T</b> Sports</span><span data-feat="vod"><b>O</b> On Demand</span><span><b>PgUp/PgDn</b> Page</span>
-      <span><b>&#9664;&#9654;</b> Time</span><span><b>Ch #</b> Jump</span><span><b>*</b> Favorite</span><span><b>V</b> Favorites / All</span><span><b>C</b> Genre</span><span><b>G</b> Exit</span>
+      <span><b>OK</b> Watch / Options</span><span data-feat="dvr"><b>R</b> Record</span><span><b>&#9664;&#9654;</b> Time</span><span><b>PgUp/PgDn</b> Page</span>
+      <span><b>*</b> Favorite</span><span><b>/</b> Search</span><span data-feat="vod"><b>O</b> On Demand</span><span><b>G</b> Close</span>
     </div>
   </div>
 
@@ -154,6 +155,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
   </div>
 
   <div id="home" class="hidden">
+    <div class="hm-topnav" id="hm-topnav"></div>
     <div class="g-top">
       <div class="od-pip"></div>
       <div id="hm-info">
@@ -192,16 +194,60 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     <ul class="list" id="dlg-list"></ul>
   </div>
 
-  <!-- on-screen remote for mouse / touch -->
+  <!-- on-screen controls for mouse / touch: where to go at the top, this channel at the bottom -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-guide" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 9h18M9 9v11" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-od" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9l5 3-5 3z" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l5 5" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4"/></symbol>
+    <symbol id="i-last" viewBox="0 0 24 24"><path d="M9 6L4 11l5 5M4 11h10a6 6 0 0 1 0 12h-2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6M12 7.5v.5" stroke="currentColor" stroke-width="2.2"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor"/></symbol>
+    <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.9" fill="currentColor"/><circle cx="12" cy="12" r="1.9" fill="currentColor"/><circle cx="19" cy="12" r="1.9" fill="currentColor"/></symbol>
+  </defs></svg>
   <div id="remote" class="hidden">
-    <!-- grouped: screens | this channel | favorites | sound, screen & menu -->
-    <button data-k="h">HOME</button><button data-k="g">GUIDE</button><button data-k="o">ON DEMAND</button><button data-k="t">SPORTS</button><button data-k="d">DVR</button><button data-k="/">SEARCH</button>
-    <span class="sep"></span>
-    <button data-k="ChannelUp">CH &#9650;</button><button data-k="ChannelDown">CH &#9660;</button><button data-k="l">LAST</button><button data-k="i">INFO</button>
-    <span class="sep"></span>
-    <button data-k="v" title="Favorites guide">&#9733; GUIDE</button><button data-k="*" title="Add this channel to Favorites (or remove it)">&#9733; ADD</button>
-    <span class="sep"></span>
-    <button data-k="u">MUTE</button><button data-k="f">FULL</button><button data-k="m">MENU</button>
+    <div class="rm-top">
+      <div class="rm-pill rm-nav">
+        <span class="rm-brand">Tuner<span>Box</span></span>
+        <button data-k="h" title="Home (H)"><svg><use href="#i-home"/></svg>Home</button>
+        <button data-k="g" title="Guide (G)"><svg><use href="#i-guide"/></svg>Guide</button>
+        <button data-k="o" title="On Demand (O)"><svg><use href="#i-od"/></svg>On Demand</button>
+        <button data-k="/" title="Search (/)"><svg><use href="#i-search"/></svg>Search</button>
+      </div>
+      <div class="rm-pill"><button data-k="f" class="ico" title="Full screen (F)"><svg><use href="#i-full"/></svg></button></div>
+    </div>
+    <div class="rm-bottom">
+      <div class="rm-now rm-live" id="rm-now"></div>
+      <div class="rm-ctrls">
+        <div class="rm-pill rm-live">
+          <button data-k="ChannelUp" class="ico" title="Channel up"><svg><use href="#i-up"/></svg></button>
+          <button data-k="ChannelDown" class="ico" title="Channel down"><svg><use href="#i-down"/></svg></button>
+          <span class="sep"></span>
+          <button data-k="l" title="Last channel (L)"><svg><use href="#i-last"/></svg>Last</button>
+          <button data-k="i" title="Show info (I)"><svg><use href="#i-info"/></svg>Info</button>
+          <button data-k="*" id="rm-fav" title="Add to Favorites (*)"><svg><use href="#i-star"/></svg><span>Favorite</span></button>
+          <button data-k="r" class="rm-rec" title="Record (R)"><svg><use href="#i-rec"/></svg>Record</button>
+        </div>
+        <span class="grow"></span>
+        <div class="rm-pill rm-vol">
+          <button data-k="u" class="ico" id="rm-mute" title="Mute (U)"><svg><use href="#i-vol"/></svg></button>
+          <input type="range" id="rm-volume" min="0" max="100" step="1" aria-label="Volume">
+        </div>
+        <div class="rm-pill"><button class="ico" id="rm-more" title="More"><svg><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="rm-menu hidden" id="rm-menu">
+        <button data-k="t">Sports &amp; events<small>T</small></button>
+        <button data-k="d">Recordings<small>D</small></button>
+        <button data-k="v">Favorites guide<small>V</small></button>
+        <button data-k="m">Menu<small>M</small></button>
+      </div>
+    </div>
   </div>
 
   <!-- phones: touch way out of the guide / menus (TV remotes and keyboards use Back / Esc) -->

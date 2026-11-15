@@ -49,6 +49,56 @@ function showTab(name) {
   loaders[name] && loaders[name]();
 }
 
+// ---------------------------------------------------------------- overview: is everything working?
+const ago2 = (t) => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 120 ? "just now" : s < 7200 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; };
+async function badges(o) {
+  try { o = o || await api("/api/overview"); } catch (_) { return; }
+  $("nb-channels").textContent = o.weak || "";
+  $("nb-library").textContent = o.library.review || "";
+  return o;
+}
+loaders.overview = async () => {
+  let o;
+  try { o = await api("/api/overview"); } catch (e) { toast(e.message); return; }
+  badges(o);
+  const card = (tab, k, v, s, cls = "", warn = false) => `<button class="ov-card${warn ? " warn" : ""}" data-go="${tab}"><div class="k">${k}</div><div class="v">${v}</div><div class="s ${cls}">${s}</div></button>`;
+  const srcOk = o.playlists.filter((p) => p.enabled && !/^error|fail/i.test(p.status || "")).length;
+  const active = o.playlists.filter((p) => p.enabled).length;
+  const free = o.dvr.free == null ? "" : `${(o.dvr.free / 1e9).toFixed(o.dvr.free < 1e10 ? 1 : 0)} GB free`;
+  $("ov-cards").innerHTML = [
+    card("channels", "Lineup channels with a feed", `${o.mapped.toLocaleString()} / ${o.lineup.toLocaleString()}`,
+         o.weak ? `${o.weak} weak match${o.weak === 1 ? "" : "es"} to review` : o.lineup ? "● All matches look good" : "No lineup yet", o.weak ? "warn" : o.lineup ? "ok" : "", !!o.weak),
+    card("extras", "Extra channels", o.extras.toLocaleString(), "Playlist channels outside your lineup, numbered from 20000"),
+    card("sources", "Playlists", active,
+         !active ? "Add a playlist to get channels" : srcOk === active ? `● ${active === 1 ? "Online" : "All online"} · scanned ${ago2(o.scanned)}` : `${active - srcOk} with a problem`,
+         !active ? "warn" : srcOk === active ? "ok" : "bad", !active || srcOk !== active),
+    card("guide", "Guide listings", o.guide.programs.toLocaleString(),
+         o.guide.updated ? `● Updated ${ago2(o.guide.updated)}${o.guide.gracenote ? ` · ${esc(o.guide.postal_code)}` : ""}` : "Not downloaded yet", o.guide.updated ? "ok" : "warn"),
+    card("dvr", "DVR", o.dvr.recording ? `● ${o.dvr.recording} recording` : `${o.dvr.scheduled} scheduled`,
+         [o.dvr.recording ? `${o.dvr.scheduled} scheduled` : "", free].filter(Boolean).join(" · ") || "Nothing scheduled", o.dvr.recording ? "bad" : ""),
+    card("library", "Local library", o.libraries ? `${o.library.movies} · ${o.library.shows}` : "Off",
+         o.libraries ? (o.library.review ? `movies · shows · ${o.library.review} to review` : "movies · shows") : "Add your own movie and TV folders", o.library.review ? "warn" : "", !!o.library.review),
+  ].join("");
+  const steps = [];
+  if (!active) steps.push('<a data-go="sources">Add a playlist</a> (your M3U link or Xtream login), then press <b>Scan playlists</b>');
+  if (o.lineup && !o.guide.gracenote) steps.push('<a data-go="guide">Pick your TV provider</a> so channel numbers match yours');
+  if (o.weak) steps.push(`<a data-go="channels">Review ${o.weak} weak match${o.weak === 1 ? "" : "es"}</a> in the channel lineup`);
+  $("ov-next").innerHTML = steps.length ? `<b>Next steps</b><ol>${steps.map((x) => `<li>${x}</li>`).join("")}</ol>` : "";
+  $("ov-src").innerHTML = o.playlists.length ? o.playlists.map((p) => `<div class="row">
+      <span class="dot ${!p.enabled ? "" : /^error|fail/i.test(p.status || "") ? "dead" : "ok"}"></span>
+      <b>${esc(p.name)}</b><span class="tag">${esc(p.type)}</span><span class="muted small">${p.count.toLocaleString()} streams</span>
+      <span class="grow"></span><span class="muted small">${p.enabled ? esc(p.status || "") : "off"}</span>
+      <button class="btn small" data-go="sources">Open</button></div>`).join("")
+    : '<p class="muted">No playlists yet.</p>';
+};
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]"); if (!go) return;
+  e.preventDefault(); showTab(go.dataset.go); window.scrollTo(0, 0);
+});
+$("ov-scan").onclick = () => startJob("scan");
+$("ov-rematch").onclick = () => startJob("match");
+badges();
+
 // ---------------------------------------------------------------- jobs
 async function startJob(name, q = "") {
   try {
@@ -66,13 +116,13 @@ async function pollJob() {
     if (j.running) {
       wasRunning = true;
       // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
-      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden")) loaders.sources();
+      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "overview") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
       $("job").classList.remove("hidden");
       $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
       $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
     } else {
       $("job").classList.add("hidden");
-      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && loaders[cur](); }
+      if (wasRunning) { toast(j.message); badges(); const cur = location.hash.slice(1) || "overview"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
       break;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -249,6 +299,8 @@ $("ex-off").onclick = () => bulk(false);
 // A playlist's card only shows how it is set up; every change is made in its Edit dialog (below), so nothing
 // changes by a stray click, such as turning On Demand off, which drops the playlist's whole movie list.
 let srcList = [];
+// the playlist dialog is open: don't redraw the cards under it
+const editing = () => !$("src-dlg").classList.contains("hidden");
 const VIDEO = { "": "Default", copy: "Original", h264: "H.264", roku720: "720p" };
 const srcKind = (s) => ({ xtream: "Xtream", hdhomerun: "HDHomeRun" }[s.type] || "M3U");
 const connAuto = (s) => (s.conn_auto ? `${s.conn_auto} at a time, from your ${s.type === "hdhomerun" ? "tuner" : "provider"}` : "no limit");
@@ -693,7 +745,7 @@ const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙" };
 let tnTimer;
 loaders.tuners = async () => {
   clearTimeout(tnTimer);
-  if ((location.hash.slice(1) || "channels") !== "tuners") return;
+  if ((location.hash.slice(1) || "overview") !== "tuners") return;
   let d;
   try { d = await api("/api/tuners"); } catch (e) { $("tn-body").innerHTML = `<tr><td colspan="4" class="muted">${esc(e.message)}</td></tr>`; }
   if (d) {
@@ -1001,6 +1053,228 @@ $("mc-check").onclick = async () => {
   $("mc-checked").textContent = out.join(" · ");
 };
 
+// ---------------------------------------------------------------- local library (your own movies and shows)
+let libData = null, libEditing = null, libBrowse = null, libFixFor = null, libQT = null;
+const libKind = (k) => (k === "movie" ? "Movies" : "TV shows");
+const libStatus = (s) => {
+  const st = s.status || "";
+  if (st.startsWith("error")) return `<span class="bad-text">${esc(st.replace(/^error: /, ""))}</span>`;
+  return st ? esc(st.replace(/^ok: /, "")) : "Not scanned yet";
+};
+const LIB_STATE = { ok: ["ok", "Matched"], weak: ["weak", "Check this"], none: ["none", "Not found"], pinned: ["pinned", "Picked by you"],
+                    ignored: ["none", "Left out"], "": ["pending", "Not looked up"] };
+loaders.library = async () => {
+  libData = await api("/api/library");
+  const c = libData.counts, s = libData.settings;
+  $("lib-summary").innerHTML = libData.shares.length ? `
+    <div class="st"><b>${c.movies.toLocaleString()}</b>movie${c.movies === 1 ? "" : "s"}</div>
+    <div class="st"><b>${c.shows.toLocaleString()}</b>show${c.shows === 1 ? "" : "s"} · ${c.episodes.toLocaleString()} episode${c.episodes === 1 ? "" : "s"}</div>
+    <div class="st ${c.review ? "warn" : ""}"><b>${c.review}</b>need review</div>
+    <div class="st"><b>${s.tmdb_key_set ? "On" : "Off"}</b>TMDB details</div>` : "";
+  $("lib-list").innerHTML = libData.shares.length ? libData.shares.map((sh) => `<div class="card" data-id="${sh.id}">
+      <div class="t">${esc(sh.name)} <span class="tag">${libKind(sh.kind)}</span> ${sh.enabled ? "" : '<span class="tag none">off</span>'}
+        ${sh.review ? `<span class="tag weak">${sh.review} to review</span>` : ""}</div>
+      <div class="u">${esc(sh.location)}${sh.username ? ` · as ${esc(sh.username)}` : ""}</div>
+      <div class="muted small">${libStatus(sh)}${sh.scanned_at ? " · scanned " + fmt(sh.scanned_at) : ""}</div>
+      <div class="row"><button class="btn small primary" data-a="scan">Scan now</button><span class="grow"></span>
+        <button class="btn small" data-a="review">Review</button><button class="btn small" data-a="edit">Edit</button>
+        <button class="btn small" data-a="toggle">${sh.enabled ? "Turn off" : "Turn on"}</button>
+        <button class="btn small danger" data-a="del">Remove</button></div></div>`).join("")
+    : '<p class="muted">No library folders yet. Add your Movies folder and your TV folder below.</p>';
+  $("lib-lang").value = s.language || "";
+  $("lib-auto").value = String(s.auto_scan_hours);
+  if (![...$("lib-auto").options].some((o) => o.selected)) $("lib-auto").value = "24";
+  $("lib-video").value = s.video_mode || "";
+  $("lib-key").value = "";
+  $("lib-key").placeholder = s.tmdb_key_set ? `saved (${s.tmdb_key_hint || "hidden"}): paste a new one to replace it` : "paste your key";
+  $("lib-key-state").textContent = s.tmdb_key_set ? "" : "No key yet: titles use the names from your files.";
+  $("lib-review-count").textContent = c.review ? `${c.review} need review` : "";
+  libTitles();
+};
+async function libTitles() {
+  const q = $("lib-q").value.trim(), f = $("lib-filter").value;
+  let rows;
+  try { rows = await api(`/api/library/titles?filter=${f}&q=${encodeURIComponent(q)}`); } catch (e) { toast(e.message); return; }
+  $("lib-shown").textContent = rows.length >= 300 ? "first 300 shown" : `${rows.length} title${rows.length === 1 ? "" : "s"}`;
+  $("lib-body").innerHTML = rows.length ? rows.map((t) => {
+    const [cls, label] = LIB_STATE[t.state] || LIB_STATE[""];
+    const pct = t.score && (t.state === "ok" || t.state === "weak") ? ` · ${t.score}%` : "";
+    return `<tr data-id="${esc(t.id)}">
+      <td>${t.poster ? `<img class="poster" loading="lazy" src="/api/vod/poster/${encodeURIComponent(t.id)}" alt="">` : '<span class="poster"></span>'}</td>
+      <td><b>${esc(t.name)}</b>${t.year ? ` <span class="muted">(${esc(t.year)})</span>` : ""}
+        <div class="muted small">${t.kind === "movie" ? "Movie" : `TV · ${t.eps} episode${t.eps === 1 ? "" : "s"}`} · ${esc(t.category)}</div></td>
+      <td class="file">${esc(t.file)}</td>
+      <td><span class="tag ${cls}">${label}${pct}</span></td>
+      <td class="acts"><button class="btn small" data-a="fix">Fix</button>
+        <button class="btn small" data-a="${t.state === "ignored" ? "unignore" : "ignore"}">${t.state === "ignored" ? "Bring back" : "Leave out"}</button></td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="muted">${f === "review" ? "Nothing to review." : "No titles."}</td></tr>`;
+  libTitles.rows = rows;
+}
+$("lib-filter").onchange = libTitles;
+$("lib-q").oninput = () => { clearTimeout(libQT); libQT = setTimeout(libTitles, 300); };
+
+function libForm() {
+  const f = $("lib-form");
+  return { kind: f.kind.value, name: f.elements.name.value.trim(), location: f.location.value.trim(),
+           username: f.username.value.trim(), password: f.password.value, id: libEditing || undefined };
+}
+function libReset() {
+  libEditing = null; libBrowse = null; $("lib-form").reset();
+  $("lib-tested").textContent = ""; $("lib-browse").classList.add("hidden");
+  $("lib-form-title").textContent = "Add a library folder"; $("lib-save").textContent = "Add library";
+  $("lib-cancel").classList.add("hidden"); $("lib-form").password.placeholder = "";
+}
+$("lib-cancel").onclick = libReset;
+$("lib-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const id = +b.closest(".card").dataset.id, sh = libData.shares.find((x) => x.id === id);
+  try {
+    if (b.dataset.a === "del") {
+      if (!confirm(`Remove ${sh.name} from On Demand? Your video files are not touched.`)) return;
+      await api(`/api/library/shares/${id}`, { method: "DELETE" }); toast("Library removed");
+    } else if (b.dataset.a === "scan") {
+      await api("/api/library/scan", { method: "POST", body: { share_id: id } });
+      toast("Scanning…"); pollJob();
+    } else if (b.dataset.a === "toggle") {
+      await api(`/api/library/shares/${id}`, { method: "PUT", body: { enabled: !sh.enabled } });
+    } else if (b.dataset.a === "review") {
+      $("lib-filter").value = "review"; $("lib-q").value = sh.name; libTitles();
+      $("lib-body").scrollIntoView({ behavior: "smooth" }); return;
+    } else if (b.dataset.a === "edit") {
+      libReset(); libEditing = id; const f = $("lib-form");
+      f.kind.value = sh.kind; f.elements.name.value = sh.name; f.location.value = sh.location; f.username.value = sh.username || "";
+      f.password.placeholder = sh.has_password ? "saved (leave empty to keep it)" : "";
+      $("lib-form-title").textContent = `Edit ${sh.name}`; $("lib-save").textContent = "Save changes";
+      $("lib-cancel").classList.remove("hidden"); f.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+  } catch (err) { toast(err.message); }
+  loaders.library();
+});
+$("lib-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const body = libForm();
+  try {
+    const r = libEditing ? await api(`/api/library/shares/${libEditing}`, { method: "PUT", body })
+                         : await api("/api/library/shares", { method: "POST", body });
+    toast(r.job ? "Saved. Scanning the folder…" : "Saved"); if (r.job) pollJob();
+    libReset(); loaders.library();
+  } catch (err) { toast(err.message); }
+};
+
+// Connect & browse: check the login, then click into folders to pick the one with the movies or shows
+async function libOpen(path) {
+  $("lib-tested").textContent = "Connecting…";
+  let r;
+  try { r = await api("/api/library/browse", { method: "POST", body: { ...libBrowse.conn, path } }); }
+  catch (e) { r = { ok: false, message: e.message }; }
+  $("lib-tested").innerHTML = r.ok ? `<span style="color:var(--ok)">✓</span> ${esc(r.message)}` : `<span class="bad-text">${esc(r.message)}</span>`;
+  if (!r.ok) { $("lib-browse").classList.add("hidden"); return; }
+  libBrowse.path = path;
+  const parts = path ? path.split("/") : [];
+  const sep = /^[\\/]{2}|^smb:/i.test(libBrowse.conn.location) ? "\\" : "/";
+  const crumbs = [`<a data-p="">${esc(libBrowse.conn.location)}</a>`].concat(parts.map((p, i) => `<a data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</a>`));
+  $("lib-browse").innerHTML = `<div class="crumb">${crumbs.join(` <span class="muted">${sep}</span> `)}<span class="grow"></span>
+      ${path ? '<button type="button" class="btn small primary" id="lib-use">Use this folder</button>' : ""}</div>
+    <ul>${r.folders.map((f) => `<li data-f="${esc(f)}">${esc(f)}</li>`).join("") || '<li class="muted" data-f="">No folders inside</li>'}</ul>`;
+  $("lib-browse").classList.remove("hidden");
+}
+$("lib-test").onclick = () => {
+  const conn = libForm();
+  if (!conn.location) { $("lib-tested").textContent = "Enter the network location first"; return; }
+  libBrowse = { conn, path: "" };
+  libOpen("");
+};
+$("lib-browse").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-p]"), li = e.target.closest("li[data-f]");
+  if (a) libOpen(a.dataset.p);
+  else if (li && li.dataset.f) libOpen(libBrowse.path ? `${libBrowse.path}/${li.dataset.f}` : li.dataset.f);
+  else if (e.target.id === "lib-use") {
+    const f = $("lib-form"), base = libBrowse.conn.location.replace(/[\\/]+$/, "");
+    const sep = /^[\\/]{2}|^smb:/i.test(base) && !/^smb:/i.test(base) ? "\\" : "/";
+    f.location.value = base + sep + libBrowse.path.split("/").join(sep);
+    const last = libBrowse.path.split("/").pop();
+    if (!f.elements.name.value) f.elements.name.value = last;
+    if (/\b(tv|shows?|series)\b/i.test(last)) f.kind.value = "series";
+    else if (/\bmovies?|films?\b/i.test(last)) f.kind.value = "movie";
+    libBrowse.conn.location = f.location.value; libBrowse.path = "";
+    $("lib-browse").classList.add("hidden");
+    $("lib-tested").textContent = `Folder picked: ${last}. Check "This folder has", then press ${libEditing ? "Save changes" : "Add library"}.`;
+  }
+});
+
+$("lib-save-settings").onclick = async () => {
+  const body = { language: $("lib-lang").value.trim() || "en-US", auto_scan_hours: +$("lib-auto").value, video_mode: $("lib-video").value };
+  if ($("lib-key").value.trim()) body.tmdb_key = $("lib-key").value.trim();
+  try {
+    const hadKey = libData && libData.settings.tmdb_key_set;
+    await api("/api/library/settings", { method: "POST", body });
+    toast(body.tmdb_key && !hadKey ? "Saved. Downloading details…" : "Saved");
+    if (body.tmdb_key && !hadKey) pollJob();
+    loaders.library();
+  } catch (e) { toast(e.message); }
+};
+$("lib-test-key").onclick = async () => {
+  $("lib-key-state").textContent = "Testing…";
+  const r = await api("/api/library/test-key", { method: "POST", body: { key: $("lib-key").value.trim() } }).catch((e) => ({ ok: false, message: e.message }));
+  $("lib-key-state").innerHTML = r.ok ? `<span style="color:var(--ok)">✓</span> ${esc(r.message)}` : `<span class="bad-text">${esc(r.message)}</span>`;
+};
+$("lib-scan").onclick = async () => { await api("/api/library/scan", { method: "POST", body: {} }).catch((e) => toast(e.message)); pollJob(); };
+$("lib-refresh").onclick = async () => {
+  if (!confirm("Download every title's details and posters from TMDB again? Titles you picked by hand stay as they are.")) return;
+  await api("/api/library/scan", { method: "POST", body: { refresh: true } }).catch((e) => toast(e.message)); pollJob();
+};
+
+// the matches table: Fix (pick the TMDB title) and Leave out
+$("lib-body").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const id = b.closest("tr").dataset.id, t = (libTitles.rows || []).find((x) => x.id === id);
+  try {
+    if (b.dataset.a === "fix") { libFix(t); return; }
+    await api(`/api/library/titles/${encodeURIComponent(id)}/ignore`, { method: "POST", body: { on: b.dataset.a === "ignore" } });
+    toast(b.dataset.a === "ignore" ? "Left out of On Demand" : "Back in On Demand");
+  } catch (err) { toast(err.message); }
+  loaders.library();
+});
+function libFix(t) {
+  libFixFor = t;
+  $("lib-fix-title").textContent = `Fix match: ${t.file_name}${t.file_year ? ` (${t.file_year})` : ""}`;
+  $("lib-fix-sub").textContent = t.file;
+  $("lib-fix-q").value = t.file_name; $("lib-fix-year").value = t.file_year || "";
+  $("lib-fix-list").innerHTML = "";
+  $("lib-fix").classList.remove("hidden");
+  libFixSearch();
+}
+async function libFixSearch() {
+  const q = $("lib-fix-q").value.trim(); if (!q) return;
+  $("lib-fix-list").innerHTML = '<li class="muted">Searching TMDB…</li>';
+  let res;
+  try { res = await api(`/api/library/tmdb?kind=${libFixFor.kind}&q=${encodeURIComponent(q)}&year=${encodeURIComponent($("lib-fix-year").value.trim())}`); }
+  catch (e) { $("lib-fix-list").innerHTML = `<li class="bad-text">${esc(e.message)}</li>`; return; }
+  $("lib-fix-list").innerHTML = res.length ? res.map((r) => `<li>
+      ${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
+      <div class="tx"><b>${esc(r.name)}</b> ${r.year ? `<span class="muted">(${esc(r.year)})</span>` : ""}${r.id === libFixFor.tmdb_id ? ' <span class="tag ok">current</span>' : ""}
+        <small>${esc(r.overview || "No description.")}</small></div>
+      <button class="btn small primary" data-tmdb="${r.id}">Use this</button></li>`).join("")
+    : '<li class="muted">Nothing found. Try fewer words, or no year.</li>';
+}
+$("lib-fix-form").onsubmit = (e) => { e.preventDefault(); libFixSearch(); };
+$("lib-fix-close").onclick = () => $("lib-fix").classList.add("hidden");
+$("lib-fix-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-tmdb]"); if (!b) return;
+  b.disabled = true; b.textContent = "Saving…";
+  try {
+    await api(`/api/library/titles/${encodeURIComponent(libFixFor.id)}/match`, { method: "POST", body: { tmdb_id: +b.dataset.tmdb } });
+    $("lib-fix").classList.add("hidden"); toast("Match saved"); loaders.library();
+  } catch (err) { toast(err.message); b.disabled = false; b.textContent = "Use this"; }
+});
+$("lib-fix-unmatch").onclick = async () => {
+  try {
+    await api(`/api/library/titles/${encodeURIComponent(libFixFor.id)}/unmatch`, { method: "POST" });
+    $("lib-fix").classList.add("hidden"); toast("Using the name from the file"); loaders.library();
+  } catch (err) { toast(err.message); }
+};
+
 // ---------------------------------------------------------------- phones
 let pairTimer = null, pairBefore = 0;
 const ago = (t) => { if (!t) return "—"; const s = Date.now() / 1000 - t; return s < 120 ? "just now" : s < 7200 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : fmt(t); };
@@ -1013,11 +1287,14 @@ function renderDevices(list) {
 loaders.phones = async () => {
   const me = await api("/api/me");
   $("lock-setup").checked = !!me.require_pairing;
-  $("lock-setup").disabled = !me.pc;
-  $("pair-start").classList.toggle("hidden", !me.pc);
-  $("pair-pconly").classList.toggle("hidden", me.pc);
-  if (me.pc) renderDevices(await api("/api/devices"));
-  else $("dev-body").innerHTML = '<tr><td colspan="4" class="muted">Manage paired phones on the TunerBox PC</td></tr>';
+  // on a NAS (Docker) any browser at home counts as the TunerBox PC until the lock is on; then paired ones do
+  $("lock-setup").disabled = !(me.pc || (me.server && me.paired));
+  $("lock-hint").textContent = me.server && !me.paired
+    ? "To turn this on, first pair this browser (Pair a phone, then open /pair here and enter the code)." : "";
+  $("pair-start").classList.toggle("hidden", !me.manage);
+  $("pair-pconly").classList.toggle("hidden", me.manage);
+  if (me.manage) renderDevices(await api("/api/devices"));
+  else $("dev-body").innerHTML = '<tr><td colspan="4" class="muted">Manage paired phones on the TunerBox PC or a paired phone</td></tr>';
 };
 function stopPairUi() {
   clearInterval(pairTimer); pairTimer = null;
@@ -1057,6 +1334,6 @@ $("lock-setup").onchange = async (e) => {
 };
 
 // ---------------------------------------------------------------- start
-showTab(location.hash.slice(1) || "channels");
+showTab(location.hash.slice(1) || "overview");
 pollJob();
 })();

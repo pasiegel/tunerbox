@@ -5,7 +5,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from . import config, db, dvr, epg, guide, lineup, matcher, media, probe, scoreboard, sources, sports, vod
+from . import config, db, dvr, epg, guide, library, lineup, matcher, media, probe, scoreboard, sources, sports, vod
 
 log = logging.getLogger("tunerbox.jobs")
 _lock = threading.Lock()
@@ -89,6 +89,17 @@ def vod_scan(source_id=None, kinds=vod.KINDS):
     """Re-read the On Demand lists (movies and/or shows) of the Xtream logins that have them turned on.
     Queued if another job is running."""
     return _run(f"vod:{source_id}:{','.join(kinds)}", lambda: vod.refresh_all(_progress, source_id, kinds), queue=True)
+
+
+def library_scan(share_id=None, full_refresh=False):
+    """Read your own movie and TV folders (Setup › Local library) and download details from TMDB.
+    Queued if another job is running."""
+    return _run(f"library:{share_id or ''}", lambda: library.scan_all(_progress, share_id, full_refresh), queue=True)
+
+
+def library_details():
+    """Only the TMDB step: after a key is added, or to retry misses."""
+    return _run("library:details", lambda: library.fetch_details(_progress) or "Nothing to look up", queue=True)
 
 
 def refresh_epg():
@@ -191,6 +202,8 @@ def housekeeping():
                     refresh_epg()
                 elif has_sources and quick_due(now):
                     quick_refresh()
+                elif library.scan_due(now):
+                    library_scan()
             scoreboard.tick(now)       # games and scores, in its own thread
             sports.warm(now)           # the Sports screen's game matching, ready before it's opened
             # local channels: keep two days of listings ahead

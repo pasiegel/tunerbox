@@ -16,10 +16,16 @@ COPY tunerbox/ tunerbox/
 COPY web/ web/
 COPY data/channels.csv data/channels.csv
 COPY docker-entrypoint.sh .
+# readable by the tunerbox user whatever permissions the files had where the image was built from
+# (a folder copied from Windows can arrive as owner-only, and then nothing starts)
+RUN chmod -R a+rX /app
 
 # Settings, database, logs, recordings and the lineup CSV all live in /data
 ENV TUNERBOX_DATA=/data \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TUNERBOX_TRUST_LAN=1
+# TUNERBOX_TRUST_LAN: a NAS has no screen, so browsers on the home network can set it up and pair
+# phones (as "this PC" can on a desktop install) until Setup › Phones › lock is turned on
 RUN useradd --uid 1000 --create-home tunerbox \
     && mkdir /data && chown tunerbox /data
 USER tunerbox

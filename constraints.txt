@@ -29,7 +29,10 @@ clr-loader==0.3.1 ; sys_platform == 'win32'
 colorama==0.4.6 ; sys_platform == 'win32'
     # via qrcode
 cryptography==50.0.2
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   pyspnego
+    #   smbprotocol
 fastapi==0.162.2
     # via -r requirements.txt
 h11==0.16.0
@@ -87,6 +90,8 @@ pyobjc-framework-uniformtypeidentifiers==13.0 ; sys_platform == 'darwin'
     # via pywebview
 pyobjc-framework-webkit==13.0 ; sys_platform == 'darwin'
     # via pywebview
+pyspnego==0.12.4
+    # via smbprotocol
 pystray==0.19.5 ; sys_platform == 'win32'
     # via -r requirements.txt
 python-dotenv==1.2.4
@@ -105,6 +110,8 @@ rapidfuzz==3.14.6
     # via -r requirements.txt
 six==1.17.0 ; sys_platform == 'win32'
     # via pystray
+smbprotocol==1.17.0
+    # via -r requirements.txt
 starlette==1.10.0
     # via fastapi
 typing-extensions==4.16.0

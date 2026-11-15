@@ -107,6 +107,8 @@ def init():
             c.execute(f"DROP INDEX IF EXISTS {old}")
         c.execute("CREATE INDEX IF NOT EXISTS ix_vod_browse ON vod_titles(kind, hidden, name COLLATE NOCASE)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_vod_same ON vod_titles(kind, search, year)")
+    from . import library
+    library.init()             # your own movies and shows: listed through the vod_sources view
     _changed()
 
 
@@ -218,7 +220,8 @@ def _source(source_id):
 
 
 def enabled():
-    return bool(db.one("SELECT 1 FROM sources WHERE enabled=1 AND (vod_movies=1 OR vod_series=1) LIMIT 1"))
+    return bool(db.one("SELECT 1 FROM sources WHERE enabled=1 AND (vod_movies=1 OR vod_series=1) LIMIT 1")
+                or db.one("SELECT 1 FROM lib_shares WHERE enabled=1 LIMIT 1"))
 
 
 # ---------------------------------------------------------------- reading the catalogue
@@ -428,7 +431,7 @@ def _fetch_series_info(src, t):
 
 def _row(title_id):
     return db.one("""SELECT t.*, src.name AS source_name, src.type AS source_type FROM vod_titles t
-                     JOIN sources src ON src.id=t.source_id WHERE t.id=?""", (title_id,))
+                     JOIN vod_sources src ON src.id=t.source_id WHERE t.id=?""", (title_id,))
 
 
 def ep_label(e):
@@ -480,7 +483,7 @@ def title(title_id):
 # ---------------------------------------------------------------- browsing
 # titles of enabled playlists, in ticked categories, whose label is one of the picked ones
 # (sources.vod_tags: a JSON list, '' = all)
-_FROM = ("FROM vod_titles t JOIN sources src ON src.id=t.source_id AND src.enabled=1 AND t.hidden=0 "
+_FROM = ("FROM vod_titles t JOIN vod_sources src ON src.id=t.source_id AND src.enabled=1 AND t.hidden=0 "
          "AND (src.vod_tags='' OR instr(src.vod_tags, '\"' || t.tag || '\"')>0) ")
 _COLS = "t.id, t.kind, t.name, t.year, t.rating, t.category, t.poster, t.added, t.duration, t.tag, t.country"
 
@@ -705,9 +708,12 @@ def item(item_id):
     t = _row(e["title_id"] if e else item_id)
     if not t or (not e and t["kind"] != "movie"):
         return None
-    src = _source(t["source_id"])
     part = e or t
-    if src["type"] == "xtream":
+    if t["source_id"] < 0:                  # a local library (library.py): served to ffmpeg by TunerBox itself
+        from . import library
+        src = {"video_mode": library.settings()["video_mode"]}
+        url = library.play_url(item_id)
+    elif (src := _source(t["source_id"]))["type"] == "xtream":
         folder = "series" if e else "movie"
         url = f"{sources.xtream_base(src)}/{folder}/{src['username']}/{src['password']}/{part['xid']}.{part['ext'] or 'mp4'}"
     else:

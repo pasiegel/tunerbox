@@ -12,24 +12,41 @@
 <header>
   <div class="brand"><a href="/?on">Tuner<span>Box</span></a> <small>Setup</small></div>
   <nav id="tabs">
-    <button data-tab="channels" class="on">Channel Lineup</button>
-    <button data-tab="extras">Extra Channels</button>
-    <button data-tab="sources">Playlists</button>
+    <button data-tab="overview" class="on">Overview</button>
+    <span class="grp">Channels</span>
+    <button data-tab="channels">Channel lineup <i class="nb warn" id="nb-channels"></i></button>
+    <button data-tab="extras">Extra channels</button>
     <button data-tab="media">Local channels</button>
-    <button data-tab="guide">TV Guide</button>
-    <button data-tab="dvr">DVR</button>
+    <span class="grp">Sources</span>
+    <button data-tab="sources">Playlists</button>
+    <button data-tab="library">Local library <i class="nb warn" id="nb-library"></i></button>
+    <button data-tab="guide">TV guide</button>
     <button data-tab="tuners">Tuners</button>
+    <span class="grp">System</span>
+    <button data-tab="dvr">DVR</button>
     <button data-tab="phones">Phones</button>
     <button data-tab="settings">Settings</button>
   </nav>
-  <a class="btn" href="/remote" title="Phone remote">&#128241; Remote</a>
-  <a class="btn primary" href="/?on">&#9654; Watch TV</a>
+  <div class="side-foot">
+    <a class="btn" href="/remote" title="Phone remote">&#128241; Remote</a>
+    <a class="btn primary" href="/?on">&#9654; Watch TV</a>
+  </div>
 </header>
 <div id="job" class="hidden"><span id="job-text"></span><div class="bar"><div id="job-bar"></div></div></div>
 
 <main>
+  <!-- overview: is everything working? -->
+  <section id="tab-overview">
+    <div class="ov-head"><h2>Overview</h2><span class="grow"></span>
+      <button class="btn" id="ov-rematch">Re-run auto match</button>
+      <button class="btn primary" id="ov-scan">&#10227; Scan playlists</button></div>
+    <div class="ov-cards" id="ov-cards"></div>
+    <div id="ov-next"></div>
+    <h3>Playlists</h3>
+    <div class="ov-src" id="ov-src"></div>
+  </section>
   <!-- lineup mapping -->
-  <section id="tab-channels">
+  <section id="tab-channels" class="hidden">
     <div class="toolbar">
       <input id="ch-search" placeholder="Search number, name or feed…">
       <select id="ch-filter">
@@ -111,6 +128,53 @@
     <p class="muted small">Every file is converted to the same format while it plays (H.264, set the size under Settings), so mixed libraries work, at the cost of some CPU on this PC.</p>
   </section>
 
+  <!-- local library: your own movies and shows in On Demand -->
+  <section id="tab-library" class="hidden">
+    <h3>Local library</h3>
+    <p class="muted">Your own movies and TV shows, in On Demand next to your playlists. TunerBox reads them straight from your NAS over the network (or from a folder it can see) and never writes anything there. Details and posters come from TMDB and are kept in TunerBox's own data folder.</p>
+    <div id="lib-summary" class="lib-summary"></div>
+    <div class="cards" id="lib-list"></div>
+    <h3 id="lib-form-title">Add a library folder</h3>
+    <form id="lib-form" class="form" autocomplete="off">
+      <label>This folder has <select name="kind"><option value="movie">Movies</option><option value="series">TV shows</option></select></label>
+      <label>Name in On Demand <input name="name" placeholder="e.g. NAS Movies"></label>
+      <label class="wide">Network location <input name="location" required placeholder="\\nas\Media\Movies   or   smb://192.168.1.20/Media/Movies"></label>
+      <label>NAS username <input name="username" autocomplete="off" placeholder="leave empty for guest access"></label>
+      <label>NAS password <input name="password" type="password" autocomplete="new-password"></label>
+      <div class="wide">
+        <button type="button" class="btn" id="lib-test">Connect &amp; browse</button> <span id="lib-tested" class="muted"></span>
+        <div id="lib-browse" class="lib-browse hidden"></div>
+      </div>
+      <div class="wide"><button class="btn primary" id="lib-save">Add library</button>
+        <button type="button" class="btn hidden" id="lib-cancel">Cancel editing</button>
+        <span class="muted small">Movies: a folder per movie, like <code>Dune Part Two (2024)/…mkv</code>, or files named with the year. TV: <code>Show/Season 01/Show - S01E02.mkv</code>.</span></div>
+    </form>
+
+    <h3>Details and posters (TMDB)</h3>
+    <p class="muted">Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org › Settings › API</a> and paste the <b>API Key</b> or the <b>API Read Access Token</b>. Without one, titles show the names from your folders and files.</p>
+    <div class="form">
+      <label class="wide">TMDB key <input id="lib-key" type="password" autocomplete="off" placeholder="paste your key"></label>
+      <label>Language for details <input id="lib-lang" placeholder="en-US"></label>
+      <label>Look for new files <select id="lib-auto"><option value="0">Only when I press Scan</option><option value="6">Every 6 hours</option><option value="12">Every 12 hours</option><option value="24">Once a day</option><option value="168">Once a week</option></select></label>
+      <label>Video <select id="lib-video"><option value="">Default (Settings)</option><option value="copy">Original (least CPU on the NAS)</option><option value="h264">Re-encode to H.264</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
+      <div class="wide"><button type="button" class="btn primary" id="lib-save-settings">Save</button>
+        <button type="button" class="btn" id="lib-test-key">Test key</button> <span id="lib-key-state" class="muted"></span></div>
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="lib-scan">Scan libraries now</button>
+      <button class="btn" id="lib-refresh" title="Download every title's details and posters again">Refresh all details</button>
+    </div>
+
+    <h3>Matches <span id="lib-review-count" class="muted small"></span></h3>
+    <p class="muted">How each folder was matched on TMDB. Check the ones listed under <b>Needs review</b>: press <b>Fix</b> to search TMDB and pick the right title (kept through rescans), or <b>Leave out</b> to hide a file from On Demand.</p>
+    <div class="toolbar">
+      <input id="lib-q" placeholder="Search titles or files…">
+      <select id="lib-filter"><option value="review">Needs review</option><option value="all">All titles</option><option value="pending">Not looked up yet</option><option value="ignored">Left out</option></select>
+      <span id="lib-shown" class="muted"></span>
+    </div>
+    <table class="grid lib-grid"><thead><tr><th></th><th>Title</th><th>Folder / file</th><th>Match</th><th></th></tr></thead><tbody id="lib-body"></tbody></table>
+  </section>
+
   <!-- guide -->
   <section id="tab-guide" class="hidden">
     <h3>Local guide (Gracenote)</h3>
@@ -171,6 +235,7 @@
     <table class="grid"><thead><tr><th>Name</th><th>Paired</th><th>Last used</th><th></th></tr></thead><tbody id="dev-body"></tbody></table>
     <h3>Lock setup</h3>
     <label class="chk"><input type="checkbox" id="lock-setup"> Only this PC and paired phones can change playlists, channels and settings</label>
+    <div id="lock-hint" class="muted small"></div>
     <p class="muted small">Watching TV stays open to every device on your network either way, so the iPad, the Android app and Plex keep working without pairing.</p>
     <p class="muted small">Already on a phone? <a href="/remote">Open the phone remote</a></p>
   </section>
@@ -261,6 +326,7 @@
         <label class="set-row wide"><span class="set-text"><b>User-Agent</b><small>Sent to providers when reading playlists and streams.</small></span><input name="user_agent"></label>
         <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC.</small></span><input name="lineup_csv"></label>
         <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC.</small></span><input name="ffmpeg"></label>
+        <label class="set-row wide"><span class="set-text"><b>Allowed host names</b><small>TunerBox answers to IP addresses and local names (like <code>nas</code> or <code>tunerbox.local</code>). If you open it by another name (your own domain, a Tailscale name), add it here, separated by commas. <code>*.example.com</code> allows every name under it. This stops other websites from reaching TunerBox through your browser.</small></span><input name="allowed_hosts" data-list="1" placeholder="tv.example.com, nas.tail1234.ts.net"></label>
       </div>
 
       <div class="set-group" data-cat="https" data-label="HTTPS">
@@ -338,6 +404,17 @@
   </div>
 </div>
 <!-- feed picker -->
+<div id="lib-fix" class="modal hidden">
+  <div class="modal-box lib-fix-box">
+    <div class="modal-head">
+      <div><b id="lib-fix-title">Fix match</b><div class="muted small" id="lib-fix-sub"></div></div>
+      <button class="btn" id="lib-fix-close">Close</button>
+    </div>
+    <form class="lib-fix-find" id="lib-fix-form"><input id="lib-fix-q" placeholder="Title"><input id="lib-fix-year" placeholder="Year" inputmode="numeric" maxlength="4"><button class="btn primary">Search TMDB</button></form>
+    <ul id="lib-fix-list" class="lib-fix-list"></ul>
+    <div class="lib-fix-foot"><button type="button" class="btn" id="lib-fix-unmatch">Use the name from the file (no details)</button></div>
+  </div>
+</div>
 <div id="picker" class="modal hidden">
   <div class="modal-box">
     <div class="modal-head">

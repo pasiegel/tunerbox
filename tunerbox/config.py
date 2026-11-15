@@ -65,6 +65,7 @@ DEFAULTS = {
     },
     # Online XMLTV guides for channels that aren't in the local lineup.
     # Playlist x-tvg-url headers and Xtream xmltv.php are added automatically.
+    "allowed_hosts": [],    # extra names TunerBox answers to besides IP addresses and local names (see api._host_ok)
     "xmltv_sources": [
         "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz",
         "https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz",
@@ -310,7 +311,7 @@ def _check_value(key, value, default):
     raise ValueError(f"{key}: expected {type(default).__name__}, got {type(value).__name__}")
 
 
-def clean_changes(changes: dict, from_pc: bool) -> dict:
+def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
     """Check settings sent by a page before saving them. Unknown keys and wrong types are refused
     (ValueError); PC-only settings from another device are refused if they would change (PermissionError).
     Unchanged PC-only values are dropped, so a phone can still save the whole Settings form."""
@@ -324,6 +325,8 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
         v = _check_value(k, v, DEFAULTS[k])
         if k == "xmltv_sources":
             v = [str(u).strip() for u in v if str(u).strip()]
+        elif k == "allowed_hosts":
+            v = sorted({str(h).strip().lower().rstrip(".") for h in v if str(h).strip()})
         elif k == "sports_leagues":
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "sports_teams":
@@ -336,7 +339,7 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
-        if k in PC_ONLY and not from_pc:
+        if k in PC_ONLY and not from_pc and k not in allow:
             if v == cur.get(k):
                 continue
             raise PermissionError(f"'{k}' can only be changed on the TunerBox PC")

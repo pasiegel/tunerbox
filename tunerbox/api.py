@@ -1,12 +1,15 @@
 """HTTP API + web UI + M3U/XMLTV/HDHomeRun outputs."""
 import hashlib
+import ipaddress
 import json
 import logging
+import os
 import re
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from xml.sax.saxutils import escape
 
 import anyio
@@ -16,7 +19,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -438,10 +441,20 @@ def api_sources():
     return out
 
 
+def _disk_path_ok(request, type_, url):
+    """A playlist that's a file on this computer (not a web address) is read from its disk: only this PC
+    or a paired device may point TunerBox at files."""
+    url = (url or "").strip()
+    if type_ == "m3u" and url and not re.match(r"^https?://", url, re.I) and not remote.trusted(request):
+        raise HTTPException(403, "Playlist files on disk can only be added on the TunerBox PC or a paired phone. "
+                                 "Use a web address (http://…), or pair this device in Setup › Phones.")
+
+
 @app.post("/api/sources")
-def api_add_source(data: dict = Body(...)):
+def api_add_source(request: Request, data: dict = Body(...)):
     if not data.get("url"):
         raise HTTPException(400, "URL / server is required")
+    _disk_path_ok(request, data.get("type", "m3u"), data["url"])
     try:
         sid = sources.add_source(data.get("name", ""), data.get("type", "m3u"), data["url"].strip(),
                                  data.get("username", "").strip(), data.get("password", "").strip(),
@@ -467,7 +480,10 @@ def api_export_sources(request: Request):
 
 
 @app.post("/api/sources/import")
-def api_import_sources(data: dict = Body(...)):
+def api_import_sources(request: Request, data: dict = Body(...)):
+    for pl in (data.get("playlists") or []) if isinstance(data, dict) else []:
+        if isinstance(pl, dict):
+            _disk_path_ok(request, pl.get("type", "m3u"), str(pl.get("url") or ""))
     try:
         r = sources.import_sources(data)
     except ValueError as e:
@@ -484,10 +500,12 @@ def api_hdhr_discover():
 
 
 @app.patch("/api/sources/{sid}")
-def api_edit_source(sid: int, data: dict = Body(...)):
+def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     before = db.one("SELECT * FROM sources WHERE id=?", (sid,))
     if not before:
         raise HTTPException(404)
+    if isinstance(data.get("url"), str) and data["url"].strip() != before["url"]:
+        _disk_path_ok(request, before["type"], data["url"])
     for k in ("name", "url", "username", "password"):
         if isinstance(data.get(k), str):
             data[k] = data[k].strip()
@@ -637,7 +655,9 @@ def api_settings():
 @app.post("/api/settings")
 def api_save_settings(request: Request, data: dict = Body(...)):
     try:
-        data = config.clean_changes(data, from_pc=remote.is_pc(request))
+        # a NAS has no "PC": there a paired device may turn the setup lock on and off (nothing else PC-only)
+        allow = {"require_pairing"} if remote.trust_lan() and remote.device(request) else set()
+        data = config.clean_changes(data, from_pc=remote.is_pc(request), allow=allow)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
@@ -670,6 +690,12 @@ def _pc_only(request: Request):
         raise HTTPException(403, "Only on the TunerBox PC")
 
 
+def _manager(request: Request):
+    """Pairing and the paired-phone list (see remote.can_pair)."""
+    if not remote.can_pair(request):
+        raise HTTPException(403, "Only on the TunerBox PC or a paired phone")
+
+
 def _trusted(request: Request):
     if not remote.trusted(request):
         raise HTTPException(401, "Pair this phone first")
@@ -679,6 +705,7 @@ def _trusted(request: Request):
 def api_me(request: Request):
     d = remote.device(request)
     return {"pc": remote.is_pc(request), "paired": bool(d), "name": d["name"] if d else None,
+            "manage": remote.can_pair(request), "server": remote.trust_lan(),
             "require_pairing": bool(config.get("require_pairing")), "http_base": _http_base(request)}
 
 
@@ -748,11 +775,17 @@ async def api_img(u: str):
 
 @app.post("/api/pair/start")
 def api_pair_start(request: Request):
-    _pc_only(request)
+    _manager(request)
     p = remote.start_pairing()
-    # always the http address (a phone scanning it needs no certificate), even when Setup is open over HTTPS
+    # always plain http (a phone scanning it needs no certificate), even when Setup is open over HTTPS
     port = https.http_port() if request.url.scheme == "https" else (request.url.port or config.get("port", 8642))
-    base = f"http://{remote.lan_ip()}:{port}"
+    # the address this browser used (a NAS's own address, not the container's), else this PC's
+    host = request.url.hostname or ""
+    if not host or host in ("localhost", "127.0.0.1", "::1"):
+        host = remote.lan_ip()
+    if ":" in host:                 # IPv6 literal
+        host = f"[{host}]"
+    base = f"http://{host}:{port}"
     link = f"{base}/pair#{p['code']}.{p['key']}"
     return {"code": p["code"], "expires": p["expires"], "url": link, "address": f"{base}/pair",
             "qr": remote.qr_svg(link)}
@@ -760,13 +793,13 @@ def api_pair_start(request: Request):
 
 @app.get("/api/pair/state")
 def api_pair_state(request: Request):
-    _pc_only(request)
+    _manager(request)
     return {**remote.pairing_state(), "devices": remote.devices()}
 
 
 @app.post("/api/pair/cancel")
 def api_pair_cancel(request: Request):
-    _pc_only(request)
+    _manager(request)
     remote.cancel_pairing()
     return {"ok": True}
 
@@ -796,20 +829,20 @@ def api_pair_forget(request: Request):
 
 @app.get("/api/devices")
 def api_devices(request: Request):
-    _pc_only(request)
+    _manager(request)
     return remote.devices()
 
 
 @app.patch("/api/devices/{did}")
 def api_device_rename(request: Request, did: str, name: str = Body(..., embed=True)):
-    _pc_only(request)
+    _manager(request)
     remote.rename_device(did, name)
     return remote.devices()
 
 
 @app.delete("/api/devices/{did}")
 def api_device_remove(request: Request, did: str):
-    _pc_only(request)
+    _manager(request)
     remote.remove_device(did)
     return remote.devices()
 
@@ -869,6 +902,33 @@ def api_stats():
         "dead": db.one("SELECT count(*) n FROM streams WHERE status='dead'")["n"],
         "extras": db.one("SELECT count(*) n FROM extras WHERE active=1")["n"],
         "programs": db.one("SELECT count(*) n FROM programs")["n"],
+    }
+
+
+@app.get("/api/overview")
+def api_overview():
+    """Setup › Overview: is everything working? One request for the health cards."""
+    maps = db.rows("SELECT mode, score, reason, stream_key FROM mappings")
+    weak = sum(1 for m in maps if m["stream_key"] and m["mode"] == "auto" and (m["score"] < 92 or "network" in (m["reason"] or "").lower()))
+    srcs = db.rows("SELECT id, name, type, enabled, status, updated_at FROM sources ORDER BY id")
+    for s in srcs:
+        s["count"] = db.one("SELECT count(*) n FROM streams WHERE source_id=?", (s["id"],))["n"]
+    gn = config.get("gracenote") or {}
+    recs = {r["status"]: r["n"] for r in db.rows("SELECT status, count(*) n FROM recordings WHERE status IN ('scheduled','recording') GROUP BY status")}
+    vc = vod.counts()
+    return {
+        "lineup": db.one("SELECT count(*) n FROM lineup")["n"],
+        "mapped": sum(1 for m in maps if m["stream_key"]), "manual": sum(1 for m in maps if m["mode"] == "manual"), "weak": weak,
+        "extras": db.one("SELECT count(*) n FROM extras WHERE active=1")["n"],
+        "playlists": srcs,
+        "guide": {"programs": db.one("SELECT count(*) n FROM programs WHERE stop > ?", (int(time.time()),))["n"],
+                  "updated": int(db.get_meta("epg_updated", 0) or 0), "gracenote": bool(gn.get("enabled")),
+                  "postal_code": gn.get("postal_code", ""), "lineup_id": gn.get("lineup_id", "")},
+        "scanned": int(db.get_meta("scan_updated", 0) or 0),
+        "dvr": {"scheduled": recs.get("scheduled", 0), "recording": recs.get("recording", 0), "free": dvr._free_bytes()},
+        "library": library.counts(), "libraries": len(library.shares()),
+        "vod": {"movies": vc["movie"]["total"], "shows": vc["series"]["total"]},
+        "local_channels": db.one("SELECT count(*) n FROM media_channels WHERE enabled=1")["n"],
     }
 
 
@@ -1235,8 +1295,11 @@ def api_media_delete(cid: int):
 
 
 @app.get("/api/media/folder")
-def api_media_folder(path: str):
-    """Quick check that TunerBox can open a folder (UNC shares need the PC to have access)."""
+def api_media_folder(request: Request, path: str):
+    """Quick check that TunerBox can open a folder (UNC shares need the PC to have access). It tells
+    whether paths exist, so with the setup lock on only this PC and paired phones may ask."""
+    if config.get("require_pairing"):
+        _trusted(request)
     import os
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
     p = path.strip().strip('"')
@@ -1273,6 +1336,138 @@ async def api_media_piece(request: Request, cid: int, idx: int, ss: float = 0.0)
     return LiveResponse(ffmpeg_stream("", None, request=request, buffer=0, cmd=cmd), media_type="video/mp2t")
 
 
+# ------------------------------------------------------------------ local library (your own movies and shows)
+def _lib_err(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except KeyError:
+        raise HTTPException(404, "Not found")
+    except library.LibraryError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/library")
+def api_library():
+    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts()}
+
+
+@app.post("/api/library/settings")
+def api_library_settings(request: Request, data: dict = Body(...)):
+    key_added = bool(data.get("tmdb_key")) and not library.settings()["tmdb_key"]
+    if "tmdb_key" in data and not data["tmdb_key"] and not data.get("clear_key"):
+        data.pop("tmdb_key")                 # a blank box keeps the saved key
+    data.pop("clear_key", None)
+    out = _lib_err(library.save_settings, data)
+    if key_added:
+        jobs.library_details()
+    return out
+
+
+@app.post("/api/library/test-key")
+def api_library_test_key(key: str = Body("", embed=True)):
+    return library.test_key(key or library.settings()["tmdb_key"])
+
+
+def _lib_conn(data):
+    """The library being added or edited, from what Setup sent (a blank password uses the saved one)."""
+    old = library.share(int(data["id"])) if data.get("id") else None
+    d = {**data}
+    d.setdefault("kind", (old or {}).get("kind") or "movie")
+    return library.clean(d, old)
+
+
+def _lib_folder_ok(request, sh):
+    if sh["type"] == "folder" and not remote.trusted(request):
+        raise HTTPException(403, "Folders on the TunerBox computer can only be added on the TunerBox PC or a paired "
+                                 r"phone. Use a network location (\\nas\share), or pair this device in Setup › Phones.")
+
+
+@app.post("/api/library/browse")
+def api_library_browse(request: Request, data: dict = Body(...)):
+    """Connect and list the folders in `path` (inside the location), to check a library and pick its folder."""
+    sh = _lib_err(_lib_conn, data)
+    _lib_folder_ok(request, sh)
+    return library.check(sh, str(data.get("path") or ""))
+
+
+@app.post("/api/library/shares")
+def api_library_add(request: Request, data: dict = Body(...)):
+    _lib_folder_ok(request, _lib_err(library.clean, data))
+    sid = _lib_err(library.add, data)
+    return {"id": sid, "job": jobs.library_scan(sid)}
+
+
+@app.put("/api/library/shares/{sid}")
+def api_library_update(request: Request, sid: int, data: dict = Body(...)):
+    old = library.share(sid)
+    if old and data.get("location") is not None:
+        _lib_folder_ok(request, _lib_err(library.clean, data, old))
+    moved = _lib_err(library.update, sid, data)
+    return {"ok": True, "job": jobs.library_scan(sid) if moved and library.share(sid)["enabled"] else False}
+
+
+@app.delete("/api/library/shares/{sid}")
+def api_library_delete(sid: int):
+    library.delete(sid)
+    return {"ok": True}
+
+
+@app.post("/api/library/scan")
+def api_library_scan(share_id: int = Body(0, embed=True), refresh: bool = Body(False, embed=True)):
+    return {"job": jobs.library_scan(share_id or None, refresh)}
+
+
+@app.get("/api/library/titles")
+def api_library_titles(share_id: int = 0, filter: str = "review", q: str = ""):
+    return library.review(share_id or None, filter, q[:100])
+
+
+@app.get("/api/library/tmdb")
+def api_library_tmdb(kind: str, q: str, year: str = ""):
+    if kind not in library.KINDS or not q.strip():
+        raise HTTPException(400, "kind and q are needed")
+    return _lib_err(library.search_tmdb, kind, q.strip()[:120], year.strip()[:4])
+
+
+@app.post("/api/library/titles/{title_id}/match")
+def api_library_match(title_id: str, tmdb_id: int = Body(..., embed=True)):
+    return _lib_err(library.pin, title_id, tmdb_id)
+
+
+@app.post("/api/library/titles/{title_id}/unmatch")
+def api_library_unmatch(title_id: str):
+    return _lib_err(library.unmatch, title_id)
+
+
+@app.post("/api/library/titles/{title_id}/lookup")
+def api_library_lookup(title_id: str):
+    return _lib_err(library.relookup, title_id)
+
+
+@app.post("/api/library/titles/{title_id}/ignore")
+def api_library_ignore(title_id: str, on: bool = Body(True, embed=True)):
+    return _lib_err(library.ignore, title_id, on)
+
+
+@app.api_route("/api/library/file/{item_id}", methods=["GET", "HEAD"])
+async def api_library_file(request: Request, item_id: str):
+    """A library video's bytes, with ranges, for TunerBox's own ffmpeg (this computer only: no logins needed)."""
+    if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+        raise HTTPException(403)
+    try:
+        status, headers, body = await anyio.to_thread.run_sync(library.open_range, item_id, request.headers.get("range", ""))
+    except KeyError:
+        raise HTTPException(404)
+    except library.LibraryError as e:
+        raise HTTPException(502, str(e))
+    if request.method == "HEAD":
+        getattr(body, "close", lambda: None)()      # closes the file it opened
+        return Response(status_code=status, headers=headers, media_type="application/octet-stream")
+    return StreamingResponse(body, status_code=status, headers=headers, media_type="application/octet-stream")
+
+
 # ------------------------------------------------------------------ web UI
 @app.get("/")
 def index():
@@ -1300,7 +1495,7 @@ def remote_page(request: Request):
 
 # setup changes need this PC or a paired phone once "require_pairing" is on (watching TV never does)
 _LOCKED = ("/api/sources", "/api/mapping", "/api/extras", "/api/settings", "/api/jobs", "/api/rules",
-           "/api/lineup", "/api/gracenote", "/api/media/channels")
+           "/api/lineup", "/api/gracenote", "/api/media/channels", "/api/library")
 
 
 @app.middleware("http")
@@ -1351,6 +1546,61 @@ async def _revalidate_static(request: Request, call_next):
     if request.url.path.startswith("/static/"):
         resp.headers["Cache-Control"] = "no-cache"      # always check with the server (cheap: ETag)
     return resp
+
+
+# ------------------------------------------------------------------ other websites
+# TunerBox has no logins on the home network, so two browser tricks need closing:
+#  * cross-site requests: a page on another site making your browser POST here (start scans, change setup).
+#    Browsers say where a request comes from (Origin, Sec-Fetch-Site); changes from other sites are refused.
+#  * DNS rebinding: another site pointing its own name at TunerBox's address so its pages can read the
+#    answers. TunerBox only answers to IP addresses, local names (nas, nas.local, tunerbox.lan…) and names
+#    added under Settings › Advanced › Allowed host names.
+LOCAL_SUFFIXES = (".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".localhost")
+
+
+def _host_ok(host):
+    host = (host or "").strip().lower()
+    if host.startswith("["):                              # [IPv6]:port
+        host = host[1:host.find("]")] if "]" in host else host
+    elif host.count(":") == 1:
+        host = host.split(":")[0]
+    host = host.rstrip(".")
+    if not host:
+        return True                                       # HTTP/1.0 without Host: nothing to rebind
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host == "localhost" or "." not in host or host.endswith(LOCAL_SUFFIXES):
+        return True
+    extra = [h.lower() for h in (config.get("allowed_hosts") or [])]
+    extra += [h.strip().lower() for h in os.environ.get("TUNERBOX_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    return host in extra or any(h.startswith("*.") and host.endswith(h[1:]) for h in extra)
+
+
+def _same_origin(request):
+    """False when a browser says this change comes from another website."""
+    origin = request.headers.get("origin")
+    if origin:
+        if origin == "null":
+            return False
+        try:
+            o = urlsplit(origin)
+        except ValueError:
+            return False
+        return (o.netloc or "").lower() == (request.headers.get("host") or "").lower()
+    return request.headers.get("sec-fetch-site", "") not in ("cross-site", "same-site")
+
+
+@app.middleware("http")
+async def _other_sites(request: Request, call_next):
+    if not _host_ok(request.headers.get("host")):
+        return PlainTextResponse("TunerBox doesn't answer to this address. Use its IP address, or add this name "
+                                 "under Setup › Settings › Advanced › Allowed host names.", 403)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _same_origin(request):
+        return JSONResponse({"detail": "Refused: this request came from another website"}, 403)
+    return await call_next(request)
 
 
 app.mount("/static", StaticFiles(directory=config.WEB), name="static")
