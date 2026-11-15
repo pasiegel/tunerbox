@@ -224,7 +224,7 @@ function peekBanner(ch) {
   showArt($("b-art"), null); $("b-art").dataset.ch = "";
   $("b-num").textContent = ch.number; $("b-name").textContent = ch.name;
   const logo = $("b-logo");
-  if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
+  if (ch.logo) { logo.src = safePic(ch.logo); logo.style.display = ""; } else logo.style.display = "none";
   $("b-title").textContent = ch.name; $("b-sub").textContent = ""; $("b-flags").innerHTML = "";
   $("b-time").textContent = ""; $("b-next-l").textContent = "Next:"; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";
   $("banner").classList.remove("full"); $("banner").classList.remove("hidden");
@@ -259,7 +259,7 @@ function loadArt(img, key, url) {
   if (!key) { img.removeAttribute("src"); return; }
   img.onload = () => { if (img.dataset.key === key) img.classList.remove("hidden"); };
   img.onerror = () => { if (img.dataset.key === key) img.classList.add("hidden"); };
-  img.src = url;
+  img.src = safePic(url);
 }
 
 async function showBanner(full = false) {
@@ -271,7 +271,7 @@ async function showBanner(full = false) {
   $("b-num").textContent = ch.badge || ch.number;
   $("b-name").textContent = ch.name;
   const logo = $("b-logo");
-  if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
+  if (ch.logo) { logo.src = safePic(ch.logo); logo.style.display = ""; } else logo.style.display = "none";
   logo.onerror = () => (logo.style.display = "none");
   $("b-title").textContent = ch.epg ? "…" : ch.name; $("b-sub").textContent = ""; $("b-flags").innerHTML = "";
   $("b-time").textContent = ""; $("b-next-l").textContent = "Next:"; $("b-next").textContent = "—"; $("b-desc").textContent = ""; $("b-progress").style.width = "0";

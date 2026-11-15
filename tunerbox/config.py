@@ -42,6 +42,12 @@ def bundled_ffmpeg():
 DEFAULTS = {
     "host": "0.0.0.0",
     "port": 8642,
+    # HTTPS on a second port, so browsers offer "Install app" (https.py). http on `port` is unchanged.
+    # Off by default; takes effect when TunerBox restarts. https_hosts: extra names/addresses for the
+    # certificate (e.g. the Docker host's address, which the container can't see).
+    "https_enabled": False,
+    "https_port": 8643,
+    "https_hosts": [],
     # Your local cable lineup (Channel Number, Channel Name)
     "lineup_csv": "channels.csv",
     # The provider lineup that channels.csv was made for. If you pick a different provider in
@@ -254,7 +260,8 @@ def update(changes: dict):
 
 # Settings that name a program to run, or a place on disk to read or write: only the PC itself can
 # change them, so another device on the network can't point TunerBox at its own program or folder.
-PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing"}
+PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
+           "https_enabled", "https_port", "https_hosts"}
 # Managed through their own API calls, never through /api/settings
 NOT_SETTABLE = {"devices", "hdhr_device_id"}
 
@@ -318,6 +325,10 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "sports_teams":
             v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9]+:[a-z0-9-]+", str(x).strip().lower())})
+        elif k == "https_hosts":
+            v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9.:-]{1,253}", str(x).strip().lower())})
+        elif k == "https_port" and not (1 <= v <= 65535):
+            raise ValueError("https_port must be a port number (1-65535)")
         elif k == "box_name":
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
         elif k == "favorites":

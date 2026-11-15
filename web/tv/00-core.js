@@ -30,6 +30,8 @@ window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reas
 const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const fmtDay = (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// on the HTTPS port, pictures from plain-http sites would be blocked: TunerBox fetches those (/api/img)
+const safePic = (u) => (location.protocol === "https:" && /^http:\/\//i.test(u || "") ? `/api/img?u=${encodeURIComponent(u)}` : (u || ""));
 const top = () => S.layer[S.layer.length - 1];
 // phones (not iPads/tablets): touch screen and small in at least one direction. Rechecked on rotate.
 const phoneMQ = window.matchMedia && matchMedia("(pointer: coarse) and (max-width: 700px), (pointer: coarse) and (max-height: 500px)");

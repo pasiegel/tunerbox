@@ -3,6 +3,8 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// on the HTTPS port, pictures from plain-http sites would be blocked: TunerBox fetches those (/api/img)
+const safePic = (u) => (location.protocol === "https:" && /^http:\/\//i.test(u || "") ? `/api/img?u=${encodeURIComponent(u)}` : (u || ""));
 // Search that forgives how a name is typed: case, accents, spaces and punctuation don't matter, and "&" or
 // "+" match "and" or "plus" or nothing. "a & e", "ae" and "a and e" find A&E; "espn 2" finds ESPN2;
 // "espanol" finds Español; "today’s" (a phone's curly apostrophe) finds Today's. One or two letters
@@ -105,7 +107,7 @@ function renderLineup() {
     const tag = c.mode === "none" ? '<span class="tag none">OFF</span>'
       : c.mode === "manual" ? '<span class="tag manual">MANUAL</span>'
       : s ? `<span class="tag ${isWeak(c) ? "weak" : "auto"}" title="${esc(c.reason)}">AUTO ${c.score}${c.alts ? ` +${c.alts}` : ""}</span>` : "";
-    const feed = s ? `<div class="feed"><span class="dot ${s.status}" title="${s.status}"></span>${s.logo ? `<img src="${esc(s.logo)}" onerror="this.remove()">` : ""}
+    const feed = s ? `<div class="feed"><span class="dot ${s.status}" title="${s.status}"></span>${s.logo ? `<img src="${esc(safePic(s.logo))}" onerror="this.remove()">` : ""}
         <div><div>${esc(feedName(s))}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div></div>`
       : '<span class="muted">—</span>';
     return `<tr data-n="${c.number}"><td class="num">${c.number}</td>
@@ -208,7 +210,7 @@ function renderExtras() {
   $("ex-stats").textContent = `${extras.filter((e) => e.enabled).length} shown of ${extras.length} · listing ${Math.min(rows.length, 1500)}`;
   $("ex-body").innerHTML = rows.slice(0, 1500).map((e) => `<tr data-k="${esc(e.stream_key)}">
     <td><input class="numedit" type="number" value="${e.number}"></td>
-    <td><div class="feed"><span class="dot ${e.status}"></span>${e.logo ? `<img src="${esc(e.logo)}" onerror="this.remove()">` : ""}${esc(e.name)}</div></td>
+    <td><div class="feed"><span class="dot ${e.status}"></span>${e.logo ? `<img src="${esc(safePic(e.logo))}" onerror="this.remove()">` : ""}${esc(e.name)}</div></td>
     <td>${esc(e.grp)}</td><td class="muted">${esc(e.source_name)}</td>
     <td><input type="checkbox" ${e.enabled ? "checked" : ""}></td>
     <td class="acts"><button class="btn small" data-a="prev">&#9654;</button></td></tr>`).join("");
@@ -742,7 +744,7 @@ async function leagueTeams(key) {
   if (!teamCache[key]) teamCache[key] = await api(`/api/sports/teams?league=${encodeURIComponent(key)}`);
   return teamCache[key];
 }
-const teamLogo = (t) => (t && t.logo ? `<img src="${esc(t.logo)}" alt="" loading="lazy">` : "");
+const teamLogo = (t) => (t && t.logo ? `<img src="${esc(safePic(t.logo))}" alt="" loading="lazy">` : "");
 function setFavs(keys) {
   favField().value = [...new Set(keys)].sort().join(",");
   renderFavs(); renderTeamList(); syncSettings();
@@ -812,10 +814,28 @@ loaders.settings = async () => {
   try { await loadLeagues(); } catch (e) { $("league-grid").textContent = e.message; }
   loadTeams();
   rememberSaved(); syncSettings();
-  $("u-m3u").textContent = location.origin + "/playlist.m3u";
-  $("u-epg").textContent = location.origin + "/epg.xml";
-  $("u-hdhr").textContent = location.origin;
+  // other apps always get the http address, even when Setup is open over HTTPS (they'd refuse TunerBox's certificate)
+  let base = location.origin;
+  if (location.protocol === "https:") { try { base = (await api("/api/me")).http_base || base; } catch (_) {} }
+  $("u-m3u").textContent = base + "/playlist.m3u";
+  $("u-epg").textContent = base + "/epg.xml";
+  $("u-hdhr").textContent = base;
+  $("https-ca").href = base + "/tunerbox-ca.crt";
+  loadHttps();
 };
+
+async function loadHttps() {
+  const el = $("https-status");
+  let s;
+  try { s = await api("/api/https"); } catch (e) { el.textContent = e.message; return; }
+  const host = location.hostname;
+  const url = `https://${host}:${s.port}/`;
+  el.innerHTML = !s.enabled ? "HTTPS is off."
+    : s.running ? `HTTPS is on: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>`
+    : s.error ? `<span class="bad">HTTPS isn't running: ${esc(s.error)}</span>`
+    : "HTTPS starts when TunerBox is restarted.";
+  if (s.enabled) el.innerHTML += `<br>The certificate covers ${esc([...s.names, ...s.ips].join(", "))}.`;
+}
 // "unsaved" means the form differs from what was last loaded or saved, so undoing a change clears it again
 const setFields = () => [...$("set-form").elements].filter((el) => el.name);
 const fieldVal = (el) => (el.type === "checkbox" ? String(el.checked) : el.value);

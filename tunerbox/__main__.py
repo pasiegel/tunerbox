@@ -200,6 +200,11 @@ def main():
     from .api import app
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port,
                                            log_level="warning", log_config=None))
+    from . import https
+    try:                            # second port, only if switched on; never stops http from starting
+        https.start(app, host, port)
+    except Exception:  # noqa: BLE001
+        log.exception("HTTPS not started")
     if want_window:
         _kill_orphan_webviews(config.DATA / "webview")
         t = threading.Thread(target=server.run, daemon=True)

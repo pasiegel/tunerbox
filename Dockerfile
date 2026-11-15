@@ -25,6 +25,8 @@ RUN useradd --uid 1000 --create-home tunerbox \
 USER tunerbox
 VOLUME /data
 EXPOSE 8642
+# HTTPS, when switched on in Setup › Settings › HTTPS
+EXPOSE 8643
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
     CMD python -c "import httpx,sys; sys.exit(0 if httpx.get('http://127.0.0.1:8642/api/me', timeout=4).status_code == 200 else 1)"

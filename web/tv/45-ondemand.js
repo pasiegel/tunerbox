@@ -161,7 +161,7 @@ const odManyTags = () => ((OD.counts && OD.counts.tags) || 0) > 1;
 const odLabel = (x) => [x.tag, x.country].filter(Boolean).join(" · ");
 const odTone = (name) => { let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 8; return h; };     // a title keeps its color
 const odTile = (t, i) => `<div class="od-tile t${odTone(t.name)}${t.poster ? " art" : ""}" data-i="${i}">`
-  + (t.poster ? `<img loading="lazy" alt="" referrerpolicy="no-referrer" src="${esc(t.poster)}">` : "")
+  + (t.poster ? `<img loading="lazy" alt="" referrerpolicy="no-referrer" src="${esc(safePic(t.poster))}">` : "")
   + (t.new ? '<span class="flag">NEW</span>' : t.watched ? '<span class="flag cc">WATCHED</span>' : "")
   + (t.tag && odManyTags() ? `<span class="od-lang">${esc(t.tag)}</span>` : "")
   + `<div class="tx"><div class="n">${esc(t.name)}</div><div class="y">${esc(t.sub || t.year || "")}</div></div>`

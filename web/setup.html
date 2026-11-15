@@ -261,6 +261,23 @@
         <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC.</small></span><input name="lineup_csv"></label>
         <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC.</small></span><input name="ffmpeg"></label>
       </div>
+
+      <div class="set-group" data-cat="https" data-label="HTTPS">
+        <h4>HTTPS (install as an app)</h4>
+        <p class="muted small">Browsers only offer <b>Install app</b> for secure pages. Turn this on to also serve TunerBox over HTTPS on a second port. The normal http address keeps working exactly as before, and Plex, Emby, Jellyfin, VLC and the Roku app keep using it. Only changeable on the TunerBox PC; takes effect when TunerBox restarts.</p>
+        <label class="set-row"><span class="set-text"><b>Serve HTTPS too</b></span><input type="checkbox" class="toggle" name="https_enabled"></label>
+        <label class="set-row" data-needs="https_enabled"><span class="set-text"><b>HTTPS port</b><small>8643 unless something else uses it.</small></span><input name="https_port" type="number" min="1" max="65535"></label>
+        <label class="set-row wide" data-needs="https_enabled"><span class="set-text"><b>Extra addresses for the certificate</b><small>This PC's own names and network addresses are included automatically. Add others separated by commas, for example the Docker host's address when TunerBox runs in a container.</small></span><input name="https_hosts" data-list="1" placeholder="192.168.1.20, tunerbox.lan"></label>
+        <div id="https-status" class="https-status muted small"></div>
+        <div class="https-help small">
+          <p><b>On each phone or PC, once:</b> trust TunerBox's certificate. Open <a id="https-ca" href="/tunerbox-ca.crt">tunerbox-ca.crt</a> on that device (use the http address), then:</p>
+          <ul>
+            <li><b>Android:</b> Settings › Security › Encryption &amp; credentials › Install a certificate › CA certificate, and pick the downloaded file. Then open the HTTPS address in Chrome and use <b>Install app</b>.</li>
+            <li><b>iPhone / iPad:</b> open the file in Safari and allow the profile, then Settings › General › VPN &amp; Device Management to install it, and Settings › General › About › Certificate Trust Settings to switch it on. (Add to Home Screen also works over plain http.)</li>
+            <li><b>Windows:</b> open the file › Install Certificate › Local Machine › "Trusted Root Certification Authorities".</li>
+          </ul>
+        </div>
+      </div>
     </form>
 
     <div class="set-group" data-cat="apps" data-label="Other apps">

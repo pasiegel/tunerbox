@@ -1,4 +1,5 @@
 """HTTP API + web UI + M3U/XMLTV/HDHomeRun outputs."""
+import hashlib
 import json
 import logging
 import re
@@ -9,12 +10,13 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 import anyio
+import httpx
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -666,14 +668,79 @@ def _trusted(request: Request):
 def api_me(request: Request):
     d = remote.device(request)
     return {"pc": remote.is_pc(request), "paired": bool(d), "name": d["name"] if d else None,
-            "require_pairing": bool(config.get("require_pairing"))}
+            "require_pairing": bool(config.get("require_pairing")), "http_base": _http_base(request)}
+
+
+@app.get("/api/https")
+def api_https():
+    """Setup › Settings › HTTPS: on or off, the port, any problem, what the certificate covers."""
+    return https.status()
+
+
+@app.get("/tunerbox-ca.crt")
+def api_https_ca():
+    """TunerBox's certificate authority, for a phone or PC to trust once (only the public certificate)."""
+    path = https.ca_file()
+    if not path.exists():
+        try:
+            https.ensure()
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(503, f"Couldn't make the certificate: {e}") from e
+    return FileResponse(path, media_type="application/x-x509-ca-cert", filename="tunerbox-ca.crt",
+                        headers={"Cache-Control": "no-store"})
+
+
+IMG_MAX = 5_000_000
+_img_lock = threading.Lock()
+
+
+def _img_fetch(u):
+    """A picture from a plain-http site, kept on disk a day (logos, posters): pages on the HTTPS port
+    can't load http pictures themselves. Only images, at most 5 MB."""
+    key = hashlib.sha1(u.encode("utf-8")).hexdigest()
+    folder = config.DATA / "cache" / "img"
+    path, kind = folder / key, folder / f"{key}.type"
+    if path.exists() and kind.exists() and time.time() - path.stat().st_mtime < 86400:
+        return path, kind.read_text(encoding="utf-8")
+    try:
+        with httpx.stream("GET", u, timeout=10, follow_redirects=True,
+                          headers={"User-Agent": config.get("user_agent") or "TunerBox"}) as r:
+            ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
+            if r.status_code != 200 or not ctype.startswith("image/") or ctype == "image/svg+xml":
+                return None, ""
+            data = b""
+            for chunk in r.iter_bytes():
+                data += chunk
+                if len(data) > IMG_MAX:
+                    return None, ""
+    except (httpx.HTTPError, OSError):
+        return None, ""
+    with _img_lock:
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f"{key}.part"
+        tmp.write_bytes(data)
+        tmp.replace(path)
+        kind.write_text(ctype, encoding="utf-8")
+    return path, ctype
+
+
+@app.get("/api/img")
+async def api_img(u: str):
+    if not u.lower().startswith("http://") or len(u) > 2000:
+        raise HTTPException(400, "Only http:// pictures")
+    path, ctype = await anyio.to_thread.run_sync(_img_fetch, u)
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, media_type=ctype, headers={"Cache-Control": "public, max-age=86400",
+                                                         "X-Content-Type-Options": "nosniff"})
 
 
 @app.post("/api/pair/start")
 def api_pair_start(request: Request):
     _pc_only(request)
     p = remote.start_pairing()
-    port = request.url.port or config.get("port", 8642)
+    # always the http address (a phone scanning it needs no certificate), even when Setup is open over HTTPS
+    port = https.http_port() if request.url.scheme == "https" else (request.url.port or config.get("port", 8642))
     base = f"http://{remote.lan_ip()}:{port}"
     link = f"{base}/pair#{p['code']}.{p['key']}"
     return {"code": p["code"], "expires": p["expires"], "url": link, "address": f"{base}/pair",
@@ -1023,8 +1090,20 @@ def api_del_rule(rid: int):
 
 
 # ------------------------------------------------------------------ outputs for other apps
+def _http_base(request: Request):
+    """This server's plain-http address as the caller sees it. Opened over HTTPS (https.py), it's the
+    same host on the http port instead: Plex, VLC and phones are given http addresses, which need no
+    certificate. Over http it's exactly the address that was used (Docker port mappings included)."""
+    if request.url.scheme != "https":
+        return str(request.base_url).rstrip("/")
+    host = request.url.hostname or remote.lan_ip()
+    if ":" in host:                 # IPv6 literal
+        host = f"[{host}]"
+    return f"http://{host}:{https.http_port()}"
+
+
 def _base(request: Request):
-    return str(request.base_url).rstrip("/")
+    return _http_base(request)
 
 
 @app.get("/playlist.m3u")

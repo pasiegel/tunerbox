@@ -265,3 +265,10 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 .tn-meter i { display: block; height: 100%; background: var(--ok); }
 .tn-card.full { border-color: var(--warn); } .tn-card.full .tn-meter i { background: var(--warn); }
 
+
+/* Settings › HTTPS */
+.https-status { margin: 10px 0; line-height: 1.6; }
+.https-status .bad { color: #ff8a80; }
+.https-help { margin-top: 8px; line-height: 1.5; }
+.https-help ul { margin: 6px 0 0 18px; padding: 0; }
+.https-help li { margin: 4px 0; }

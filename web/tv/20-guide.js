@@ -208,7 +208,7 @@ const G = {
       const ch = this.ch(i), fav = S.favs.has(ch.number);
       const cls = ["g-row", i === this.row ? "sel" : "", this.list[i] === S.idx ? "playing" : ""].join(" ");
       html += `<div class="${cls}" data-i="${i}"><div class="g-ch"><span class="g-fav${fav ? " on" : ""}" title="${fav ? "Remove from" : "Add to"} Favorites">${fav ? "★" : "☆"}</span><span class="n">${ch.number}</span>`
-        + (ch.logo ? `<img src="${esc(ch.logo)}" onerror="this.remove()" alt="">` : "")
+        + (ch.logo ? `<img src="${esc(safePic(ch.logo))}" onerror="this.remove()" alt="">` : "")
         + `<span class="l">${esc(ch.label || ch.name)}</span></div><div class="g-progs">`;
       for (const p of this.cells(ch.number)) {
         const l = Math.max(p.start, this.win), r = Math.min(p.stop, this.win + this.span);

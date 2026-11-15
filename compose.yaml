@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     ports:
       - "8642:8642"
+      # - "8643:8643"                        # HTTPS, if you switch it on in Setup › Settings › HTTPS
     environment:
       TZ: America/Detroit                    # guide times and DVR scheduling follow this
     volumes:

@@ -256,7 +256,7 @@ function recInfo(full = false) {
   const ch = S.channels[S.byNum.get(r.number)] || {};
   $("b-num").textContent = r.number; $("b-name").textContent = r.channel_name || ch.name || "";
   const logo = $("b-logo");
-  if (ch.logo) { logo.src = ch.logo; logo.style.display = ""; } else logo.style.display = "none";
+  if (ch.logo) { logo.src = safePic(ch.logo); logo.style.display = ""; } else logo.style.display = "none";
   recArt($("b-art"), r); $("b-art").dataset.ch = "";          // the live banner picks its own picture again
   $("b-title").textContent = r.title || "Recording";
   $("b-flags").innerHTML = '<span class="flag rec">RECORDING</span>';

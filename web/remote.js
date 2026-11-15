@@ -3,6 +3,8 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// on the HTTPS port, pictures from plain-http sites would be blocked: TunerBox fetches those (/api/img)
+const safePic = (u) => (location.protocol === "https:" && /^http:\/\//i.test(u || "") ? `/api/img?u=${encodeURIComponent(u)}` : (u || ""));
 const api = async (url, opts = {}) => {
   const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts,
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body });
@@ -100,7 +102,7 @@ function showTab(name) {
 document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
 function listHtml(items) {
-  return items.map((it, i) => `<li data-i="${i}">${it.logo ? `<img src="${esc(it.logo)}" alt="" loading="lazy">` : '<span class="nologo"></span>'}
+  return items.map((it, i) => `<li data-i="${i}">${it.logo ? `<img src="${esc(safePic(it.logo))}" alt="" loading="lazy">` : '<span class="nologo"></span>'}
     <div><b>${esc(it.title)}</b><small>${esc(it.sub || "")}</small></div>${it.badge ? `<span class="badge ${it.live ? "live" : ""}">${esc(it.badge)}</span>` : ""}`
     + (it.star !== undefined ? `<button class="star${it.star ? " on" : ""}" title="${it.star ? "Remove from" : "Add to"} Favorites">${it.star ? "★" : "☆"}</button>` : "") + "</li>").join("");
 }

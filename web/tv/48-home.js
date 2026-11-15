@@ -139,8 +139,8 @@ function hmTile(it, r, i) {
   }
   return `<div class="hm-tile t${odTone(String(tone || ""))}${poster ? " poster" : ""}${pic || matchup ? " art" : ""}" ${at}${num ? ` data-num="${esc(num)}"` : ""}>`
     + matchup
-    + (logo ? `<img class="logo" alt="" src="${esc(logo)}">` : num && !pic && !matchup ? `<div class="big">${esc(num)}</div>` : "")
-    + (pic ? `<img class="pic" loading="lazy" alt="" src="${esc(pic)}">` : "")
+    + (logo ? `<img class="logo" alt="" src="${esc(safePic(logo))}">` : num && !pic && !matchup ? `<div class="big">${esc(num)}</div>` : "")
+    + (pic ? `<img class="pic" loading="lazy" alt="" src="${esc(safePic(pic))}">` : "")
     + (badge !== "" ? `<span class="hm-badge${live ? " live" : dimBadge ? " dim" : ""}">${esc(badge)}</span>` : "")
     + `<div class="tx"><div class="n">${esc(title)}</div><div class="y">${esc(sub)}</div></div>`
     + (pct ? `<div class="bar"><i style="width:${pct}%"></i></div>` : "") + "</div>";
@@ -152,7 +152,7 @@ function hmMatchup(e, p) {
   const t = e && e.teams;
   if (!t || t.length !== 2 || !t[0].logo || !t[1].logo) return "";
   const col = (x, dflt) => (/^[0-9a-f]{6}$/i.test(x.color || "") ? `#${x.color}` : dflt);
-  const img = (x, side) => `<img class="mu-${side}" loading="lazy" alt="" src="${esc(x.logo)}">`;
+  const img = (x, side) => `<img class="mu-${side}" loading="lazy" alt="" src="${esc(safePic(x.logo))}">`;
   const a = parseFloat(t[0].score), b = parseFloat(t[1].score), scored = t[0].score !== "" && t[1].score !== "";
   const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
   const mid = scored

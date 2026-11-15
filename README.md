@@ -174,6 +174,15 @@ The phone must be on the same Wi-Fi. If several screens are on, pick one at the 
 
 Whether or not setup is locked, the settings that name a program or a place on disk (ffmpeg path, recordings folder, lineup CSV, guide files on disk, port) can only be changed on the PC itself.
 
+## HTTPS (install as an app)
+Browsers only offer **Install app** (Android Chrome, desktop Chrome and Edge) for secure pages. TunerBox can also serve itself over HTTPS on a second port, **8643**, while the normal address on **8642** stays plain http and works exactly as before. Plex, Emby, Jellyfin, Channels, VLC, the Roku app and `/playlist.m3u` keep using http on 8642.
+
+* **Turn it on:** **Setup › Settings › HTTPS** on the TunerBox PC, then restart TunerBox. The page shows the HTTPS address and any problem (for example, port 8643 already used by another program; http still starts either way).
+* **Certificate:** TunerBox makes its own certificate authority once, and from it a certificate for this PC's names and network addresses (renewed by itself). In Docker, add the host's address under **Extra addresses for the certificate**, and map port 8643.
+* **Each device, once:** download `http://<this PC>:8642/tunerbox-ca.crt` on it and trust it (Setup › Settings › HTTPS has the steps for Android, iPhone/iPad and Windows). Then open `https://<this PC>:8643/` and install it; the phone remote installs the same way from `/remote`.
+* Over HTTPS, channel logos and posters from plain-http sites come through TunerBox (`/api/img`), since browsers block them on secure pages. Setup and the phone pairing code always give the http addresses.
+* iPhone and iPad don't need any of this: Safari's **Add to Home Screen** works over plain http.
+
 ## Stream cache
 For streams that stutter or freeze, turn on the stream cache. TunerBox then holds back a few seconds of video before it starts playing, and if the stream hiccups it plays from that cache instead of freezing.
 
