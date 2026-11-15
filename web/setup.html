@@ -17,10 +17,10 @@
     <span class="grp">Channels</span>
     <button data-tab="channels">Channel lineup <i class="nb warn" id="nb-channels"></i></button>
     <button data-tab="extras">Extra channels</button>
-    <button data-tab="media">Local channels</button>
+    <button data-tab="media">My Channels</button>
     <span class="grp">Sources</span>
     <button data-tab="sources">Playlists</button>
-    <button data-tab="library">Local library <i class="nb warn" id="nb-library"></i></button>
+    <button data-tab="library">My Library <i class="nb warn" id="nb-library"></i></button>
     <button data-tab="guide">TV guide</button>
     <button data-tab="tuners">Tuners</button>
     <span class="grp">System</span>
@@ -105,10 +105,10 @@
 
   <!-- local channels -->
   <section id="tab-media" class="hidden">
-    <h3>Local channels</h3>
-    <p class="muted">Turn folders of videos into TV channels that play around the clock, with their own guide listings. Folders can be on this PC or on the network (<code>\\server\share\TV\Seinfeld</code>). Tuning in joins whatever is "on" at the moment, like real TV. Episode names are read from file names such as <code>Show - S01E02 - Title.mkv</code>.</p>
+    <h3>My Channels</h3>
+    <p class="muted"><b>Your videos as 24/7 channels in the guide.</b> (For movies and shows you pick and play, use <b>My Library</b>.) Turn folders of videos into TV channels that play around the clock, with their own guide listings. Folders can be on this PC or on the network (<code>\\server\share\TV\Seinfeld</code>). Tuning in joins whatever is "on" at the moment, like real TV. Episode names are read from file names such as <code>Show - S01E02 - Title.mkv</code>.</p>
     <div class="cards" id="mc-list"></div>
-    <h3 id="mc-form-title">New local channel</h3>
+    <h3 id="mc-form-title">New channel</h3>
     <form id="mc-form" class="form">
       <label>Channel name <input name="name" required placeholder="e.g. Sitcoms"></label>
       <label>Channel number <input name="number" type="number" min="1"></label>
@@ -131,8 +131,8 @@
 
   <!-- local library: your own movies and shows in On Demand -->
   <section id="tab-library" class="hidden">
-    <h3>Local library</h3>
-    <p class="muted">Your own movies and TV shows, in On Demand next to your playlists. TunerBox reads them straight from your NAS over the network (or from a folder it can see) and never writes anything there. Details and posters come from TMDB and are kept in TunerBox's own data folder.</p>
+    <h3>My Library</h3>
+    <p class="muted"><b>Your movies and shows in On Demand.</b> (To play folders as 24/7 channels in the guide, use <b>My Channels</b>.) Your own movies and TV shows, in On Demand next to your playlists. TunerBox reads them straight from your NAS over the network (or from a folder it can see) and never writes anything there. Details and posters come from TMDB and are kept in TunerBox's own data folder.</p>
     <div id="lib-summary" class="lib-summary"></div>
     <div class="cards" id="lib-list"></div>
     <h3 id="lib-form-title">Add a library folder</h3>
@@ -254,7 +254,7 @@
         <label class="set-row"><span class="set-text"><b>Show extra channels</b><small>Playlist channels that aren't on your lineup, numbered from the number below.</small></span><input type="checkbox" class="toggle" name="extras_enabled"></label>
         <label class="set-row" data-needs="extras_enabled"><span class="set-text"><b>First extra channel number</b></span><input name="extra_channel_start" type="number" min="1"></label>
         <label class="set-row"><span class="set-text"><b>Use national network feeds</b><small>When your local station has no stream, play the national feed (e.g. NBC for your local NBC station).</small></span><input type="checkbox" class="toggle" name="network_fallback"></label>
-        <label class="set-row"><span class="set-text"><b>First local channel number</b><small>Where channels made from your own video folders start.</small></span><input name="media_channel_start" type="number" min="1"></label>
+        <label class="set-row"><span class="set-text"><b>First My Channels number</b><small>Where channels made from your own video folders start.</small></span><input name="media_channel_start" type="number" min="1"></label>
       </div>
 
       <div class="set-group" data-cat="ondemand" data-label="On Demand">
@@ -300,7 +300,7 @@
         <h4>Playback</h4>
         <label class="set-row"><span class="set-text"><b>Video</b><small>Re-encoding helps older TVs and Roku but uses more CPU. Each playlist can override this.</small></span><select name="video_mode"><option value="copy">Original (fast)</option><option value="h264">Re-encode to H.264</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
         <label class="set-row"><span class="set-text"><b>Stream cache</b><small>Seconds of video buffered before playing. Each screen can change its own in the Menu.</small></span><select name="stream_buffer" data-num="1"><option value="0">Off (fastest changes)</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option></select></label>
-        <label class="set-row"><span class="set-text"><b>Local channels picture size</b></span><select name="media_resolution"><option value="1080">1080p (best)</option><option value="720">720p (less CPU)</option></select></label>
+        <label class="set-row"><span class="set-text"><b>My Channels picture size</b></span><select name="media_resolution"><option value="1080">1080p (best)</option><option value="720">720p (less CPU)</option></select></label>
         <label class="set-row"><span class="set-text"><b>Tuners offered to Plex / Emby / Jellyfin</b><small>0 = automatic.</small></span><span class="unit-field"><input name="tuner_count" type="number" min="0" max="32"><em>tuners</em></span></label>
       </div>
 

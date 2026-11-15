@@ -82,7 +82,7 @@ def test_scan_movies(movies):
     assert vod.enabled()
     names = [t["name"] for t in vod.titles("movie")["items"]]
     assert names == ["Alien", "Aliens", "Dune Part Two", "Heat", "Loose Movie"]
-    assert vod.categories("movie")["cats"] == [{"name": "NAS Movies", "count": 5}]
+    assert vod.categories("movie")["cats"] == [{"name": "NAS Movies", "count": 5, "library": 1}]
     assert vod.search("dune")[0]["name"] == "Dune Part Two"
 
 
@@ -308,3 +308,16 @@ def test_saved_password_not_sent_to_a_new_server():
         library.clean({"location": r"\\evil\x", "kind": "movie"}, library.share(sid))
     library.update(sid, {"location": r"\\nas\Media\Movies"})    # same server, other folder: kept
     assert library.share(sid)["password"] == "secret"
+
+
+def test_my_library_categories_come_first():
+    """Your own libraries are listed before a playlist's groups in On Demand, whatever their names."""
+    from tunerbox import db, vod
+    sid = db.run("INSERT INTO sources(name, type, url, vod_movies) VALUES ('P', 'xtream', 'http://p', 1)")
+    lib = db.run("INSERT INTO lib_shares(name, kind, type, path, enabled) VALUES ('Zed Movies', 'movie', 'folder', '/x', 1)")
+    for i, (src, cat) in enumerate(((sid, "Action"), (sid, "EN - Drama"), (-lib, "Zed Movies"))):
+        db.run("INSERT INTO vod_titles(id, source_id, kind, name, category, search) VALUES (?, ?, 'movie', ?, ?, '')",
+               (f"t{i}", src, f"Title {i}", cat))
+    cats = vod.categories("movie")["cats"]
+    assert [c["name"] for c in cats] == ["Zed Movies", "Action", "EN - Drama"]
+    assert cats[0]["library"] and not cats[1]["library"]

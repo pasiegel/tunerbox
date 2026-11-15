@@ -509,8 +509,9 @@ def counts():
 
 
 def categories(kind):
-    rows = db.rows(f"SELECT t.category AS name, count(*) AS count {_FROM} WHERE t.kind=? GROUP BY t.category "
-                   "ORDER BY t.category COLLATE NOCASE", (kind,))
+    # your own libraries (My Library, negative source ids) first, so they aren't lost among a provider's groups
+    rows = db.rows(f"SELECT t.category AS name, count(*) AS count, MIN(t.source_id) < 0 AS library {_FROM} WHERE t.kind=? "
+                   "GROUP BY t.category ORDER BY MIN(t.source_id) >= 0, t.category COLLATE NOCASE", (kind,))
     recent = db.one(f"SELECT count(*) n {_FROM} WHERE t.kind=? AND t.added>0", (kind,))["n"]
     return {"total": sum(r["count"] for r in rows), "recent": min(RECENT, recent), "cats": rows}
 

@@ -624,7 +624,7 @@ def scan_due(now=None):
 def _tmdb(path, key=None, **params):
     key = key if key is not None else settings()["tmdb_key"]
     if not key:
-        raise LibraryError("Add a TMDB API key in Setup › Local library to download details and posters")
+        raise LibraryError("Add a TMDB API key in Setup › My Library to download details and posters")
     headers = {"Accept": "application/json"}
     if key.startswith("eyJ"):                       # a v4 "API Read Access Token"
         headers["Authorization"] = f"Bearer {key}"

@@ -10,7 +10,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (pick yo
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
 * **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB. Don't need it? Turn off **Setup › Settings › DVR › Recordings** and Record, Recordings and the DVR tab disappear from every screen.
 * **On Demand.** Movies and TV shows that come with your playlist, each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
-* **Local library.** Your own movies and TV shows in On Demand, read straight from your NAS over the network (SMB, no mount needed) or from a folder, with details and posters from TMDB. Nothing is written next to your files.
+* **My Library.** Your own movies and TV shows in On Demand, read straight from your NAS over the network (SMB, no mount needed) or from a folder, with details and posters from TMDB. Nothing is written next to your files.
 * **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
 
 ## Getting started
@@ -128,8 +128,8 @@ Star the channels you watch most, then see just those in the guide.
 * **See them:** **V** or **Menu › ★ Favorites guide** opens the guide with only favorites; **V** in the guide switches between favorites and all channels. Typing a number in the Favorites guide jumps to that channel among all channels if it isn't a favorite.
 * Favorites are kept on the TunerBox PC, so every TV, tablet and the phone remote share them. On the phone remote, favorites are listed first in Channels with a ★ to add or remove.
 
-## Local channels (your own videos)
-Turn folders of videos into channels that play around the clock, like ErsatzTV or dizqueTV. Open **Setup › Local channels**:
+## My Channels (your videos as 24/7 channels)
+Turn folders of videos into channels that play around the clock, like ErsatzTV or dizqueTV. Open **Setup › My Channels**:
 
 1. Name the channel, pick a number (suggested from 2000 up), and list one or more folders, one per line. Folders on this PC (`D:\TV\Seinfeld`) and network shares (`\\nas\media\TV\Frasier`) both work. In the PC app, **Add a folder…** opens a folder picker; **Check folders** shows how many videos TunerBox can see.
 2. Choose the play order:
@@ -142,8 +142,8 @@ Tuning in joins whatever is "on", like real TV. Titles, seasons and episodes com
 
 Every file is converted to one common format while it plays (H.264 + AAC, with black bars as needed), so mixed libraries play smoothly from one file to the next. This uses some CPU on the PC; choose 720p under **Settings › Local channels picture size** for less. The PC running TunerBox needs access to the network share; if the share needs a password, open it once in File Explorer and tick "Remember my credentials".
 
-## Local library (your own movies and TV shows)
-Setup › **Local library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
+## My Library (your own movies and TV shows in On Demand)
+Setup › **My Library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
 
 1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **network location** (`\\nas\Media\Movies` or `smb://192.168.1.20/Media/Movies`) and the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
 2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand.
@@ -287,7 +287,7 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 
 * Set `TZ` (in `compose.yaml`, or `-e TZ=` with `docker run`) to your time zone, e.g. `America/Chicago`: guide times and DVR scheduling follow it.
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
-* For Local channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
+* For My Channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
 * If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
 * **Two TunerBoxes on one host** (say one for the family and one private): give the second its own data volume and port, e.g. `-v tunerbox-private-data:/data` and `-p 8644:8644` with the command `python -m tunerbox --server --port 8644` (with host networking, just the `--port`). Then set **Setup › Settings › Other apps › Network name** on each (before adding them as tuners), so Plex, Jellyfin, Emby and Channels DVR list them under different names. Home-screen icons stay "TunerBox". Each one gets its own HDHomeRun device ID for Plex automatically.
 

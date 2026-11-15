@@ -76,7 +76,7 @@ loaders.overview = async () => {
          o.guide.updated ? `● Updated ${ago2(o.guide.updated)}${o.guide.gracenote ? ` · ${esc(o.guide.postal_code)}` : ""}` : "Not downloaded yet", o.guide.updated ? "ok" : "warn"),
     card("dvr", "DVR", o.dvr.recording ? `● ${o.dvr.recording} recording` : `${o.dvr.scheduled} scheduled`,
          [o.dvr.recording ? `${o.dvr.scheduled} scheduled` : "", free].filter(Boolean).join(" · ") || "Nothing scheduled", o.dvr.recording ? "bad" : ""),
-    card("library", "Local library", o.libraries ? `${o.library.movies} · ${o.library.shows}` : "Off",
+    card("library", "My Library", o.libraries ? `${o.library.movies} · ${o.library.shows}` : "Off",
          o.libraries ? (o.library.review ? `movies · shows · ${o.library.review} to review` : "movies · shows") : "Add your own movie and TV folders", o.library.review ? "warn" : "", !!o.library.review),
   ].join("");
   const steps = [];
@@ -989,13 +989,13 @@ loaders.media = async () => {
         <button class="btn small" data-a="edit">Edit</button><button class="btn small" data-a="scan">Re-read folders</button>
         <button class="btn small" data-a="toggle">${c.enabled ? "Turn off" : "Turn on"}</button>
         <button class="btn small danger" data-a="del">Delete</button></div></div>`).join("")
-    : '<p class="muted">No local channels yet. Make one below.</p>';
+    : '<p class="muted">No channels in My Channels yet. Make one below.</p>';
   if (!mcEditing && !$("mc-form").number.value) $("mc-form").number.value = (await api("/api/media/next-number")).number;
   $("mc-browse").classList.toggle("hidden", !(window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder));
 };
 function mcReset() {
   mcEditing = null; $("mc-form").reset(); $("mc-checked").textContent = "";
-  $("mc-form-title").textContent = "New local channel"; $("mc-save").textContent = "Create channel";
+  $("mc-form-title").textContent = "New channel"; $("mc-save").textContent = "Create channel";
   $("mc-cancel").classList.add("hidden"); $("mc-form").number.value = "";
   loaders.media();
 }

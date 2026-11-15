@@ -64,7 +64,7 @@ def _build():
             continue
         out.append({
             "number": m["number"], "name": m["name"], "label": _label(m["name"]), "logo": m["logo"] or "",
-            "kind": "media", "group": "Local channels", "streams": [f"media:{m['id']}"],
+            "kind": "media", "group": "My Channels", "streams": [f"media:{m['id']}"],
             "mapped": m["item_count"] > 0, "mode": "media", "epg": f"m:{m['id']}",
         })
     out.sort(key=lambda c: c["number"])

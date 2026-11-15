@@ -92,7 +92,7 @@ def vod_scan(source_id=None, kinds=vod.KINDS):
 
 
 def library_scan(share_id=None, full_refresh=False):
-    """Read your own movie and TV folders (Setup › Local library) and download details from TMDB.
+    """Read your own movie and TV folders (Setup › My Library) and download details from TMDB.
     Queued if another job is running."""
     return _run(f"library:{share_id or ''}", lambda: library.scan_all(_progress, share_id, full_refresh), queue=True)
 
@@ -152,7 +152,7 @@ def media_scan(cid=None):
             _progress(f"Reading {ch['name']}", 0, 0)
             msgs.append(f"{ch['name']}: " + media.scan(ch["id"], lambda d, t, n=ch["name"]: _progress(f"Reading {n}", d, t)))
         guide.invalidate()
-        return "; ".join(msgs) or "No local channels"
+        return "; ".join(msgs) or "No channels in My Channels"
     return _run("media", job)
 
 
