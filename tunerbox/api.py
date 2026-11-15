@@ -14,7 +14,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, db, dvr, epg, guide, hls, home, jobs, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, db, dvr, epg, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -1163,6 +1163,127 @@ async def api_media_piece(request: Request, cid: int, idx: int, ss: float = 0.0)
     return LiveResponse(ffmpeg_stream("", None, request=request, buffer=0, cmd=cmd), media_type="video/mp2t")
 
 
+# ------------------------------------------------------------------ local library (your own movies and shows)
+def _lib_err(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except KeyError:
+        raise HTTPException(404, "Not found")
+    except library.LibraryError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/library")
+def api_library():
+    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts()}
+
+
+@app.post("/api/library/settings")
+def api_library_settings(request: Request, data: dict = Body(...)):
+    key_added = bool(data.get("tmdb_key")) and not library.settings()["tmdb_key"]
+    if "tmdb_key" in data and not data["tmdb_key"] and not data.get("clear_key"):
+        data.pop("tmdb_key")                 # a blank box keeps the saved key
+    data.pop("clear_key", None)
+    out = _lib_err(library.save_settings, data)
+    if key_added:
+        jobs.library_details()
+    return out
+
+
+@app.post("/api/library/test-key")
+def api_library_test_key(key: str = Body("", embed=True)):
+    return library.test_key(key or library.settings()["tmdb_key"])
+
+
+def _lib_conn(data):
+    """The library being added or edited, from what Setup sent (a blank password uses the saved one)."""
+    old = library.share(int(data["id"])) if data.get("id") else None
+    d = {**data}
+    d.setdefault("kind", (old or {}).get("kind") or "movie")
+    return library.clean(d, old)
+
+
+@app.post("/api/library/browse")
+def api_library_browse(data: dict = Body(...)):
+    """Connect and list the folders in `path` (inside the location), to check a library and pick its folder."""
+    sh = _lib_err(_lib_conn, data)
+    return library.check(sh, str(data.get("path") or ""))
+
+
+@app.post("/api/library/shares")
+def api_library_add(data: dict = Body(...)):
+    sid = _lib_err(library.add, data)
+    return {"id": sid, "job": jobs.library_scan(sid)}
+
+
+@app.put("/api/library/shares/{sid}")
+def api_library_update(sid: int, data: dict = Body(...)):
+    moved = _lib_err(library.update, sid, data)
+    return {"ok": True, "job": jobs.library_scan(sid) if moved and library.share(sid)["enabled"] else False}
+
+
+@app.delete("/api/library/shares/{sid}")
+def api_library_delete(sid: int):
+    library.delete(sid)
+    return {"ok": True}
+
+
+@app.post("/api/library/scan")
+def api_library_scan(share_id: int = Body(0, embed=True), refresh: bool = Body(False, embed=True)):
+    return {"job": jobs.library_scan(share_id or None, refresh)}
+
+
+@app.get("/api/library/titles")
+def api_library_titles(share_id: int = 0, filter: str = "review", q: str = ""):
+    return library.review(share_id or None, filter, q[:100])
+
+
+@app.get("/api/library/tmdb")
+def api_library_tmdb(kind: str, q: str, year: str = ""):
+    if kind not in library.KINDS or not q.strip():
+        raise HTTPException(400, "kind and q are needed")
+    return _lib_err(library.search_tmdb, kind, q.strip()[:120], year.strip()[:4])
+
+
+@app.post("/api/library/titles/{title_id}/match")
+def api_library_match(title_id: str, tmdb_id: int = Body(..., embed=True)):
+    return _lib_err(library.pin, title_id, tmdb_id)
+
+
+@app.post("/api/library/titles/{title_id}/unmatch")
+def api_library_unmatch(title_id: str):
+    return _lib_err(library.unmatch, title_id)
+
+
+@app.post("/api/library/titles/{title_id}/lookup")
+def api_library_lookup(title_id: str):
+    return _lib_err(library.relookup, title_id)
+
+
+@app.post("/api/library/titles/{title_id}/ignore")
+def api_library_ignore(title_id: str, on: bool = Body(True, embed=True)):
+    return _lib_err(library.ignore, title_id, on)
+
+
+@app.api_route("/api/library/file/{item_id}", methods=["GET", "HEAD"])
+async def api_library_file(request: Request, item_id: str):
+    """A library video's bytes, with ranges, for TunerBox's own ffmpeg (this computer only: no logins needed)."""
+    if not (request.client and request.client.host in ("127.0.0.1", "::1")):
+        raise HTTPException(403)
+    try:
+        status, headers, body = await anyio.to_thread.run_sync(library.open_range, item_id, request.headers.get("range", ""))
+    except KeyError:
+        raise HTTPException(404)
+    except library.LibraryError as e:
+        raise HTTPException(502, str(e))
+    if request.method == "HEAD":
+        getattr(body, "close", lambda: None)()      # closes the file it opened
+        return Response(status_code=status, headers=headers, media_type="application/octet-stream")
+    return StreamingResponse(body, status_code=status, headers=headers, media_type="application/octet-stream")
+
+
 # ------------------------------------------------------------------ web UI
 @app.get("/")
 def index():
@@ -1190,7 +1311,7 @@ def remote_page(request: Request):
 
 # setup changes need this PC or a paired phone once "require_pairing" is on (watching TV never does)
 _LOCKED = ("/api/sources", "/api/mapping", "/api/extras", "/api/settings", "/api/jobs", "/api/rules",
-           "/api/lineup", "/api/gracenote", "/api/media/channels")
+           "/api/lineup", "/api/gracenote", "/api/media/channels", "/api/library")
 
 
 @app.middleware("http")
