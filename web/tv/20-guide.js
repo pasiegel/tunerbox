@@ -323,6 +323,7 @@ const G = {
   },
   fav() { toggleFav(this.ch(this.row)); },
   record() {
+    if (!dvrOn()) { toast(DVR_OFF, 5000); return; }
     const p = this.selected(); const ch = this.ch(this.row);
     if (!p || p.empty) { toast("No guide information to record"); return; }
     programDialog(ch, p);

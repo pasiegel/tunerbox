@@ -110,6 +110,9 @@ DEFAULTS = {
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/130.0 Safari/537.36",
     "recordings_dir": "recordings",
+    # Recordings (DVR). Off: nothing is recorded or scheduled, series rules wait, and Record, Recordings
+    # and the DVR tab are left out of every screen (a recording already running finishes).
+    "dvr_enabled": True,
     "dvr_pad_before": 60,
     "dvr_pad_after": 180,
     # when a playlist has no connection left, a recording that's starting takes one from live TV
@@ -263,7 +266,7 @@ def update(changes: dict):
 PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
            "https_enabled", "https_port", "https_hosts"}
 # Managed through their own API calls, never through /api/settings
-NOT_SETTABLE = {"devices", "hdhr_device_id"}
+NOT_SETTABLE = {"devices", "hdhr_device_id", "vod_available"}
 
 
 def _is_num(v):

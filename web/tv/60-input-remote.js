@@ -264,6 +264,7 @@ function handleKey(k, ev) {
     case "t": openSports(); break;
     case "o": openOD(); break;
     case "r": {
+      if (!dvrOn()) { toast(DVR_OFF, 5000); break; }
       const ch = curCh();
       if (ch && ch.feed) toast("Event feeds can't be recorded (they have no guide listing)");
       else if (ch) nowNext(ch.number, true).then((d) => d.now ? programDialog(ch, d.now) : toast("No guide information to record"));

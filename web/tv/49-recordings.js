@@ -32,6 +32,7 @@ function dvRows(recs) {
 }
 
 async function openDvr() {
+  if (!dvrOn()) { toast(DVR_OFF, 5000); return; }
   if (S.mode === "off") return;
   hideBanner(); closeMenu(); closeSearch(); closeSports(); closeOD(); $("playback").classList.add("hidden");
   if (top() === "guide") G.close();

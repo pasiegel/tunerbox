@@ -39,6 +39,9 @@ const fmt = (t) => new Date(t * 1000).toLocaleString([], { weekday: "short", mon
 // ---------------------------------------------------------------- tabs
 const loaders = {};
 document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+// the DVR tab is left out while recordings are turned off (Settings › DVR)
+const dvrTab = (on) => document.querySelector('#tabs button[data-tab="dvr"]').classList.toggle("hidden", !on);
+api("/api/settings").then((s) => dvrTab(s.dvr_enabled !== false)).catch(() => {});
 function showTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
@@ -872,7 +875,7 @@ $("set-form").onsubmit = async (e) => {
   }
   try { await api("/api/settings", { method: "POST", body: out }); }
   catch (err) { toast(err.message); return; }
-  rememberSaved(); syncSettings();
+  rememberSaved(); syncSettings(); dvrTab(out.dvr_enabled !== false);
   toast("Settings saved");
 };
 

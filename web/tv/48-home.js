@@ -8,7 +8,12 @@ const HM_RECENT = 12;
 const homeEnabled = () => S.settings.home_screen !== false;          // Setup › Settings › Screens
 const homeAtStart = () => homeEnabled() && localStorage.getItem("tb.homeStart") !== "0";
 // the on-screen remote's HOME button only when there's a Home screen
-const homeButton = () => { const b = document.querySelector('#remote [data-k="h"]'); if (b) b.classList.toggle("hidden", !homeEnabled()); };
+// on-screen remote buttons and key hints for features that are switched off or not set up
+const homeButton = () => {
+  const hide = (k, off) => document.querySelectorAll(`#remote [data-k="${k}"]`).forEach((b) => b.classList.toggle("hidden", off));
+  hide("h", !homeEnabled()); hide("o", !vodOn()); hide("d", !dvrOn());
+  document.querySelectorAll("[data-feat]").forEach((el) => el.classList.toggle("hidden", !featOn(el.dataset)));
+};
 const recentNums = () => { try { return JSON.parse(localStorage.getItem("tb.recent") || "[]"); } catch (_) { return []; } };
 // channels this screen tuned to, newest first (Home › Recent channels)
 function noteRecent(num) {
@@ -19,15 +24,15 @@ function noteRecent(num) {
 const HM_NAV = [
   { label: "Watch TV", info: "Back to full-screen TV", act: () => closeHome() },
   { label: "Guide", info: "What's on, channel by channel", act: () => G.open() },
-  { label: "On Demand", info: "Movies and TV shows from your playlists", act: () => openOD() },
+  { label: "On Demand", feat: "vod", info: "Movies and TV shows from your playlists", act: () => openOD() },
   { label: "Sports", info: "Games on now and coming up, scores and event feeds", act: () => openSports() },
-  { label: "Recordings", info: "Everything recorded or scheduled", act: () => openDvr() },
+  { label: "Recordings", feat: "dvr", info: "Everything recorded or scheduled", act: () => openDvr() },
   { label: "Search", info: "Channels, shows, games, movies and TV shows", act: () => openSearch() },
   { label: "Menu", info: "Favorites, settings, sleep timer and more", act: () => openMenu() },
 ];
 
 function homeRows(d) {
-  const rows = [{ id: "nav", items: HM_NAV.map((n) => ({ t: "nav", ...n })) }];
+  const rows = [{ id: "nav", items: HM_NAV.filter(featOn).map((n) => ({ t: "nav", ...n })) }];
   const add = (id, label, items) => { if (items && items.length) rows.push({ id, label, items }); };
   add("fav", "★ Favorites on now", d.favorites.map((c) => ({ t: "chan", ...c })));
   add("teams", "⭐ Your teams on now", (d.teams || []).map((p) => ({ t: "game", p })));

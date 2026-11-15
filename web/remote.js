@@ -220,5 +220,17 @@ $("forget").addEventListener("click", async (e) => {
   await fetch("/api/pair/forget", { method: "POST" }); location.replace("/pair");
 });
 
+// leave out buttons for features that are off: Recordings (Setup › Settings › DVR) and On Demand (no playlist has it)
+async function applyFeatures() {
+  let s; try { s = await api("/api/settings"); } catch (_) { return; }
+  const hide = (k, off) => document.querySelectorAll(`[data-k="${k}"]`).forEach((b) => b.classList.toggle("hidden", off));
+  hide("r", s.dvr_enabled === false); hide("d", s.dvr_enabled === false); hide("o", s.vod_available === false);
+  document.querySelectorAll(".row.r4").forEach((row) => {   // the rest share the row instead of leaving gaps
+    const n = [...row.children].filter((b) => !b.classList.contains("hidden")).length;
+    row.style.gridTemplateColumns = `repeat(${Math.max(n, 1)}, 1fr)`;
+  });
+}
+
 loadScreens();
+applyFeatures();
 })();

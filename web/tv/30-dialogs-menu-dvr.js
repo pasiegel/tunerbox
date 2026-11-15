@@ -103,11 +103,13 @@ function programDialog(ch, p) {
       if (r) await api(`/api/recordings/${r.id}`, { method: "DELETE" });
       toast("Recording cancelled"); closeDialog(); G.forget(ch.number); if (top() === "guide") G.render();
     } });
-  } else {
+  } else if (dvrOn()) {
     entries.push({ label: "Record this episode", act: () => rec({}, `Recording scheduled: ${p.title}`) });
   }
-  entries.push({ label: "Record series (this channel)", act: () => rec({ series: true }, `Series recording set: ${p.title}`) });
-  entries.push({ label: "Record series (new episodes, any channel)", act: () => rec({ series: true, new_only: true, any_channel: true }, `Series recording set: ${p.title}`) });
+  if (dvrOn()) {
+    entries.push({ label: "Record series (this channel)", act: () => rec({ series: true }, `Series recording set: ${p.title}`) });
+    entries.push({ label: "Record series (new episodes, any channel)", act: () => rec({ series: true, new_only: true, any_channel: true }, `Series recording set: ${p.title}`) });
+  }
   entries.push({ label: S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`,
                  act: () => { closeDialog(); toggleFav(ch); } });
   entries.push({ label: "Close", act: closeDialog });
@@ -123,10 +125,10 @@ const MENU = [
   { label: "Home", needsHome: true, act: () => { closeMenu(); openHome(); } },
   { label: "TV Guide", act: () => { closeMenu(); G.open(); } },
   { label: "★ Favorites guide", homeOff: true, act: () => { closeMenu(); G.open(true); } },
-  { label: "On Demand (movies & TV shows)", homeOff: true, act: () => { closeMenu(); openOD(); } },
+  { label: "On Demand (movies & TV shows)", homeOff: true, feat: "vod", act: () => { closeMenu(); openOD(); } },
   { label: "Sports & Events", homeOff: true, act: () => { closeMenu(); openSports(); } },
   { label: "Search", homeOff: true, act: () => { closeMenu(); openSearch(); } },
-  { label: "My Recordings (DVR)", homeOff: true, act: () => { closeMenu(); openDvr(); } },
+  { label: "My Recordings (DVR)", homeOff: true, feat: "dvr", act: () => { closeMenu(); openDvr(); } },
   { head: "This channel" },
   { get label() {
       const ch = S.mode === "live" && curCh();
@@ -137,8 +139,16 @@ const MENU = [
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
     const url = ch.feed ? `${location.origin}/api/feed/stream?key=${encodeURIComponent(ch.feed)}` : `${location.origin}/api/stream/${ch.number}`;
-    try { await navigator.clipboard.writeText(url); } catch (_) {}
-    toast(`Stream URL copied: ${url}`, 6000); closeMenu();
+    // navigator.clipboard only exists on https or this PC: on a plain-http LAN address use the old way
+    let ok = false;
+    try { await navigator.clipboard.writeText(url); ok = true; } catch (_) {
+      const ta = document.createElement("textarea");
+      ta.value = url; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand("copy"); } catch (_) {}
+      ta.remove();
+    }
+    toast(ok ? `Stream URL copied: ${url}` : `Stream URL: ${url}`, 6000); closeMenu();
   } },
   { head: "Settings" },
   { get label() { return `Sleep timer & screensaver: ${sleepOn() ? plural(sleepH(), "hour") : "sleep off"} · ${saverOn() ? plural(saverM(), "min") : "saver off"}`; },
@@ -169,7 +179,7 @@ function renderMenu(sel) {
 }
 function openMenu() {
   hideBanner();
-  const items = MENU.filter((e) => !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()));
+  const items = MENU.filter((e) => !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
   menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
   renderMenu();
   S.layer.push("menu"); $("menu").classList.remove("hidden", "two");

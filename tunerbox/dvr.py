@@ -62,8 +62,15 @@ def add_rule(title, number=None, new_only=False):
     return rid
 
 
+def enabled():
+    """Setup › Settings › DVR › Recordings."""
+    return config.get("dvr_enabled", True) is not False
+
+
 def apply_rules():
     """Create scheduled recordings for upcoming airings that match series rules."""
+    if not enabled():
+        return 0
     now = int(time.time())
     chans = guide.channels(True)
     by_epg = {}
@@ -341,6 +348,10 @@ def tick():
     now = int(time.time())
     pad = int(config.get("dvr_pad_before", 60))
     for rec in db.rows("SELECT * FROM recordings WHERE status='scheduled' AND start-?<=? ORDER BY start", (pad, now)):
+        if not enabled():           # recordings turned off: nothing starts; one that's over is marked skipped
+            if rec["stop"] <= now:
+                db.run("UPDATE recordings SET status='failed', error='Skipped: recordings were turned off' WHERE id=?", (rec["id"],))
+            continue
         if rec["stop"] <= now:
             db.run("UPDATE recordings SET status='failed', error='Missed (app was not running)' WHERE id=?", (rec["id"],))
         else:

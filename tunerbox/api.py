@@ -615,7 +615,13 @@ def api_jobs():
 
 
 def _public_settings():
-    return {k: v for k, v in config.load().items() if k != "devices"}
+    # vod_available: some playlist has On Demand turned on (screens leave On Demand out otherwise). Read-only.
+    return {**{k: v for k, v in config.load().items() if k != "devices"}, "vod_available": vod.enabled()}
+
+
+def _dvr_on():
+    if not dvr.enabled():
+        raise HTTPException(409, "Recordings are turned off. Turn them on in Setup › Settings › DVR.")
 
 
 @app.get("/api/settings")
@@ -1012,6 +1018,7 @@ def _clashes(ids):
 @app.post("/api/recordings")
 def api_record(number: int = Body(...), start: int = Body(...), series: bool = Body(False),
                new_only: bool = Body(False), any_channel: bool = Body(False)):
+    _dvr_on()
     if series:
         c = guide.channel(number)
         p = db.one("SELECT * FROM programs WHERE channel=? AND start<=? AND stop>?", (c["epg"], start, start)) if c and c["epg"] else None
@@ -1031,6 +1038,7 @@ def api_record(number: int = Body(...), start: int = Body(...), series: bool = B
 
 @app.post("/api/recordings/manual")
 def api_record_manual(number: int = Body(...), start: int = Body(...), minutes: int = Body(...), title: str = Body("")):
+    _dvr_on()
     return dvr.schedule(number, start, start + minutes * 60, title)
 
 

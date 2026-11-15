@@ -8,7 +8,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (pick yo
 * **Manual mapping.** A Tunarr-style picker lets you search every feed, preview it, and pin the one you want.
 * **M3U and Xtream Codes.** Paste an Xtream `get.php` link and it switches to the Xtream API automatically.
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
-* **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB.
+* **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB. Don't need it? Turn off **Setup › Settings › DVR › Recordings** and Record, Recordings and the DVR tab disappear from every screen.
 * **On Demand.** Movies and TV shows that come with your playlist, each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
 * **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
 
@@ -215,7 +215,7 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
 
 ## On Demand (movies and TV shows)
-Many playlists come with a library of movies and shows besides the live channels. TunerBox leaves it alone until you turn it on in Setup › **Playlists**, on the playlist's card:
+Many playlists come with a library of movies and shows besides the live channels. TunerBox leaves it alone until you turn it on in Setup › **Playlists**, on the playlist's card: Until a playlist has it turned on, On Demand is left out of Home, the Menu, the key hints and the phone remote.
 
 * **Xtream logins** have two switches, **On Demand: movies** and **On Demand: TV shows**. The lists are read when you turn one on and again at every full scan.
 * **Plain M3U playlists** have one switch: entries whose address is a video file (`.mp4`, `.mkv`…) become titles instead of channels. Names like `Show S02 E04` are grouped into a show with seasons.

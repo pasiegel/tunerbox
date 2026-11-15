@@ -43,8 +43,9 @@ def _recording(r):
 def _continue(now):
     """On Demand titles and recordings you're part-way through, the latest first."""
     items = [{"type": "vod", **t} for t in (vod.continue_watching() if vod.enabled() else [])]
-    for r in db.rows("""SELECT * FROM recordings WHERE status IN ('done','cancelled') AND file != '' AND watched=0
-                        AND position > ? ORDER BY watched_at DESC LIMIT ?""", (RESUME_MIN, ROW)):
+    recs = db.rows("""SELECT * FROM recordings WHERE status IN ('done','cancelled') AND file != '' AND watched=0
+                      AND position > ? ORDER BY watched_at DESC LIMIT ?""", (RESUME_MIN, ROW)) if dvr.enabled() else []
+    for r in recs:
         items.append({"type": "rec", "at": r["watched_at"], **_recording(r)})
     items.sort(key=lambda x: -(x.get("at") or 0))
     return items[:ROW]
@@ -81,7 +82,7 @@ def _coming_up(now):
     """Scheduled recordings and reminders, soonest first. `conflict` says why a recording won't get a
     connection ("" when it will), as on the Recordings screen."""
     rows = db.rows("SELECT * FROM recordings WHERE status IN ('scheduled','recording') AND stop > ? ORDER BY start LIMIT ?",
-                   (now, ROW))
+                   (now, ROW)) if dvr.enabled() else []         # recordings off: reminders only
     clash = dvr.conflicts() if rows else {}
     items = [{"type": "rec", **_recording(r), "conflict": clash.get(r["id"], "") if r["status"] == "scheduled" else ""}
              for r in rows]
@@ -100,7 +101,8 @@ def overview(recent=()):
     on_now = _sports_now()
     by_ch = _by_channel(on_now)
     team_games, games = _games(on_now)
-    rec_done = db.rows("""SELECT * FROM recordings WHERE status='done' AND file != '' ORDER BY start DESC LIMIT ?""", (ROW,))
+    rec_done = db.rows("""SELECT * FROM recordings WHERE status='done' AND file != '' ORDER BY start DESC LIMIT ?""",
+                       (ROW,)) if dvr.enabled() else []
     return {
         "favorites": _on_now(_channels(favs)[:ROW], now, by_ch),
         "recent": _on_now(_channels(recent)[:ROW], now, by_ch),

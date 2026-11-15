@@ -240,10 +240,11 @@
 
       <div class="set-group" data-cat="dvr" data-label="DVR">
         <h4>DVR</h4>
-        <label class="set-row"><span class="set-text"><b>Recordings folder</b><small>Only changeable on the TunerBox PC.</small></span><input name="recordings_dir"></label>
-        <label class="set-row"><span class="set-text"><b>Start recording early</b><small>Before the show starts.</small></span><span class="unit-field"><input name="dvr_pad_before" type="number" min="0" max="60" step="0.5" data-scale="60"><em>min</em></span></label>
-        <label class="set-row"><span class="set-text"><b>Keep recording after</b><small>After the show ends.</small></span><span class="unit-field"><input name="dvr_pad_after" type="number" min="0" max="240" step="0.5" data-scale="60"><em>min</em></span></label>
-        <label class="set-row"><span class="set-text"><b>Recordings come first</b><small>When a playlist has no connection left, a recording that's starting takes one from live TV or On Demand. That screen is told what's recording and offered its channel. Off: the recording waits for a free connection.</small></span><input type="checkbox" class="toggle" name="dvr_takes_connection"></label>
+        <label class="set-row"><span class="set-text"><b>Recordings</b><small>Off: nothing is recorded or scheduled, series recordings wait, and Record, Recordings and the DVR tab are left out of every screen. A recording that's already running finishes. Plex, Emby and Jellyfin's own DVRs aren't affected.</small></span><input type="checkbox" class="toggle" name="dvr_enabled"></label>
+        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Recordings folder</b><small>Only changeable on the TunerBox PC.</small></span><input name="recordings_dir"></label>
+        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Start recording early</b><small>Before the show starts.</small></span><span class="unit-field"><input name="dvr_pad_before" type="number" min="0" max="60" step="0.5" data-scale="60"><em>min</em></span></label>
+        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Keep recording after</b><small>After the show ends.</small></span><span class="unit-field"><input name="dvr_pad_after" type="number" min="0" max="240" step="0.5" data-scale="60"><em>min</em></span></label>
+        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Recordings come first</b><small>When a playlist has no connection left, a recording that's starting takes one from live TV or On Demand. That screen is told what's recording and offered its channel. Off: the recording waits for a free connection.</small></span><input type="checkbox" class="toggle" name="dvr_takes_connection"></label>
       </div>
 
       <div class="set-group" data-cat="screens" data-label="Screens">

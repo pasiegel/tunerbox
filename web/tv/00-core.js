@@ -32,6 +32,12 @@ const fmtDay = (t) => new Date(t * 1000).toLocaleDateString([], { weekday: "shor
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 // on the HTTPS port, pictures from plain-http sites would be blocked: TunerBox fetches those (/api/img)
 const safePic = (u) => (location.protocol === "https:" && /^http:\/\//i.test(u || "") ? `/api/img?u=${encodeURIComponent(u)}` : (u || ""));
+// optional features left out of every screen when not in use: On Demand (no playlist has it on) and
+// Recordings (Setup › Settings › DVR). Settings come from /api/settings, refreshed each time the TV turns on.
+const vodOn = () => S.settings.vod_available !== false;
+const dvrOn = () => S.settings.dvr_enabled !== false;
+const featOn = (e) => !e.feat || (e.feat === "vod" ? vodOn() : e.feat === "dvr" ? dvrOn() : true);
+const DVR_OFF = "Recordings are turned off. Turn them on in Setup › Settings › DVR.";
 const top = () => S.layer[S.layer.length - 1];
 // phones (not iPads/tablets): touch screen and small in at least one direction. Rechecked on rotate.
 const phoneMQ = window.matchMedia && matchMedia("(pointer: coarse) and (max-width: 700px), (pointer: coarse) and (max-height: 500px)");
