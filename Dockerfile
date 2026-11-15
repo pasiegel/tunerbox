@@ -22,7 +22,10 @@ RUN chmod -R a+rX /app
 
 # Settings, database, logs, recordings and the lineup CSV all live in /data
 ENV TUNERBOX_DATA=/data \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TUNERBOX_TRUST_LAN=1
+# TUNERBOX_TRUST_LAN: a NAS has no screen, so browsers on the home network can set it up and pair
+# phones (as "this PC" can on a desktop install) until Setup › Phones › lock is turned on
 RUN useradd --uid 1000 --create-home tunerbox \
     && mkdir /data && chown tunerbox /data
 USER tunerbox

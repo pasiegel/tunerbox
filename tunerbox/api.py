@@ -639,6 +639,12 @@ def _pc_only(request: Request):
         raise HTTPException(403, "Only on the TunerBox PC")
 
 
+def _manager(request: Request):
+    """Pairing and the paired-phone list: this PC, or a phone or browser that's already paired."""
+    if not remote.trusted(request):
+        raise HTTPException(403, "Only on the TunerBox PC or a paired phone")
+
+
 def _trusted(request: Request):
     if not remote.trusted(request):
         raise HTTPException(401, "Pair this phone first")
@@ -648,15 +654,20 @@ def _trusted(request: Request):
 def api_me(request: Request):
     d = remote.device(request)
     return {"pc": remote.is_pc(request), "paired": bool(d), "name": d["name"] if d else None,
+            "manage": remote.trusted(request), "server": remote.trust_lan(),
             "require_pairing": bool(config.get("require_pairing"))}
 
 
 @app.post("/api/pair/start")
 def api_pair_start(request: Request):
-    _pc_only(request)
+    _manager(request)
     p = remote.start_pairing()
     port = request.url.port or config.get("port", 8642)
-    base = f"http://{remote.lan_ip()}:{port}"
+    # the address this browser used (a NAS's own address, not the container's), else this PC's
+    host = request.url.hostname or ""
+    if not host or host in ("localhost", "127.0.0.1", "::1"):
+        host = remote.lan_ip()
+    base = f"http://{host}:{port}"
     link = f"{base}/pair#{p['code']}.{p['key']}"
     return {"code": p["code"], "expires": p["expires"], "url": link, "address": f"{base}/pair",
             "qr": remote.qr_svg(link)}
@@ -664,13 +675,13 @@ def api_pair_start(request: Request):
 
 @app.get("/api/pair/state")
 def api_pair_state(request: Request):
-    _pc_only(request)
+    _manager(request)
     return {**remote.pairing_state(), "devices": remote.devices()}
 
 
 @app.post("/api/pair/cancel")
 def api_pair_cancel(request: Request):
-    _pc_only(request)
+    _manager(request)
     remote.cancel_pairing()
     return {"ok": True}
 
@@ -700,20 +711,20 @@ def api_pair_forget(request: Request):
 
 @app.get("/api/devices")
 def api_devices(request: Request):
-    _pc_only(request)
+    _manager(request)
     return remote.devices()
 
 
 @app.patch("/api/devices/{did}")
 def api_device_rename(request: Request, did: str, name: str = Body(..., embed=True)):
-    _pc_only(request)
+    _manager(request)
     remote.rename_device(did, name)
     return remote.devices()
 
 
 @app.delete("/api/devices/{did}")
 def api_device_remove(request: Request, did: str):
-    _pc_only(request)
+    _manager(request)
     remote.remove_device(did)
     return remote.devices()
 

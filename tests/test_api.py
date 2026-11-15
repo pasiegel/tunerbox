@@ -118,3 +118,27 @@ def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path)
     monkeypatch.setattr(vod, "small_image", lambda url, w: None)
     r = client.get("/api/art/7/1500", follow_redirects=False)  # can't shrink it: the original
     assert r.status_code == 302 and r.headers["location"] == "https://img.example/p1.jpg"
+
+
+def test_nas_server_lets_home_network_pair_until_locked(monkeypatch):
+    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network stands in
+    for it until the lock is on. The pairing link uses the address the browser used, not the container's."""
+    from fastapi.testclient import TestClient
+    lan = TestClient(api.app, client=("192.168.10.50", 5000), base_url="http://192.168.10.9:8642")
+    assert lan.post("/api/pair/start").status_code == 403           # a desktop install: only the PC itself
+    monkeypatch.setenv("TUNERBOX_TRUST_LAN", "1")
+    me = lan.get("/api/me").json()
+    assert me["pc"] and me["manage"] and me["server"]
+    r = lan.post("/api/pair/start")
+    assert r.status_code == 200 and r.json()["address"] == "http://192.168.10.9:8642/pair"
+    code = r.json()["code"]
+    phone = TestClient(api.app, client=("192.168.10.77", 5000), base_url="http://192.168.10.9:8642")
+    assert phone.post("/api/pair/complete", json={"code": code, "name": "Pixel"}).status_code == 200
+    config.update({"require_pairing": True})
+    assert lan.post("/api/pair/start").status_code == 403           # locked: not any more
+    assert lan.post("/api/settings", json={"require_pairing": False}).status_code == 403
+    assert phone.get("/api/me").json()["pc"]                        # the paired phone can still manage it
+    assert phone.post("/api/settings", json={"require_pairing": False}).status_code == 200
+    outside = TestClient(api.app, client=("8.8.8.8", 5000))
+    config.update({"require_pairing": False})
+    assert not outside.get("/api/me").json()["pc"]                 # only private addresses count

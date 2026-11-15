@@ -1101,11 +1101,14 @@ function renderDevices(list) {
 loaders.phones = async () => {
   const me = await api("/api/me");
   $("lock-setup").checked = !!me.require_pairing;
+  // on a NAS (Docker) any browser at home counts as the TunerBox PC until the lock is on; then paired ones do
   $("lock-setup").disabled = !me.pc;
-  $("pair-start").classList.toggle("hidden", !me.pc);
-  $("pair-pconly").classList.toggle("hidden", me.pc);
-  if (me.pc) renderDevices(await api("/api/devices"));
-  else $("dev-body").innerHTML = '<tr><td colspan="4" class="muted">Manage paired phones on the TunerBox PC</td></tr>';
+  $("lock-hint").textContent = me.server && !me.paired && !me.require_pairing
+    ? "Before turning this on, pair this browser too (open /pair here with a code), or only your phones will be able to change setup." : "";
+  $("pair-start").classList.toggle("hidden", !me.manage);
+  $("pair-pconly").classList.toggle("hidden", me.manage);
+  if (me.manage) renderDevices(await api("/api/devices"));
+  else $("dev-body").innerHTML = '<tr><td colspan="4" class="muted">Manage paired phones on the TunerBox PC or a paired phone</td></tr>';
 };
 function stopPairUi() {
   clearInterval(pairTimer); pairTimer = null;

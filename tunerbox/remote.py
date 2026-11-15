@@ -7,12 +7,16 @@
   * Paired phones (and this PC) can send remote-control commands to any TunerBox TV screen.
   * Optional lock ("require_pairing"): only this PC and paired phones can change setup. Watching TV
     stays open to every device on the network, so the iPad, Android app and Plex keep working.
+  * On a server with no screen of its own (Docker on a NAS: TUNERBOX_TRUST_LAN=1, set by the image),
+    nobody ever browses from "this PC". There, any device on the home network counts as this PC until
+    the lock is turned on; after that, only paired phones and browsers.
 """
 import asyncio
 import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import secrets
 import socket
 import threading
@@ -71,7 +75,22 @@ def is_pc(request):
             a = a.ipv4_mapped
     except ValueError:
         return False
-    return a.is_loopback or str(a) in local_ips()
+    if a.is_loopback or str(a) in local_ips():
+        return True
+    if not trust_lan():
+        return False
+    # a server: the home network until the lock is on, then paired phones and browsers
+    return (a.is_private and not a.is_link_local and not _locked()) or device(request) is not None
+
+
+def trust_lan():
+    """A server without a screen (Docker): the home network stands in for "this PC"."""
+    return os.environ.get("TUNERBOX_TRUST_LAN", "").strip().lower() in ("1", "true", "yes")
+
+
+def _locked():
+    from . import config
+    return bool(config.get("require_pairing"))
 
 
 def _hash(token):
