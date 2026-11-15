@@ -210,6 +210,8 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-sports" viewBox="0 0 24 24"><path d="M7 4h10v4a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M12 13v4M8 21h8M9.5 17h5v4h-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.9" fill="currentColor"/><circle cx="12" cy="12" r="1.9" fill="currentColor"/><circle cx="19" cy="12" r="1.9" fill="currentColor"/></symbol>
   </defs></svg>
   <div id="remote" class="hidden">
@@ -219,6 +221,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
         <button data-k="h" title="Home (H)"><svg><use href="#i-home"/></svg>Home</button>
         <button data-k="g" title="Guide (G)"><svg><use href="#i-guide"/></svg>Guide</button>
         <button data-k="o" title="On Demand (O)"><svg><use href="#i-od"/></svg>On Demand</button>
+        <button data-k="t" title="Sports &amp; events (T)"><svg><use href="#i-sports"/></svg><span>Sports<span class="rm-long"> &amp; Events</span></span></button>
         <button data-k="/" title="Search (/)"><svg><use href="#i-search"/></svg>Search</button>
       </div>
       <div class="rm-pill"><button data-k="f" class="ico" title="Full screen (F)"><svg><use href="#i-full"/></svg></button></div>
@@ -240,13 +243,11 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
           <button data-k="u" class="ico" id="rm-mute" title="Mute (U)"><svg><use href="#i-vol"/></svg></button>
           <input type="range" id="rm-volume" min="0" max="100" step="1" aria-label="Volume">
         </div>
-        <div class="rm-pill"><button class="ico" id="rm-more" title="More"><svg><use href="#i-more"/></svg></button></div>
+        <div class="rm-pill"><button data-k="m" title="Menu (M)"><svg><use href="#i-menu"/></svg>Menu</button><button class="ico" id="rm-more" title="More"><svg><use href="#i-more"/></svg></button></div>
       </div>
       <div class="rm-menu hidden" id="rm-menu">
-        <button data-k="t">Sports &amp; events<small>T</small></button>
         <button data-k="d">Recordings<small>D</small></button>
         <button data-k="v">Favorites guide<small>V</small></button>
-        <button data-k="m">Menu<small>M</small></button>
       </div>
     </div>
   </div>
