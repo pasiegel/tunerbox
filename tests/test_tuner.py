@@ -257,7 +257,11 @@ def test_recording_takes_the_connection_from_live_tv(fake):
     tv = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
     _read(tv, 20000)
     rec = tuner.join("fake:1000:0.05:1", "copy", any_mode=True, name="dvr:7", source_id=sid, take=True)
-    assert rec.tuner is not tv.tuner and tv.tuner.proc.poll() is not None    # live TV stopped
+    assert rec.tuner is not tv.tuner and tv.tuner.ended                      # live TV stopped
+    try:                                            # ffmpeg is killed in the background (taskkill is slow on Windows)
+        tv.tuner.proc.wait(5)
+    except Exception:
+        pytest.fail("live TV's ffmpeg still running")
     end = time.monotonic() + 5
     while time.monotonic() < end and tv.get(timeout=5) != b"":
         pass                                        # the screen sees the end of its stream
