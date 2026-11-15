@@ -239,10 +239,12 @@ def _friendly(e, sh, rel=""):
     """A message for Setup instead of an SMB status code."""
     if isinstance(e, LibraryError):
         return e
-    if sh["type"] != "folder":
-        reset_connections()             # a failed login or a dropped connection isn't reused by the next try
     name, text = type(e).__name__, str(e)
     status = getattr(e, "ntstatus", None)
+    low = text.lower()
+    if sh["type"] != "folder" and (status in (LOGON, DENIED) or isinstance(e, (ConnectionError, TimeoutError))
+                                   or "connect" in low or "timed out" in low):
+        reset_connections()             # a failed login or a dropped connection isn't reused by the next try
     where = location(sh) + (("\\" if sh["type"] != "folder" else "/") + rel if rel else "")
     if status == LOGON or name == "LogonFailure" or "STATUS_LOGON_FAILURE" in text:
         return LibraryError("The NAS didn't accept that username and password")
@@ -254,7 +256,6 @@ def _friendly(e, sh, rel=""):
         if sh["type"] != "folder" and not rel and not sh.get("path"):
             return LibraryError(f"There's no share called \"{sh['share']}\" on {sh['server']}")
         return LibraryError(f"Folder not found: {where}")
-    low = text.lower()
     if isinstance(e, (ConnectionError, TimeoutError)) or any(
             w in low for w in ("failed to connect", "timed out", "name or service not known", "getaddrinfo",
                                "no route to host", "connection refused", "name resolution")):
