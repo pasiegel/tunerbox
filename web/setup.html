@@ -12,25 +12,41 @@
 <header>
   <div class="brand"><a href="/?on">Tuner<span>Box</span></a> <small>Setup</small></div>
   <nav id="tabs">
-    <button data-tab="channels" class="on">Channel Lineup</button>
-    <button data-tab="extras">Extra Channels</button>
-    <button data-tab="sources">Playlists</button>
+    <button data-tab="overview" class="on">Overview</button>
+    <span class="grp">Channels</span>
+    <button data-tab="channels">Channel lineup <i class="nb warn" id="nb-channels"></i></button>
+    <button data-tab="extras">Extra channels</button>
     <button data-tab="media">Local channels</button>
-    <button data-tab="library">Local library</button>
-    <button data-tab="guide">TV Guide</button>
-    <button data-tab="dvr">DVR</button>
+    <span class="grp">Sources</span>
+    <button data-tab="sources">Playlists</button>
+    <button data-tab="library">Local library <i class="nb warn" id="nb-library"></i></button>
+    <button data-tab="guide">TV guide</button>
     <button data-tab="tuners">Tuners</button>
+    <span class="grp">System</span>
+    <button data-tab="dvr">DVR</button>
     <button data-tab="phones">Phones</button>
     <button data-tab="settings">Settings</button>
   </nav>
-  <a class="btn" href="/remote" title="Phone remote">&#128241; Remote</a>
-  <a class="btn primary" href="/?on">&#9654; Watch TV</a>
+  <div class="side-foot">
+    <a class="btn" href="/remote" title="Phone remote">&#128241; Remote</a>
+    <a class="btn primary" href="/?on">&#9654; Watch TV</a>
+  </div>
 </header>
 <div id="job" class="hidden"><span id="job-text"></span><div class="bar"><div id="job-bar"></div></div></div>
 
 <main>
+  <!-- overview: is everything working? -->
+  <section id="tab-overview">
+    <div class="ov-head"><h2>Overview</h2><span class="grow"></span>
+      <button class="btn" id="ov-rematch">Re-run auto match</button>
+      <button class="btn primary" id="ov-scan">&#10227; Scan playlists</button></div>
+    <div class="ov-cards" id="ov-cards"></div>
+    <div id="ov-next"></div>
+    <h3>Playlists</h3>
+    <div class="ov-src" id="ov-src"></div>
+  </section>
   <!-- lineup mapping -->
-  <section id="tab-channels">
+  <section id="tab-channels" class="hidden">
     <div class="toolbar">
       <input id="ch-search" placeholder="Search number, name or feed…">
       <select id="ch-filter">

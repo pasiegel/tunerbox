@@ -776,6 +776,33 @@ def api_stats():
     }
 
 
+@app.get("/api/overview")
+def api_overview():
+    """Setup › Overview: is everything working? One request for the health cards."""
+    maps = db.rows("SELECT mode, score, reason, stream_key FROM mappings")
+    weak = sum(1 for m in maps if m["stream_key"] and m["mode"] == "auto" and (m["score"] < 92 or "network" in (m["reason"] or "").lower()))
+    srcs = db.rows("SELECT id, name, type, enabled, status, updated_at FROM sources ORDER BY id")
+    for s in srcs:
+        s["count"] = db.one("SELECT count(*) n FROM streams WHERE source_id=?", (s["id"],))["n"]
+    gn = config.get("gracenote") or {}
+    recs = {r["status"]: r["n"] for r in db.rows("SELECT status, count(*) n FROM recordings WHERE status IN ('scheduled','recording') GROUP BY status")}
+    vc = vod.counts()
+    return {
+        "lineup": db.one("SELECT count(*) n FROM lineup")["n"],
+        "mapped": sum(1 for m in maps if m["stream_key"]), "manual": sum(1 for m in maps if m["mode"] == "manual"), "weak": weak,
+        "extras": db.one("SELECT count(*) n FROM extras WHERE active=1")["n"],
+        "playlists": srcs,
+        "guide": {"programs": db.one("SELECT count(*) n FROM programs WHERE stop > ?", (int(time.time()),))["n"],
+                  "updated": int(db.get_meta("epg_updated", 0) or 0), "gracenote": bool(gn.get("enabled")),
+                  "postal_code": gn.get("postal_code", ""), "lineup_id": gn.get("lineup_id", "")},
+        "scanned": int(db.get_meta("scan_updated", 0) or 0),
+        "dvr": {"scheduled": recs.get("scheduled", 0), "recording": recs.get("recording", 0), "free": dvr._free_bytes()},
+        "library": library.counts(), "libraries": len(library.shares()),
+        "vod": {"movies": vc["movie"]["total"], "shows": vc["series"]["total"]},
+        "local_channels": db.one("SELECT count(*) n FROM media_channels WHERE enabled=1")["n"],
+    }
+
+
 # ------------------------------------------------------------------ On Demand (movies and shows from the playlists)
 @app.get("/api/vod")
 def api_vod():

@@ -44,6 +44,56 @@ function showTab(name) {
   loaders[name] && loaders[name]();
 }
 
+// ---------------------------------------------------------------- overview: is everything working?
+const ago2 = (t) => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 120 ? "just now" : s < 7200 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; };
+async function badges(o) {
+  try { o = o || await api("/api/overview"); } catch (_) { return; }
+  $("nb-channels").textContent = o.weak || "";
+  $("nb-library").textContent = o.library.review || "";
+  return o;
+}
+loaders.overview = async () => {
+  let o;
+  try { o = await api("/api/overview"); } catch (e) { toast(e.message); return; }
+  badges(o);
+  const card = (tab, k, v, s, cls = "", warn = false) => `<button class="ov-card${warn ? " warn" : ""}" data-go="${tab}"><div class="k">${k}</div><div class="v">${v}</div><div class="s ${cls}">${s}</div></button>`;
+  const srcOk = o.playlists.filter((p) => p.enabled && !/^error|fail/i.test(p.status || "")).length;
+  const active = o.playlists.filter((p) => p.enabled).length;
+  const free = o.dvr.free == null ? "" : `${(o.dvr.free / 1e9).toFixed(o.dvr.free < 1e10 ? 1 : 0)} GB free`;
+  $("ov-cards").innerHTML = [
+    card("channels", "Lineup channels with a feed", `${o.mapped.toLocaleString()} / ${o.lineup.toLocaleString()}`,
+         o.weak ? `${o.weak} weak match${o.weak === 1 ? "" : "es"} to review` : o.lineup ? "● All matches look good" : "No lineup yet", o.weak ? "warn" : o.lineup ? "ok" : "", !!o.weak),
+    card("extras", "Extra channels", o.extras.toLocaleString(), "Playlist channels outside your lineup, numbered from 20000"),
+    card("sources", "Playlists", active,
+         !active ? "Add a playlist to get channels" : srcOk === active ? `● ${active === 1 ? "Online" : "All online"} · scanned ${ago2(o.scanned)}` : `${active - srcOk} with a problem`,
+         !active ? "warn" : srcOk === active ? "ok" : "bad", !active || srcOk !== active),
+    card("guide", "Guide listings", o.guide.programs.toLocaleString(),
+         o.guide.updated ? `● Updated ${ago2(o.guide.updated)}${o.guide.gracenote ? ` · ${esc(o.guide.postal_code)}` : ""}` : "Not downloaded yet", o.guide.updated ? "ok" : "warn"),
+    card("dvr", "DVR", o.dvr.recording ? `● ${o.dvr.recording} recording` : `${o.dvr.scheduled} scheduled`,
+         [o.dvr.recording ? `${o.dvr.scheduled} scheduled` : "", free].filter(Boolean).join(" · ") || "Nothing scheduled", o.dvr.recording ? "bad" : ""),
+    card("library", "Local library", o.libraries ? `${o.library.movies} · ${o.library.shows}` : "Off",
+         o.libraries ? (o.library.review ? `movies · shows · ${o.library.review} to review` : "movies · shows") : "Add your own movie and TV folders", o.library.review ? "warn" : "", !!o.library.review),
+  ].join("");
+  const steps = [];
+  if (!active) steps.push('<a data-go="sources">Add a playlist</a> (your M3U link or Xtream login), then press <b>Scan playlists</b>');
+  if (o.lineup && !o.guide.gracenote) steps.push('<a data-go="guide">Pick your TV provider</a> so channel numbers match yours');
+  if (o.weak) steps.push(`<a data-go="channels">Review ${o.weak} weak match${o.weak === 1 ? "" : "es"}</a> in the channel lineup`);
+  $("ov-next").innerHTML = steps.length ? `<b>Next steps</b><ol>${steps.map((x) => `<li>${x}</li>`).join("")}</ol>` : "";
+  $("ov-src").innerHTML = o.playlists.length ? o.playlists.map((p) => `<div class="row">
+      <span class="dot ${!p.enabled ? "" : /^error|fail/i.test(p.status || "") ? "dead" : "ok"}"></span>
+      <b>${esc(p.name)}</b><span class="tag">${esc(p.type)}</span><span class="muted small">${p.count.toLocaleString()} streams</span>
+      <span class="grow"></span><span class="muted small">${p.enabled ? esc(p.status || "") : "off"}</span>
+      <button class="btn small" data-go="sources">Open</button></div>`).join("")
+    : '<p class="muted">No playlists yet.</p>';
+};
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]"); if (!go) return;
+  e.preventDefault(); showTab(go.dataset.go); window.scrollTo(0, 0);
+});
+$("ov-scan").onclick = () => startJob("scan");
+$("ov-rematch").onclick = () => startJob("match");
+badges();
+
 // ---------------------------------------------------------------- jobs
 async function startJob(name, q = "") {
   try {
@@ -62,13 +112,13 @@ async function pollJob() {
     if (j.running) {
       wasRunning = true;
       // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
-      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "channels") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
+      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "overview") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
       $("job").classList.remove("hidden");
       $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
       $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
     } else {
       $("job").classList.add("hidden");
-      if (wasRunning) { toast(j.message); const cur = location.hash.slice(1) || "channels"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
+      if (wasRunning) { toast(j.message); badges(); const cur = location.hash.slice(1) || "overview"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
       break;
     }
     await new Promise((r) => setTimeout(r, 1500));
@@ -592,7 +642,7 @@ const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙" };
 let tnTimer;
 loaders.tuners = async () => {
   clearTimeout(tnTimer);
-  if ((location.hash.slice(1) || "channels") !== "tuners") return;
+  if ((location.hash.slice(1) || "overview") !== "tuners") return;
   let d;
   try { d = await api("/api/tuners"); } catch (e) { $("tn-body").innerHTML = `<tr><td colspan="4" class="muted">${esc(e.message)}</td></tr>`; }
   if (d) {
@@ -1095,6 +1145,6 @@ $("lock-setup").onchange = async (e) => {
 };
 
 // ---------------------------------------------------------------- start
-showTab(location.hash.slice(1) || "channels");
+showTab(location.hash.slice(1) || "overview");
 pollJob();
 })();
