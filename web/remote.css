@@ -36,8 +36,8 @@ section button.down, section button:active { background: var(--btn2); transform:
 .dpad { display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); gap: 0; width: min(78vw, 270px); aspect-ratio: 1; margin: 18px auto;
   border-radius: 50%; background: radial-gradient(circle, #1a2133 0%, var(--btn) 70%); border: 1px solid var(--line); padding: 10px; }
 .dpad button { font-size: 22px; border: 0; background: transparent; color: var(--dim); border-radius: 50%; }
-.dpad button:active { background: #ffffff10; }
-.dpad .up { grid-area: 1 / 2; } .dpad .left { grid-area: 2 / 1; } .dpad .right { grid-area: 2 / 3; } .dpad .down { grid-area: 3 / 2; }
+.dpad button.down, .dpad button:active { background: #ffffff14; transform: none; }
+.dpad .up { grid-area: 1 / 2; } .dpad .left { grid-area: 2 / 1; } .dpad .right { grid-area: 2 / 3; } .dpad .dn { grid-area: 3 / 2; }
 .dpad .ok { grid-area: 2 / 2; background: var(--hl); color: #111; border-radius: 50%; font-size: 19px; font-weight: 800; box-shadow: 0 6px 20px #ffc83d33; }
 
 .rockers { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 8px; margin: 10px 0; }
