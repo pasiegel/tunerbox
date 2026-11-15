@@ -31,6 +31,18 @@ def test_favorites_recent_and_games(monkeypatch):
     assert [c["number"] for c in d["recent"]] == [9]          # favorites aren't repeated; unknown channels left out
     assert d["recent"][0]["now"] is None
     assert [g["title"] for g in d["sports"]] == ["Lions at Bears"]   # only games you can watch
+    assert d["teams"] == []
+
+
+def test_favorite_teams_games_get_their_own_row(monkeypatch):
+    _setup(monkeypatch)
+    monkeypatch.setattr(sports, "overview", lambda tab: {"on_now": [
+        {"title": "Lions at Bears", "ch": {"number": 7}, "event": {"fav": ["Detroit Lions"], "on": []}, "feeds": []},
+        {"title": "Cowboys at Eagles", "ch": {"number": 4}, "event": {"fav": [], "on": []}, "feeds": []},
+        {"title": "Packers at Vikings", "ch": None, "event": {"fav": ["Green Bay Packers"], "on": []}, "feeds": []}]})
+    d = home.overview()
+    assert [g["title"] for g in d["teams"]] == ["Lions at Bears"]        # nothing carries the Packers game
+    assert [g["title"] for g in d["sports"]] == ["Cowboys at Eagles"]    # not shown twice
 
 
 def test_recordings_in_progress_recorded_and_coming_up(monkeypatch):

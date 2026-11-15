@@ -145,6 +145,8 @@ $("learn").addEventListener("click", stopLearn);
 $("back").addEventListener("click", () => { if (top()) handleKey("Back"); });
 setInterval(() => { $("back").classList.toggle("hidden", !(isPhone() && top() && top() !== "learn")); }, 250);
 video.addEventListener("click", () => {
+  // Home's corner TV: a click or tap goes back to full-screen TV, like Home's "Watch TV"
+  if (top() === "home") { closeHome(); if (S.mode === "live") showBanner(); return; }
   if (top() || Date.now() - lastTouch < 1000) return;     // touch taps are handled in touchend below
   // mouse: moving it already shows the button bar, so a click toggles just the info banner
   if (!$("banner").classList.contains("hidden")) { hideBanner(); clearTimeout(S.bannerTimer); return; }

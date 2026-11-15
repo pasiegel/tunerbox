@@ -1,5 +1,5 @@
-"""The Home screen: what's on your favorite and recent channels, what you're part-way through, games
-on now, new recordings and what's coming up. One request, so the screen draws in one go."""
+"""The Home screen: what's on your favorite and recent channels, your teams' games, what you're
+part-way through, games on now, new recordings and what's coming up. One request, so the screen draws in one go."""
 import logging
 import time
 
@@ -48,13 +48,16 @@ def _continue(now):
 
 
 def _games(now):
-    """Games on now that one of your channels or event feeds carries."""
+    """(your teams' games, other games): on now, and one of your channels or event feeds carries them.
+    Favorite teams are picked in Settings › Sports."""
     try:
         games = sports.overview("now").get("on_now", [])
     except Exception:  # noqa: BLE001 - the rest of Home still works without sports
         log.exception("Home: sports")
-        return []
-    return [g for g in games if g.get("ch") or (g.get("event") and g.get("feeds"))][:ROW]
+        return [], []
+    games = [g for g in games if g.get("ch") or (g.get("event") and g.get("feeds"))]
+    fav = [g for g in games if g.get("event") and g["event"].get("fav")]
+    return fav[:ROW], [g for g in games if not (g.get("event") and g["event"].get("fav"))][:ROW]
 
 
 def _coming_up(now):
@@ -77,12 +80,14 @@ def overview(recent=()):
     now = int(time.time())
     favs = [int(n) for n in config.get("favorites") or []]
     recent = [n for n in recent if n not in favs]
+    team_games, games = _games(now)
     rec_done = db.rows("""SELECT * FROM recordings WHERE status='done' AND file != '' ORDER BY start DESC LIMIT ?""", (ROW,))
     return {
         "favorites": _on_now(_channels(favs)[:ROW], now),
         "recent": _on_now(_channels(recent)[:ROW], now),
         "continue": _continue(now),
-        "sports": _games(now),
+        "teams": team_games,
+        "sports": games,
         "recorded": [_recording(r) for r in rec_done],
         "coming": _coming_up(now),
     }
