@@ -121,14 +121,72 @@ def xtream_api(src, action=None, **params):
         return r.json()
 
 
+ACCOUNT_TTL = 12 * 3600         # Setup re-reads an Xtream account's expiry when it's older than this
+
+
+def _int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
+def save_account(src, info):
+    """Keep what the provider says about the login (player_api.php without an action): when it expires
+    (0 = never), its status (Active, Expired, Banned, Disabled), whether it's a trial, and the connection
+    limit (advertised to Plex as tuners)."""
+    ui = (info or {}).get("user_info") if isinstance(info, dict) else None
+    if not isinstance(ui, dict):
+        return None
+    acc = {"exp": _int(ui.get("exp_date")), "status": str(ui.get("status") or "").strip(),
+           "trial": str(ui.get("is_trial") or "0").strip() in ("1", "true", "True"),
+           "created": _int(ui.get("created_at")), "checked": int(time.time())}
+    db.set_meta(f"xtream_account_{src['id']}", json.dumps(acc))
+    if "max_connections" in ui:
+        db.set_meta(f"xtream_max_{src['id']}", _int(ui.get("max_connections")))
+    return acc
+
+
+def account(src):
+    """The account details last read for an Xtream playlist, or None."""
+    try:
+        return json.loads(db.get_meta(f"xtream_account_{src['id']}", "") or "null")
+    except (TypeError, ValueError):
+        return None
+
+
+def refresh_account(src):
+    """Read the account details again (a tiny request, not a scan). Quietly keeps the old ones on failure."""
+    try:
+        return save_account(src, xtream_api(src))
+    except Exception as e:  # noqa: BLE001 - provider down, login changed...
+        log.info("Xtream account check for %s failed: %s", src.get("name"), e)
+        return None
+
+
+_checking = set()
+
+
+def refresh_account_later(src):
+    """refresh_account in the background, once at a time per playlist (Setup can reload the list often)."""
+    import threading
+    if src["id"] in _checking:
+        return
+    _checking.add(src["id"])
+
+    def run():
+        try:
+            refresh_account(src)
+        finally:
+            _checking.discard(src["id"])
+    threading.Thread(target=run, daemon=True).start()
+
+
 def fetch_xtream(src):
     info = xtream_api(src)
     if isinstance(info, dict) and info.get("user_info", {}).get("auth") == 0:
         raise RuntimeError("Xtream login rejected")
-    try:        # how many streams the account may play at once (advertised to Plex as tuners)
-        db.set_meta(f"xtream_max_{src['id']}", int((info.get("user_info") or {}).get("max_connections") or 0))
-    except (TypeError, ValueError, AttributeError):
-        pass
+    save_account(src, info)
     cats = {str(c["category_id"]): c.get("category_name", "") for c in xtream_api(src, "get_live_categories") or []}
     streams = xtream_api(src, "get_live_streams") or []
     ext = src.get("xtream_format") or "ts"

@@ -272,3 +272,9 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 .https-help { margin-top: 8px; line-height: 1.5; }
 .https-help ul { margin: 6px 0 0 18px; padding: 0; }
 .https-help li { margin: 4px 0; }
+
+/* Xtream account expiry on a playlist card */
+.src-set dd.exp-warn, .src-st.exp-warn { color: #ffcf5c; }
+.src-set dd.exp-bad, .src-st.exp-bad { color: #ff8a95; }
+.dot.warn { background: #ffcf5c; }
+.tag.trial { background: #5a4a14; color: #ffdd7a; }

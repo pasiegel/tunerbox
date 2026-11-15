@@ -265,11 +265,32 @@ function srcSettings(s) {
     set.push(["On Demand", on || "Off", ""]);
   }
   set.push([hd ? "Channels" : "Groups", s.hidden ? `${s.hidden.toLocaleString()} hidden` : "All shown", `Pick them with ${hd ? "Channels…" : "Channel groups…"}`]);
+  const acc = srcAccount(s);
+  if (acc) set.push(["Expires", acc.value, acc.tip, acc.level]);
   if (s.epg_url) {
     const g = hostOf(s.epg_url), same = g && g === hostOf(s.url);
     set.push(["Guide", same ? "From provider" : g || "File", noPass(s.epg_url).replace(/(username=)[^&]+/i, "$1…")]);
   }
-  return set.map(([k, v, tip]) => `<div${tip ? ` title="${esc(tip)}"` : ""}><dt>${k}</dt><dd class="${v === "Off" ? "muted" : ""}">${esc(v)}</dd></div>`).join("");
+  return set.map(([k, v, tip, lvl]) => `<div${tip ? ` title="${esc(tip)}"` : ""}><dt>${k}</dt><dd class="${v === "Off" ? "muted" : lvl ? `exp-${lvl}` : ""}">${esc(v)}</dd></div>`).join("");
+}
+// Xtream account: when it expires (from the provider, read at each scan). Warn 14 days ahead.
+const EXP_WARN_DAYS = 14;
+const dateOnly = (t) => new Date(t * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+function srcAccount(s) {
+  const a = s.account;
+  if (s.type !== "xtream" || !a) return null;
+  const days = a.exp ? Math.ceil((a.exp * 1000 - Date.now()) / 86400000) : null;
+  const status = a.status && a.status.toLowerCase() !== "active" ? a.status : "";
+  const when = days === null ? "" : days < 0 ? `ended ${-days === 1 ? "yesterday" : `${-days} days ago`}`
+    : days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+  const value = a.exp ? dateOnly(a.exp) : "Never";
+  const tip = [a.exp ? `Expires ${when}` : "No expiry date from the provider", a.status && `Status: ${a.status}`,
+               a.trial && "Trial account", a.created && `Created ${dateOnly(a.created)}`, a.checked && `Checked ${fmt(a.checked)}`]
+    .filter(Boolean).join(" · ");
+  const level = status || (days !== null && days < 0) ? "bad" : days !== null && days <= EXP_WARN_DAYS ? "warn" : "";
+  const note = status ? `Account ${status.toLowerCase()}${a.exp ? ` · expires ${dateOnly(a.exp)}` : ""}`
+    : level === "bad" ? `Subscription ended ${dateOnly(a.exp)}` : level === "warn" ? `Subscription ends ${when} (${dateOnly(a.exp)})` : "";
+  return { value, tip, level, note, trial: a.trial };
 }
 // the last scan: fine (green, when), failed (red, why), or not yet
 function srcStatus(s) {
@@ -285,9 +306,9 @@ loaders.sources = async () => {
     const hd = s.type === "hdhomerun";
     return `<div class="card src-card${s.enabled ? "" : " off"}" data-id="${s.id}">
       <div class="card-head"><div class="t" title="${esc(s.name)}">${esc(s.name)}</div>
-        <span class="tag">${srcKind(s)}</span>${s.enabled ? "" : '<span class="tag none">Disabled</span>'}</div>
+        <span class="tag">${srcKind(s)}</span>${srcAccount(s)?.trial ? '<span class="tag trial">Trial</span>' : ""}${s.enabled ? "" : '<span class="tag none">Disabled</span>'}</div>
       <div class="u" title="${esc(noPass(s.url))}">${esc(hostOf(s.url) || noPass(s.url))}${s.username ? ` · ${esc(s.username)}` : ""}</div>
-      ${srcStatus(s)}
+      ${srcStatus(s)}${(() => { const a = srcAccount(s); return a && a.note ? `<div class="src-st exp-${a.level}" title="${esc(a.tip)}"><span class="dot ${a.level === "bad" ? "dead" : "warn"}"></span>${esc(a.note)}</div>` : ""; })()}
       <div class="src-stats">${stat(s.count, "channels")}${hd ? "" : stat(s.vod.movies, "movies") + stat(s.vod.series, "shows")}</div>
       <dl class="src-set">${srcSettings(s)}</dl>
       ${s.exclude_groups ? `<div class="muted small src-skip">Skipping groups matching <code>${esc(s.exclude_groups)}</code></div>` : ""}

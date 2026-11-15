@@ -428,6 +428,11 @@ def api_sources():
         s["hidden"] = len(sources.hidden_groups(s))
         s["vod"] = vod.source_stats(s)
         s["conn_auto"] = connections.auto_limit(s)       # what the provider / device says, shown as "Automatic (2)"
+        if s["type"] == "xtream":
+            s["account"] = sources.account(s)            # expiry date, status, trial (read at each scan)
+            if s["enabled"] and time.time() - ((s["account"] or {}).get("checked") or 0) > sources.ACCOUNT_TTL:
+                full = db.one("SELECT * FROM sources WHERE id=?", (s["id"],))     # with the real password
+                sources.refresh_account_later(full)
         s.pop("hidden_groups", None)
         s.pop("vod_hidden", None)
     return out
