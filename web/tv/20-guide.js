@@ -190,10 +190,15 @@ const G = {
     if (this.genre && this.genreKey && this.genreKey !== `${this.genre}:${this.win}:${this.span}`) { this.genreKey = ""; this.refilter(); }
 
     const none = this.genre && this.genreNums && !this.genreNums.size;
-    const label = this.filterFocus ? `&#9664; ${esc(this.genre ? this.genreLabel() : "All channels")}${none ? " · none" : ""} &#9654;`
-      : esc(this.genreLabel()) + (none ? " · none" : "");
-    $("g-day").innerHTML = (this.favOnly ? "★ " : "")
-      + (this.genre || this.filterFocus ? `<span class="g-genre${none ? " none" : ""}${this.filterFocus ? " focus" : ""}">${label}</span> ` : "") + esc(fmtDay(this.win));
+    $("g-day").textContent = fmtDay(this.win);
+    // the filter pills: All / Favorites / genres. ▲ from the first channel puts the highlight on the genre
+    $("g-filters").innerHTML = `<span class="g-pill${this.favOnly ? " on" : ""}" data-f="fav">★ Favorites</span>`
+      + GENRES.map(([id, name]) => {
+        const on = this.genre === id;
+        const cls = ["g-pill", on && !this.filterFocus ? "on" : "", on && this.filterFocus ? "focus" : "", on && none ? "none" : ""].join(" ");
+        return `<span class="${cls}" data-g="${id}">${esc(id ? name : "All")}</span>`;
+      }).join("")
+      + `<span class="g-fhint"><b>V</b>Favorites<b>C</b>Genre</span>`;
     const tEl = $("g-times"); tEl.innerHTML = "";
     for (let i = 0; i < this.span / HALF; i++) {
       const d = document.createElement("div");
@@ -331,3 +336,10 @@ const G = {
 
 // touch: tap the day (top left of the guide) for the next genre
 $("g-day").addEventListener("click", () => { if (top() === "guide") G.cycleGenre(); });
+$("g-filters").addEventListener("click", (e) => {
+  const pill = e.target.closest(".g-pill"); if (!pill || top() !== "guide") return;
+  if (pill.dataset.f === "fav") { G.toggleView(); return; }
+  if (pill.dataset.g === G.genre) return;
+  G.genre = pill.dataset.g; G.genreKey = ""; G.genreNums = null; G.filterFocus = false;
+  G.refilter(true);
+});

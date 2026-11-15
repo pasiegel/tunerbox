@@ -144,20 +144,26 @@ const HM_EMPTY = {
   ok: "Nothing here yet. Press * on a channel to add it to Favorites. What you watch, record and set reminders for shows up here too.",
 };
 function homeRender() {
+  // the shortcuts (row 0) sit in the bar at the top; ▲ from the first row of tiles goes up to them
+  const nav = HM.rows.findIndex((row) => row.id === "nav");
+  $("hm-topnav").innerHTML = `<span class="hm-brand">Tuner<span>Box</span></span>`
+    + (nav >= 0 ? HM.rows[nav].items.map((it, i) => hmTile(it, nav, i)).join("") : "")
+    + `<span class="hm-when"><b id="hm-tclock"></b> <span id="hm-tdate"></span></span>`;
   $("hm-rows").innerHTML = HM.rows.map((row, r) => {
+    if (row.id === "nav") return "";
     const tiles = row.items.map((it, i) => hmTile(it, r, i)).join("");
-    return row.id === "nav" ? `<div class="hm-nav">${tiles}</div>`
-      : `<div class="hm-row" data-row="${r}"><div class="hm-label">${esc(row.label)}</div><div class="hm-strip">${tiles}</div></div>`;
+    return `<div class="hm-row" data-row="${r}"><div class="hm-label">${esc(row.label)}</div><div class="hm-strip">${tiles}</div></div>`;
   }).join("") + (HM.rows.length >= 3 ? "" : `<div class="od-empty">${HM_EMPTY[HM.state]}</div>`);
+  homeClock();
   homeSelect();
 }
 function homeSelect() {
   const row = HM.rows[HM.r]; if (!row) return;
   const i = Math.min(HM.cols[row.id] || 0, row.items.length - 1);
   HM.cols[row.id] = i;
-  const old = $("hm-rows").querySelector(".sel"); if (old) old.classList.remove("sel");
+  const old = $("home").querySelector(".hm-tile.sel, .hm-chip.sel"); if (old) old.classList.remove("sel");
   $("hm-rows").querySelectorAll(".hm-row").forEach((el) => el.classList.toggle("cur", +el.dataset.row === HM.r));
-  const el = $("hm-rows").querySelector(`[data-r="${HM.r}"][data-i="${i}"]`);
+  const el = $("home").querySelector(`[data-r="${HM.r}"][data-i="${i}"]`);
   if (el) {
     el.classList.add("sel");
     if (HM.r <= 1) $("hm-rows").scrollTop = 0;               // keep the shortcuts in view near the top
@@ -278,6 +284,18 @@ function homeKey(k) {
       if (/^[0-9]$/.test(k) && S.mode === "live") { closeHome(); digit(k); }
   }
 }
+function homeClock() {
+  const t = $("hm-tclock"); if (!t) return;
+  const d = new Date();
+  t.textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  $("hm-tdate").textContent = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+setInterval(() => { if (top() === "home") homeClock(); }, 20000);
+$("hm-topnav").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-r]"); if (!el) return;
+  HM.r = +el.dataset.r; HM.cols[HM.rows[HM.r].id] = +el.dataset.i;
+  homeSelect(); homeAct(HM.rows[HM.r].items[+el.dataset.i]);
+});
 $("hm-rows").addEventListener("click", (e) => {
   const el = e.target.closest("[data-r]"); if (!el) return;
   HM.r = +el.dataset.r; HM.cols[HM.rows[HM.r].id] = +el.dataset.i;
