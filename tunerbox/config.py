@@ -59,6 +59,7 @@ DEFAULTS = {
     },
     # Online XMLTV guides for channels that aren't in the local lineup.
     # Playlist x-tvg-url headers and Xtream xmltv.php are added automatically.
+    "allowed_hosts": [],    # extra names TunerBox answers to besides IP addresses and local names (see api._host_ok)
     "xmltv_sources": [
         "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz",
         "https://epgshare01.online/epgshare01/epg_ripper_US_LOCALS1.xml.gz",
@@ -311,6 +312,8 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
         v = _check_value(k, v, DEFAULTS[k])
         if k == "xmltv_sources":
             v = [str(u).strip() for u in v if str(u).strip()]
+        elif k == "allowed_hosts":
+            v = sorted({str(h).strip().lower().rstrip(".") for h in v if str(h).strip()})
         elif k == "sports_leagues":
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "box_name":

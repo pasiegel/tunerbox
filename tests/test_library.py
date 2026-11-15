@@ -282,6 +282,11 @@ def test_api_add_scan_and_review(movies, monkeypatch, tmp_path):
     c = TestClient(api.app)
     root = tmp_path / "More"
     _touch(root, "Heat (1995)/heat.mkv")
+    # a folder on the TunerBox computer: only this PC or a paired device may point it there
+    assert c.post("/api/library/browse", json={"location": str(tmp_path), "kind": "movie"}).status_code == 403
+    assert c.post("/api/library/shares", json={"kind": "movie", "location": str(root)}).status_code == 403
+    from tunerbox import remote
+    monkeypatch.setattr(remote, "is_pc", lambda request: True)
     r = c.post("/api/library/browse", json={"location": str(tmp_path), "kind": "movie"})
     assert r.json()["ok"] and "More" in r.json()["folders"]
     r = c.post("/api/library/shares", json={"kind": "movie", "location": str(root), "name": "More"})

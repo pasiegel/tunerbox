@@ -328,6 +328,7 @@
         <label class="set-row wide"><span class="set-text"><b>User-Agent</b><small>Sent to providers when reading playlists and streams.</small></span><input name="user_agent"></label>
         <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC.</small></span><input name="lineup_csv"></label>
         <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC.</small></span><input name="ffmpeg"></label>
+        <label class="set-row wide"><span class="set-text"><b>Allowed host names</b><small>TunerBox answers to IP addresses and local names (like <code>nas</code> or <code>tunerbox.local</code>). If you open it by another name (your own domain, a Tailscale name), add it here, separated by commas. <code>*.example.com</code> allows every name under it. This stops other websites from reaching TunerBox through your browser.</small></span><input name="allowed_hosts" data-list="1" placeholder="tv.example.com, nas.tail1234.ts.net"></label>
       </div>
     </form>
 

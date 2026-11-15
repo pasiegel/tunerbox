@@ -1,11 +1,14 @@
 """HTTP API + web UI + M3U/XMLTV/HDHomeRun outputs."""
+import ipaddress
 import json
 import logging
+import os
 import re
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 from xml.sax.saxutils import escape
 
 import anyio
@@ -414,10 +417,20 @@ def api_sources():
     return out
 
 
+def _disk_path_ok(request, type_, url):
+    """A playlist that's a file on this computer (not a web address) is read from its disk: only this PC
+    or a paired device may point TunerBox at files."""
+    url = (url or "").strip()
+    if type_ == "m3u" and url and not re.match(r"^https?://", url, re.I) and not remote.trusted(request):
+        raise HTTPException(403, "Playlist files on disk can only be added on the TunerBox PC or a paired phone. "
+                                 "Use a web address (http://…), or pair this device in Setup › Phones.")
+
+
 @app.post("/api/sources")
-def api_add_source(data: dict = Body(...)):
+def api_add_source(request: Request, data: dict = Body(...)):
     if not data.get("url"):
         raise HTTPException(400, "URL / server is required")
+    _disk_path_ok(request, data.get("type", "m3u"), data["url"])
     try:
         sid = sources.add_source(data.get("name", ""), data.get("type", "m3u"), data["url"].strip(),
                                  data.get("username", "").strip(), data.get("password", "").strip(),
@@ -443,7 +456,10 @@ def api_export_sources(request: Request):
 
 
 @app.post("/api/sources/import")
-def api_import_sources(data: dict = Body(...)):
+def api_import_sources(request: Request, data: dict = Body(...)):
+    for pl in (data.get("playlists") or []) if isinstance(data, dict) else []:
+        if isinstance(pl, dict):
+            _disk_path_ok(request, pl.get("type", "m3u"), str(pl.get("url") or ""))
     try:
         r = sources.import_sources(data)
     except ValueError as e:
@@ -460,10 +476,12 @@ def api_hdhr_discover():
 
 
 @app.patch("/api/sources/{sid}")
-def api_edit_source(sid: int, data: dict = Body(...)):
+def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     before = db.one("SELECT * FROM sources WHERE id=?", (sid,))
     if not before:
         raise HTTPException(404)
+    if isinstance(data.get("url"), str) and data["url"].strip() != before["url"]:
+        _disk_path_ok(request, before["type"], data["url"])
     for k in ("name", "url", "username", "password"):
         if isinstance(data.get(k), str):
             data[k] = data[k].strip()
@@ -1165,8 +1183,11 @@ def api_media_delete(cid: int):
 
 
 @app.get("/api/media/folder")
-def api_media_folder(path: str):
-    """Quick check that TunerBox can open a folder (UNC shares need the PC to have access)."""
+def api_media_folder(request: Request, path: str):
+    """Quick check that TunerBox can open a folder (UNC shares need the PC to have access). It tells
+    whether paths exist, so with the setup lock on only this PC and paired phones may ask."""
+    if config.get("require_pairing"):
+        _trusted(request)
     import os
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
     p = path.strip().strip('"')
@@ -1245,21 +1266,32 @@ def _lib_conn(data):
     return library.clean(d, old)
 
 
+def _lib_folder_ok(request, sh):
+    if sh["type"] == "folder" and not remote.trusted(request):
+        raise HTTPException(403, "Folders on the TunerBox computer can only be added on the TunerBox PC or a paired "
+                                 r"phone. Use a network location (\\nas\share), or pair this device in Setup › Phones.")
+
+
 @app.post("/api/library/browse")
-def api_library_browse(data: dict = Body(...)):
+def api_library_browse(request: Request, data: dict = Body(...)):
     """Connect and list the folders in `path` (inside the location), to check a library and pick its folder."""
     sh = _lib_err(_lib_conn, data)
+    _lib_folder_ok(request, sh)
     return library.check(sh, str(data.get("path") or ""))
 
 
 @app.post("/api/library/shares")
-def api_library_add(data: dict = Body(...)):
+def api_library_add(request: Request, data: dict = Body(...)):
+    _lib_folder_ok(request, _lib_err(library.clean, data))
     sid = _lib_err(library.add, data)
     return {"id": sid, "job": jobs.library_scan(sid)}
 
 
 @app.put("/api/library/shares/{sid}")
-def api_library_update(sid: int, data: dict = Body(...)):
+def api_library_update(request: Request, sid: int, data: dict = Body(...)):
+    old = library.share(sid)
+    if old and data.get("location") is not None:
+        _lib_folder_ok(request, _lib_err(library.clean, data, old))
     moved = _lib_err(library.update, sid, data)
     return {"ok": True, "job": jobs.library_scan(sid) if moved and library.share(sid)["enabled"] else False}
 
@@ -1402,6 +1434,61 @@ async def _revalidate_static(request: Request, call_next):
     if request.url.path.startswith("/static/"):
         resp.headers["Cache-Control"] = "no-cache"      # always check with the server (cheap: ETag)
     return resp
+
+
+# ------------------------------------------------------------------ other websites
+# TunerBox has no logins on the home network, so two browser tricks need closing:
+#  * cross-site requests: a page on another site making your browser POST here (start scans, change setup).
+#    Browsers say where a request comes from (Origin, Sec-Fetch-Site); changes from other sites are refused.
+#  * DNS rebinding: another site pointing its own name at TunerBox's address so its pages can read the
+#    answers. TunerBox only answers to IP addresses, local names (nas, nas.local, tunerbox.lan…) and names
+#    added under Settings › Advanced › Allowed host names.
+LOCAL_SUFFIXES = (".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".localhost")
+
+
+def _host_ok(host):
+    host = (host or "").strip().lower()
+    if host.startswith("["):                              # [IPv6]:port
+        host = host[1:host.find("]")] if "]" in host else host
+    elif host.count(":") == 1:
+        host = host.split(":")[0]
+    host = host.rstrip(".")
+    if not host:
+        return True                                       # HTTP/1.0 without Host: nothing to rebind
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host == "localhost" or "." not in host or host.endswith(LOCAL_SUFFIXES):
+        return True
+    extra = [h.lower() for h in (config.get("allowed_hosts") or [])]
+    extra += [h.strip().lower() for h in os.environ.get("TUNERBOX_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    return host in extra or any(h.startswith("*.") and host.endswith(h[1:]) for h in extra)
+
+
+def _same_origin(request):
+    """False when a browser says this change comes from another website."""
+    origin = request.headers.get("origin")
+    if origin:
+        if origin == "null":
+            return False
+        try:
+            o = urlsplit(origin)
+        except ValueError:
+            return False
+        return (o.netloc or "").lower() == (request.headers.get("host") or "").lower()
+    return request.headers.get("sec-fetch-site", "") not in ("cross-site", "same-site")
+
+
+@app.middleware("http")
+async def _other_sites(request: Request, call_next):
+    if not _host_ok(request.headers.get("host")):
+        return PlainTextResponse("TunerBox doesn't answer to this address. Use its IP address, or add this name "
+                                 "under Setup › Settings › Advanced › Allowed host names.", 403)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _same_origin(request):
+        return JSONResponse({"detail": "Refused: this request came from another website"}, 403)
+    return await call_next(request)
 
 
 app.mount("/static", StaticFiles(directory=config.WEB), name="static")
