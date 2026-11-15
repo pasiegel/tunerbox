@@ -1252,7 +1252,7 @@ async function libFixSearch() {
   try { res = await api(`/api/library/tmdb?kind=${libFixFor.kind}&q=${encodeURIComponent(q)}&year=${encodeURIComponent($("lib-fix-year").value.trim())}`); }
   catch (e) { $("lib-fix-list").innerHTML = `<li class="bad-text">${esc(e.message)}</li>`; return; }
   $("lib-fix-list").innerHTML = res.length ? res.map((r) => `<li>
-      ${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
+      ${r.poster ? `<img src="${esc(safePic(r.poster))}" alt="" loading="lazy">` : '<span class="noimg"></span>'}
       <div class="tx"><b>${esc(r.name)}</b> ${r.year ? `<span class="muted">(${esc(r.year)})</span>` : ""}${r.id === libFixFor.tmdb_id ? ' <span class="tag ok">current</span>' : ""}
         <small>${esc(r.overview || "No description.")}</small></div>
       <button class="btn small primary" data-tmdb="${r.id}">Use this</button></li>`).join("")

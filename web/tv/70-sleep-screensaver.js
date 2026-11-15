@@ -133,7 +133,7 @@ async function remoteSync() {
   $("rm-fav").querySelector("span").textContent = fav ? "Favorite" : "Favorite";
   $("rm-fav").title = fav ? "Remove from Favorites (*)" : "Add to Favorites (*)";
   const head = `<span class="rm-num">${esc(String(ch.badge || ch.number))}</span>`
-    + (ch.logo ? `<img class="rm-logo" src="${esc(ch.logo)}" alt="" onerror="this.remove()">` : `<span class="rm-label">${esc(ch.label || ch.name)}</span>`);
+    + (ch.logo ? `<img class="rm-logo" src="${esc(safePic(ch.logo))}" alt="" onerror="this.remove()">` : `<span class="rm-label">${esc(ch.label || ch.name)}</span>`);
   $("rm-now").innerHTML = `${head}<div class="rm-what"><div class="rm-title">${esc(ch.name)}</div></div>`;
   if (ch.feed || !ch.epg) return;
   const seq = ++rmSeq;

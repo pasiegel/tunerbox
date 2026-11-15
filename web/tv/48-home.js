@@ -11,7 +11,7 @@ const homeAtStart = () => homeEnabled() && localStorage.getItem("tb.homeStart") 
 // on-screen remote buttons and key hints for features that are switched off or not set up
 const homeButton = () => {
   const hide = (k, off) => document.querySelectorAll(`#remote [data-k="${k}"]`).forEach((b) => b.classList.toggle("hidden", off));
-  hide("h", !homeEnabled()); hide("o", !vodOn()); hide("d", !dvrOn());
+  hide("h", !homeEnabled()); hide("o", !vodOn()); hide("d", !dvrOn()); hide("r", !dvrOn());
   document.querySelectorAll("[data-feat]").forEach((el) => el.classList.toggle("hidden", !featOn(el.dataset)));
 };
 const recentNums = () => { try { return JSON.parse(localStorage.getItem("tb.recent") || "[]"); } catch (_) { return []; } };

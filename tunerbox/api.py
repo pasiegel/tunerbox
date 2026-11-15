@@ -1576,6 +1576,7 @@ def _host_ok(host):
         return True
     extra = [h.lower() for h in (config.get("allowed_hosts") or [])]
     extra += [h.strip().lower() for h in os.environ.get("TUNERBOX_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    extra += [h.lower() for h in (config.get("https_hosts") or [])]     # names on the HTTPS certificate
     return host in extra or any(h.startswith("*.") and host.endswith(h[1:]) for h in extra)
 
 
