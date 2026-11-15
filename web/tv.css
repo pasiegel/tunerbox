@@ -540,3 +540,14 @@ html:not(.phone) #hmi-sub { font-size: 1.35em; margin-top: .35em; }
 html:not(.phone) #hmi-meta { font-size: 1.1em; }
 html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width: 40em; }
 .phone .hm-brand, .phone .hm-when { display: none; }
+/* phones: the TV stays in the corner, so the shortcuts go under it; the guide's pills scroll sideways */
+.phone #home .g-top { order: 0; }
+.phone .hm-topnav { order: 1; padding: 0 0 6px; }
+.phone .hm-rows { order: 2; }
+.phone #hm-foot { order: 3; }
+.phone .hm-topnav .hm-chip { font-size: 14px; padding: 7px 12px; background: #ffffff10; }
+#g-filters { overflow-x: auto; scrollbar-width: none; }
+#g-filters::-webkit-scrollbar { display: none; }
+.phone #g-filters { margin: 0 0 8px; }
+.phone .g-pill { font-size: 13px; padding: 6px 12px; }
+.phone #g-filters .g-fhint { display: none; }
