@@ -106,7 +106,7 @@
   <!-- local channels -->
   <section id="tab-media" class="hidden">
     <h3>My Channels</h3>
-    <p class="muted"><b>Your videos as 24/7 channels in the guide.</b> (For movies and shows you pick and play, use <b>My Library</b>.) Turn folders of videos into TV channels that play around the clock, with their own guide listings. Folders can be on this PC or on the network (<code>\\server\share\TV\Seinfeld</code>). Tuning in joins whatever is "on" at the moment, like real TV. Episode names are read from file names such as <code>Show - S01E02 - Title.mkv</code>.</p>
+    <p class="muted"><b>Your videos as 24/7 channels in the guide.</b> (For movies and shows you pick and play, use <b>My Library</b>.) Turn folders of videos into TV channels that play around the clock, with their own guide listings. Folders can be on this PC or on the network (<code>\\server\share\TV\Seinfeld</code>). In Docker, use a folder mounted into the container, like <code>/media/TV/Seinfeld</code> (see <b>Where your files can be</b> under My Library). Tuning in joins whatever is "on" at the moment, like real TV. Episode names are read from file names such as <code>Show - S01E02 - Title.mkv</code>.</p>
     <div class="cards" id="mc-list"></div>
     <h3 id="mc-form-title">New channel</h3>
     <form id="mc-form" class="form">
@@ -139,8 +139,8 @@
     <form id="lib-form" class="form" autocomplete="off">
       <label>This folder has <select name="kind"><option value="movie">Movies</option><option value="series">TV shows</option></select></label>
       <label>Name in On Demand <input name="name" placeholder="e.g. NAS Movies"></label>
-      <label class="wide">Network location <input name="location" required placeholder="\\nas\Media\Movies   or   smb://192.168.1.20/Media/Movies"></label>
-      <label>NAS username <input name="username" autocomplete="off" placeholder="leave empty for guest access"></label>
+      <label class="wide">Folder or network location <input name="location" required placeholder="\\nas\Media\Movies   or   /media/Movies   or   D:\Movies"></label>
+      <label>NAS username <input name="username" autocomplete="off" placeholder="network shares only; empty for guest"></label>
       <label>NAS password <input name="password" type="password" autocomplete="new-password"></label>
       <div class="wide">
         <button type="button" class="btn" id="lib-test">Connect &amp; browse</button> <span id="lib-tested" class="muted"></span>
@@ -150,6 +150,15 @@
         <button type="button" class="btn hidden" id="lib-cancel">Cancel editing</button>
         <span class="muted small">Movies: a folder per movie, like <code>Dune Part Two (2024)/…mkv</code>, or files named with the year. TV: <code>Show/Season 01/Show - S01E02.mkv</code>.</span></div>
     </form>
+    <details class="lib-where">
+      <summary>Where your files can be</summary>
+      <ul class="muted">
+        <li><b>A network share</b> (<code>\\nas\Media\Movies</code> or <code>smb://192.168.1.20/Media/Movies</code>): TunerBox logs in to the NAS itself with the username and password above, so nothing has to be mounted on the TunerBox computer first.</li>
+        <li><b>A folder on the TunerBox computer</b>: <code>D:\Movies</code> on Windows, <code>/home/me/Movies</code> on Linux, <code>/Volumes/Media/Movies</code> on a Mac. A drive letter mapped to a NAS works too, as long as TunerBox runs as the same Windows user. Leave the username and password empty.</li>
+        <li><b>In Docker</b>, TunerBox only sees its own container, not the computer's drives. Mount the folder as a volume, then enter the path <i>inside</i> the container. With <code>-v /srv/media:/media:ro</code> (compose.yaml: <code>volumes: ["/srv/media:/media:ro"]</code>), the host's <code>/srv/media/Movies</code> is <b><code>/media/Movies</code></b> here. Read-only (<code>:ro</code>) is fine: TunerBox never writes to your folders. A NAS share mounted on the host (CIFS or NFS) works the same way, and is the easy route when the share only allows guests.</li>
+        <li><b>Who can add folders:</b> the TunerBox PC and paired devices. On a Docker server, which has no screen of its own, any browser on your home network can too, until <b>Lock setup</b> (Setup › Phones) is on.</li>
+      </ul>
+    </details>
 
     <h3>Details and posters (TMDB)</h3>
     <p class="muted">Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org › Settings › API</a> and paste the <b>API Key</b> or the <b>API Read Access Token</b>. Without one, titles show the names from your folders and files.</p>
@@ -236,6 +245,7 @@
     <table class="grid"><thead><tr><th>Name</th><th>Paired</th><th>Last used</th><th></th></tr></thead><tbody id="dev-body"></tbody></table>
     <h3>Lock setup</h3>
     <label class="chk"><input type="checkbox" id="lock-setup"> Only this PC and paired phones can change playlists, channels and settings</label>
+    <p class="muted small">On a Docker server (no screen of its own), every browser on your home network counts as the TunerBox PC until this is on: it can change any setting and add folders on the server. Turning the lock on needs a paired device, so pair this browser first.</p>
     <div id="lock-hint" class="muted small"></div>
     <p class="muted small">Watching TV stays open to every device on your network either way, so the iPad, the Android app and Plex keep working without pairing.</p>
     <p class="muted small">Already on a phone? <a href="/remote">Open the phone remote</a></p>
@@ -307,7 +317,7 @@
       <div class="set-group" data-cat="dvr" data-label="DVR">
         <h4>DVR</h4>
         <label class="set-row"><span class="set-text"><b>Recordings</b><small>Off: nothing is recorded or scheduled, series recordings wait, and Record, Recordings and the DVR tab are left out of every screen. A recording that's already running finishes. Plex, Emby and Jellyfin's own DVRs aren't affected.</small></span><input type="checkbox" class="toggle" name="dvr_enabled"></label>
-        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Recordings folder</b><small>Only changeable on the TunerBox PC.</small></span><input name="recordings_dir"></label>
+        <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Recordings folder</b><small>Only changeable on the TunerBox PC (on a Docker server: any browser at home, until Setup is locked).</small></span><input name="recordings_dir"></label>
         <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Start recording early</b><small>Before the show starts.</small></span><span class="unit-field"><input name="dvr_pad_before" type="number" min="0" max="60" step="0.5" data-scale="60"><em>min</em></span></label>
         <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Keep recording after</b><small>After the show ends.</small></span><span class="unit-field"><input name="dvr_pad_after" type="number" min="0" max="240" step="0.5" data-scale="60"><em>min</em></span></label>
         <label class="set-row" data-needs="dvr_enabled"><span class="set-text"><b>Recordings come first</b><small>When a playlist has no connection left, a recording that's starting takes one from live TV or On Demand. That screen is told what's recording and offered its channel. Off: the recording waits for a free connection.</small></span><input type="checkbox" class="toggle" name="dvr_takes_connection"></label>
@@ -326,14 +336,14 @@
       <div class="set-group" data-cat="advanced" data-label="Advanced">
         <h4>Advanced</h4>
         <label class="set-row wide"><span class="set-text"><b>User-Agent</b><small>Sent to providers when reading playlists and streams.</small></span><input name="user_agent"></label>
-        <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC.</small></span><input name="lineup_csv"></label>
-        <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC.</small></span><input name="ffmpeg"></label>
+        <label class="set-row"><span class="set-text"><b>Lineup CSV</b><small>Only changeable on the TunerBox PC (on a Docker server: any browser at home, until Setup is locked).</small></span><input name="lineup_csv"></label>
+        <label class="set-row"><span class="set-text"><b>ffmpeg path</b><small>Only changeable on the TunerBox PC (on a Docker server: any browser at home, until Setup is locked).</small></span><input name="ffmpeg"></label>
         <label class="set-row wide"><span class="set-text"><b>Allowed host names</b><small>TunerBox answers to IP addresses and local names (like <code>nas</code> or <code>tunerbox.local</code>). If you open it by another name (your own domain, a Tailscale name), add it here, separated by commas. <code>*.example.com</code> allows every name under it. This stops other websites from reaching TunerBox through your browser.</small></span><input name="allowed_hosts" data-list="1" placeholder="tv.example.com, nas.tail1234.ts.net"></label>
       </div>
 
       <div class="set-group" data-cat="https" data-label="HTTPS">
         <h4>HTTPS (install as an app)</h4>
-        <p class="muted small">Browsers only offer <b>Install app</b> for secure pages. Turn this on to also serve TunerBox over HTTPS on a second port. The normal http address keeps working exactly as before, and Plex, Emby, Jellyfin, VLC and the Roku app keep using it. Only changeable on the TunerBox PC; takes effect when TunerBox restarts.</p>
+        <p class="muted small">Browsers only offer <b>Install app</b> for secure pages. Turn this on to also serve TunerBox over HTTPS on a second port. The normal http address keeps working exactly as before, and Plex, Emby, Jellyfin, VLC and the Roku app keep using it. Only changeable on the TunerBox PC (on a Docker server: any browser at home, until Setup is locked); takes effect when TunerBox restarts.</p>
         <label class="set-row"><span class="set-text"><b>Serve HTTPS too</b></span><input type="checkbox" class="toggle" name="https_enabled"></label>
         <label class="set-row" data-needs="https_enabled"><span class="set-text"><b>HTTPS port</b><small>8643 unless something else uses it.</small></span><input name="https_port" type="number" min="1" max="65535"></label>
         <label class="set-row wide" data-needs="https_enabled"><span class="set-text"><b>Extra addresses for the certificate</b><small>This PC's own names and network addresses are included automatically. Add others separated by commas, for example the Docker host's address when TunerBox runs in a container.</small></span><input name="https_hosts" data-list="1" placeholder="192.168.1.20, tunerbox.lan"></label>

@@ -8,9 +8,10 @@
   * Optional lock ("require_pairing"): only this PC and paired phones can change setup. Watching TV
     stays open to every device on the network, so the iPad, Android app and Plex keep working.
   * On a server with no screen of its own (Docker on a NAS: TUNERBOX_TRUST_LAN=1, set by the image),
-    nobody ever browses from "this PC". There, any device on the home network may pair phones (and
-    browsers) until the lock is turned on; paired devices may also turn the lock on and off. Everything
-    else that needs "this PC" stays that way.
+    nobody ever browses from "this PC". There, any browser on the home network counts as the PC until
+    the lock is turned on: it can pair phones, change PC-only settings and add folders on the server.
+    With the lock on, only paired devices can. Turning the lock on or off needs a paired device, so
+    nobody locks themselves out. Exporting logins always needs this PC or a paired device.
 """
 import asyncio
 import hashlib
@@ -91,13 +92,18 @@ def _home_network(request):
 
 
 def can_pair(request):
-    """Who may pair phones and see the paired list: this PC and paired devices; on a server without a
-    screen (TUNERBOX_TRUST_LAN), also any browser on the home network until the lock is turned on.
-    Deliberately narrower than is_pc: PC-only settings (ffmpeg, folders, port) and exporting logins
-    still need this PC or a paired device."""
+    """Who may pair phones, see the paired list and add folders or playlist files on the TunerBox
+    computer: this PC and paired devices; on a server without a screen (TUNERBOX_TRUST_LAN), also any
+    browser on the home network until the lock is turned on."""
     if trusted(request):
         return True
     return trust_lan() and not _locked() and _home_network(request)
+
+
+def acts_as_pc(request):
+    """May change PC-only settings (ffmpeg, recordings folder, port, HTTPS): this PC; on a server without
+    a screen, a browser on the home network until the lock is on, and paired devices."""
+    return is_pc(request) or (trust_lan() and can_pair(request))
 
 
 def trust_lan():

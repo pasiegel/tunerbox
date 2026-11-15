@@ -145,14 +145,17 @@ Every file is converted to one common format while it plays (H.264 + AAC, with b
 ## My Library (your own movies and TV shows in On Demand)
 Setup › **My Library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
 
-1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **network location** (`\\nas\Media\Movies` or `smb://192.168.1.20/Media/Movies`) and the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
+1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **folder or network location** (`\\nas\Media\Movies`, `smb://192.168.1.20/Media/Movies`, `D:\Movies`, or in Docker `/media/Movies`) and, for a network share, the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
 2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand.
 3. For details and posters, get a free key at themoviedb.org (Settings › API), paste the *API Key* or *API Read Access Token* under **Details and posters (TMDB)** and **Save**.
 4. Check **Matches** › *Needs review*: **Fix** searches TMDB so you can pick the right title (kept through rescans), **Leave out** hides a file.
 
 * **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming files or folders is safe; a renamed folder is looked up again.
 * **Naming:** movies as `Dune Part Two (2024)/anything.mkv` or `Dune Part Two (2024).mkv` (scene names like `Dune.Part.Two.2024.2160p.WEB-DL.mkv` work too); shows as `Show/Season 01/Show - S01E02 - Title.mkv` (`1x02` and `Season 2/04 - Title.mkv` work too). Samples, trailers and `Extras` folders are skipped.
-* **Network shares** are read with a built-in SMB2/3 client, so Docker doesn't need the share mounted. A plain folder path (`/media/Movies`, `D:\Movies`) works too.
+* **Network shares** are read with a built-in SMB2/3 client, so Docker doesn't need the share mounted.
+* **Folders on the TunerBox computer** work too: `D:\Movies` on Windows, `/home/me/Movies` on Linux. A drive letter mapped to a NAS works as long as TunerBox runs as the same Windows user.
+* **In Docker**, TunerBox only sees its container. Mount the folder as a volume and enter the path inside the container: with `-v /srv/media:/media:ro`, the host's `/srv/media/Movies` is `/media/Movies` in Setup. Read-only is fine. A NAS share mounted on the host (CIFS/NFS) works the same way, and is the easy route for guest-only shares.
+* **Who can add folders:** the TunerBox PC and paired devices; on a Docker server, also any browser on your home network until **Lock setup** is on (see [Security notes](#security-notes)).
 * **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
 * **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
 
@@ -287,14 +290,14 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 
 * Set `TZ` (in `compose.yaml`, or `-e TZ=` with `docker run`) to your time zone, e.g. `America/Chicago`: guide times and DVR scheduling follow it.
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
-* For My Channels, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup.
-* If you turn on *require pairing*, pair your browser/phone from Setup like any other device; in a bridged container your PC isn't seen as loopback.
+* For My Channels and My Library, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup. The path is the one inside the container, not the host's.
+* The image sets `TUNERBOX_TRUST_LAN=1`: with no screen of its own, any browser on your home network counts as the TunerBox PC (settings, folders, pairing) until **Setup › Phones › Lock setup** is on. Pair your browser before turning the lock on; afterwards only paired devices can change setup.
 * **Two TunerBoxes on one host** (say one for the family and one private): give the second its own data volume and port, e.g. `-v tunerbox-private-data:/data` and `-p 8644:8644` with the command `python -m tunerbox --server --port 8644` (with host networking, just the `--port`). Then set **Setup › Settings › Other apps › Network name** on each (before adding them as tuners), so Plex, Jellyfin, Emby and Channels DVR list them under different names. Home-screen icons stay "TunerBox". Each one gets its own HDHomeRun device ID for Plex automatically.
 
 ## Security notes
-* TunerBox has no logins on your home network: anyone on the Wi-Fi can watch, and change setup until **Setup › Phones › lock** is on. Pair your phone (and on a NAS, your PC's browser) and turn the lock on.
+* TunerBox has no logins on your home network: anyone on the Wi-Fi can watch, and change setup until **Setup › Phones › lock** is on. On a Docker server that includes PC-only settings (ffmpeg, recordings folder, ports) and folders on the server. Pair your phone (and on a NAS, your PC's browser) and turn the lock on if others share your network.
 * It refuses changes that come from other websites (a page on another site making your browser send them) and only answers to IP addresses and local names, so another site can't point its own name at it (DNS rebinding). If you open TunerBox by another name, add it under **Settings › Advanced › Allowed host names** (or `TUNERBOX_ALLOWED_HOSTS`).
-* Playlist files and library folders on the TunerBox computer can only be added from this PC or a paired device; from anywhere else use web addresses and network shares. ffmpeg only takes stream protocols (http(s), udp/rtp/rtsp/rtmp/srt, files).
+* Playlist files and library folders on the TunerBox computer can only be added from this PC or a paired device (on a Docker server, also from the home network until locked); from anywhere else use web addresses and network shares. Exporting playlists (with their logins) always needs this PC or a paired device. ffmpeg only takes stream protocols (http(s), udp/rtp/rtsp/rtmp/srt, files).
 * Don't forward port 8642 to the internet or put it behind a reverse proxy: use a VPN (Tailscale, WireGuard) for watching away from home.
 * Passwords (playlists, NAS shares) and the TMDB key are stored in TunerBox's data folder as they are: keep that folder (the Docker volume) out of shared backups.
 

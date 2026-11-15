@@ -302,6 +302,10 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
 .lib-summary .st { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
 .lib-summary .st b { display: block; font-size: 20px; }
 .lib-summary .st.warn { border-color: var(--warn); } .lib-summary .st.warn b { color: var(--warn); }
+.lib-where { margin: 10px 0 18px; }
+.lib-where summary { cursor: pointer; font-weight: 600; }
+.lib-where ul { margin: 8px 0 0; padding-left: 20px; line-height: 1.5; }
+.lib-where li { margin-bottom: 6px; }
 .lib-browse { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); max-height: 260px; overflow-y: auto; }
 .lib-browse .crumb { display: flex; gap: 6px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); flex-wrap: wrap; }
 .lib-browse .crumb a { cursor: pointer; }

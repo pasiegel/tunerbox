@@ -120,29 +120,43 @@ def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path)
     assert r.status_code == 302 and r.headers["location"] == "https://img.example/p1.jpg"
 
 
-def test_nas_server_lets_home_network_pair_until_locked(monkeypatch):
-    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network may pair
-    phones until the lock is on. It doesn't get the other PC-only powers. The pairing link uses the
-    address the browser used, not the container's."""
+def test_nas_server_home_network_is_the_pc_until_locked(monkeypatch, tmp_path):
+    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network counts as
+    the PC until the lock is on: pairing, PC-only settings and folders on the server. Exporting logins
+    and the lock itself need a paired device. The pairing link uses the address the browser used."""
     from fastapi.testclient import TestClient
+    from tunerbox import jobs
+    monkeypatch.setattr(jobs, "library_scan", lambda *a, **k: True)
     lan = TestClient(api.app, client=("192.168.10.50", 5000), base_url="http://192.168.10.9:8642")
+    folder = {"location": str(tmp_path), "kind": "movie"}
     assert lan.post("/api/pair/start").status_code == 403           # a desktop install: only the PC itself
+    assert lan.post("/api/settings", json={"ffmpeg": "/usr/bin/ffmpeg"}).status_code == 403
+    assert lan.post("/api/library/browse", json=folder).status_code == 403
     monkeypatch.setenv("TUNERBOX_TRUST_LAN", "1")
     me = lan.get("/api/me").json()
-    assert me["manage"] and me["server"] and not me["pc"]
-    assert lan.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403     # still PC-only
+    assert me["manage"] and me["admin"] and me["server"] and not me["pc"]
+    assert lan.post("/api/settings", json={"ffmpeg": "/usr/bin/ffmpeg"}).status_code == 200   # settings from the web UI
+    assert lan.post("/api/settings", json={"https_port": 8647}).status_code == 200
+    assert lan.post("/api/library/browse", json=folder).json()["ok"]                     # folders on the server
     assert lan.get("/api/sources/export").status_code == 403                            # logins stay put
+    assert lan.post("/api/settings", json={"require_pairing": True}).status_code == 403  # would lock itself out
     r = lan.post("/api/pair/start")
     assert r.status_code == 200 and r.json()["address"] == "http://192.168.10.9:8642/pair"
     phone = TestClient(api.app, client=("192.168.10.77", 5000), base_url="http://192.168.10.9:8642")
     assert phone.post("/api/pair/complete", json={"code": r.json()["code"], "name": "Pixel"}).status_code == 200
     assert phone.post("/api/settings", json={"require_pairing": True}).status_code == 200   # paired: may lock
-    assert phone.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403      # but nothing else PC-only
-    assert lan.post("/api/pair/start").status_code == 403           # locked: the home network can't pair now
+    me = lan.get("/api/me").json()
+    assert not me["manage"] and not me["admin"]                     # locked: the home network is just a viewer
+    assert lan.post("/api/pair/start").status_code == 403
+    assert lan.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403
+    assert lan.post("/api/library/browse", json=folder).status_code == 403
     assert phone.post("/api/pair/start").status_code == 200         # the paired phone still can
+    assert phone.post("/api/settings", json={"ffmpeg": "ffmpeg"}).status_code == 200
+    assert phone.post("/api/library/browse", json=folder).json()["ok"]
     assert phone.post("/api/settings", json={"require_pairing": False}).status_code == 200
     outside = TestClient(api.app, client=("8.8.8.8", 5000))
     assert not outside.get("/api/me").json()["manage"]              # only private addresses count
+    assert outside.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403
 
 
 def test_other_websites_cant_change_things(monkeypatch):

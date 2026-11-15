@@ -445,9 +445,9 @@ def _disk_path_ok(request, type_, url):
     """A playlist that's a file on this computer (not a web address) is read from its disk: only this PC
     or a paired device may point TunerBox at files."""
     url = (url or "").strip()
-    if type_ == "m3u" and url and not re.match(r"^https?://", url, re.I) and not remote.trusted(request):
-        raise HTTPException(403, "Playlist files on disk can only be added on the TunerBox PC or a paired phone. "
-                                 "Use a web address (http://…), or pair this device in Setup › Phones.")
+    if type_ == "m3u" and url and not re.match(r"^https?://", url, re.I) and not remote.can_pair(request):
+        raise HTTPException(403, "Playlist files on disk can only be added on the TunerBox PC or a paired device "
+                                 "while Setup is locked. Use a web address (http://…), or pair this device in Setup › Phones.")
 
 
 @app.post("/api/sources")
@@ -655,9 +655,13 @@ def api_settings():
 @app.post("/api/settings")
 def api_save_settings(request: Request, data: dict = Body(...)):
     try:
-        # a NAS has no "PC": there a paired device may turn the setup lock on and off (nothing else PC-only)
-        allow = {"require_pairing"} if remote.trust_lan() and remote.device(request) else set()
-        data = config.clean_changes(data, from_pc=remote.is_pc(request), allow=allow)
+        # a NAS has no "PC": there the home network (until locked) and paired devices stand in for it.
+        # The lock itself only from the PC or a paired device, so whoever turns it on can still get in.
+        if ("require_pairing" in data and bool(data["require_pairing"]) != bool(config.get("require_pairing"))
+                and not remote.trusted(request)):
+            raise PermissionError("Pair this browser first (Setup › Phones), so it can still change things "
+                                  "once Setup is locked")
+        data = config.clean_changes(data, from_pc=remote.acts_as_pc(request))
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
@@ -705,7 +709,7 @@ def _trusted(request: Request):
 def api_me(request: Request):
     d = remote.device(request)
     return {"pc": remote.is_pc(request), "paired": bool(d), "name": d["name"] if d else None,
-            "manage": remote.can_pair(request), "server": remote.trust_lan(),
+            "manage": remote.can_pair(request), "admin": remote.acts_as_pc(request), "server": remote.trust_lan(),
             "require_pairing": bool(config.get("require_pairing")), "http_base": _http_base(request)}
 
 
@@ -1379,9 +1383,10 @@ def _lib_conn(data):
 
 
 def _lib_folder_ok(request, sh):
-    if sh["type"] == "folder" and not remote.trusted(request):
+    if sh["type"] == "folder" and not remote.can_pair(request):
         raise HTTPException(403, "Folders on the TunerBox computer can only be added on the TunerBox PC or a paired "
-                                 r"phone. Use a network location (\\nas\share), or pair this device in Setup › Phones.")
+                                 r"device while Setup is locked. Use a network location (\\nas\share), or pair this "
+                                 "device in Setup › Phones.")
 
 
 @app.post("/api/library/browse")
