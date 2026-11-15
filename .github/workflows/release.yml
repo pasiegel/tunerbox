@@ -20,8 +20,6 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
-  # branch builds: "-<branch>-<commit>" goes after the version in the file names
-  BUILD_LABEL: ${{ !startsWith(github.ref, 'refs/tags/v') && format('-{0}-{1}', github.ref_name, github.sha) || '' }}
 
 jobs:
   # ------------------------------------------------------------------ Docker image (server only) -> GitHub Packages
@@ -77,9 +75,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Set version from tag
-        if: env.IS_TAG == 'true'
-        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Set version
+        shell: bash
+        run: |
+          # a tag sets the version; a branch build takes the newest release tag's and adds
+          # "-<branch>-<commit>" to the file names (BUILD_LABEL)
+          if [ "$IS_TAG" = true ]; then
+            python packaging/set_version.py "$GITHUB_REF_NAME"
+          else
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
+            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          fi
       - name: Install Python packages
         run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller
       - name: Get ffmpeg
@@ -101,8 +108,7 @@ jobs:
           $v = python packaging/set_version.py --check
           Compress-Archive -Path dist/TunerBox/* -DestinationPath "dist/TunerBox-$v-windows-portable.zip"
           if ($env:BUILD_LABEL) {
-            $label = $env:BUILD_LABEL.Substring(0, $env:BUILD_LABEL.Length - 33)   # keep 7 characters of the commit
-            Get-ChildItem dist -File | ForEach-Object { Rename-Item $_.FullName ($_.Name.Replace("-$v", "-$v$label")) }
+            Get-ChildItem dist -File | ForEach-Object { Rename-Item $_.FullName ($_.Name.Replace("-$v", "-$v$env:BUILD_LABEL")) }
           }
           Get-ChildItem dist -File | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
@@ -121,9 +127,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Set version from tag
-        if: env.IS_TAG == 'true'
-        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Set version
+        shell: bash
+        run: |
+          # a tag sets the version; a branch build takes the newest release tag's and adds
+          # "-<branch>-<commit>" to the file names (BUILD_LABEL)
+          if [ "$IS_TAG" = true ]; then
+            python packaging/set_version.py "$GITHUB_REF_NAME"
+          else
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
+            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          fi
       - name: Install Python packages
         run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller pillow
       - name: Get a static ffmpeg
@@ -141,7 +156,7 @@ jobs:
       - name: Make the .dmg
         run: |
           V=$(python packaging/set_version.py --check)
-          if [ -n "$BUILD_LABEL" ]; then V="$V${BUILD_LABEL::-33}"; fi   # keep 7 characters of the commit
+          V="$V$BUILD_LABEL"
           hdiutil create -volname TunerBox -srcfolder dist/TunerBox.app -ov -format UDZO "dist/TunerBox-$V-macos-arm64.dmg"
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -158,9 +173,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Set version from tag
-        if: env.IS_TAG == 'true'
-        run: python packaging/set_version.py ${{ github.ref_name }}
+      - name: Set version
+        shell: bash
+        run: |
+          # a tag sets the version; a branch build takes the newest release tag's and adds
+          # "-<branch>-<commit>" to the file names (BUILD_LABEL)
+          if [ "$IS_TAG" = true ]; then
+            python packaging/set_version.py "$GITHUB_REF_NAME"
+          else
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
+            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+          fi
       - name: Install Python packages
         run: python -m pip install -r requirements.txt -c constraints.txt pyinstaller
       - name: Get a static ffmpeg
@@ -182,7 +206,7 @@ jobs:
       - name: Pack
         run: |
           V=$(python packaging/set_version.py --check)
-          if [ -n "$BUILD_LABEL" ]; then V="$V${BUILD_LABEL::-33}"; fi   # keep 7 characters of the commit
+          V="$V$BUILD_LABEL"
           tar -czf "dist/TunerBox-$V-linux-x64.tar.gz" -C dist TunerBox
           ls -la dist
       - uses: actions/upload-artifact@v4
