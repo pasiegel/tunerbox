@@ -16,6 +16,9 @@ COPY tunerbox/ tunerbox/
 COPY web/ web/
 COPY data/channels.csv data/channels.csv
 COPY docker-entrypoint.sh .
+# readable by the tunerbox user whatever permissions the files had where the image was built from
+# (a folder copied from Windows can arrive as owner-only, and then nothing starts)
+RUN chmod -R a+rX /app
 
 # Settings, database, logs, recordings and the lineup CSV all live in /data
 ENV TUNERBOX_DATA=/data \
