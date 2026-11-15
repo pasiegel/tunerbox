@@ -138,6 +138,25 @@ def _start(text):
     return 0
 
 
+def _color(c):
+    """A team colour as "rrggbb", or "" (the TV puts it in a style, so nothing else gets through)."""
+    c = str(c or "").strip().lstrip("#").lower()
+    return c if re.fullmatch(r"[0-9a-f]{6}", c) else ""
+
+
+def _sides(ev):
+    """The two teams in the order the game's name gives them (soccer: home first), with their logo
+    and colour, for the Home screen's picture of the matchup. Two teams with the same colour: the
+    second one gets its other colour."""
+    order = ("home", "away") if LEAGUES[ev["league"]][2] == "Soccer" else ("away", "home")
+    scored = ev["state"] != "pre" and all(ev[s]["score"] != "" for s in order)
+    out = [{"name": ev[s]["name"], "abbr": ev[s]["abbr"], "logo": ev[s].get("logo") or "", "color": ev[s].get("color") or "",
+            "score": ev[s]["score"] if scored else ""} for s in order]
+    if out[0]["color"] and out[0]["color"] == out[1]["color"] and ev[order[1]].get("alt"):
+        out[1]["color"] = ev[order[1]]["alt"]
+    return out
+
+
 def parse_event(key, e):
     """One scoreboard event as the dict TunerBox keeps, or None (no teams, no start time yet)."""
     comp = (e.get("competitions") or [{}])[0]
@@ -147,7 +166,8 @@ def parse_event(key, e):
         teams[t.get("homeAway")] = {
             "id": str(tm.get("id") or t.get("id") or ""), "name": tm.get("displayName") or "", "short": tm.get("shortDisplayName") or "",
             "nick": tm.get("name") or "", "loc": tm.get("location") or "",
-            "abbr": tm.get("abbreviation") or "", "score": str(t.get("score") or "")}
+            "abbr": tm.get("abbreviation") or "", "score": str(t.get("score") or ""),
+            "logo": tm.get("logo") or "", "color": _color(tm.get("color")), "alt": _color(tm.get("alternateColor"))}
     start = _start(e.get("date"))
     st = (e.get("status") or {}).get("type") or {}
     state = st.get("state") or "pre"
@@ -406,5 +426,5 @@ def public(ev):
     if ev["state"] != "pre" and ev["home"]["score"] != "" and ev["away"]["score"] != "":
         score = f"{ev['away']['abbr']} {ev['away']['score']}, {ev['home']['abbr']} {ev['home']['score']}"
     return {"id": ev["id"], "league": tag, "league_name": name, "heading": HEADING.get(ev["league"], name),
-            "sport": sport, "name": title(ev), "fav": favorite_teams(ev),
+            "sport": sport, "name": title(ev), "fav": favorite_teams(ev), "teams": _sides(ev),
             "state": ev["state"], "detail": ev["detail"], "score": score, "on": ev["on"]}

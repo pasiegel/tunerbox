@@ -11,14 +11,17 @@ RESUME_MIN = 30             # seconds into a recording before it counts as start
 PROG_KEYS = ("title", "subtitle", "episode", "descr", "category", "start", "stop", "image", "is_live", "is_new", "rating")
 
 
-def _on_now(chans, now):
-    """Channel tiles with the show that's on now."""
+def _on_now(chans, now, games=None):
+    """Channel tiles with the show that's on now, and the scoreboard game it is (logos and score),
+    if `games` ({channel number: game}) has one for it."""
+    games = games or {}
     progs = epg.programs({c["epg"] for c in chans if c["epg"]}, now, now + 1)
     out = []
     for c in chans:
         p = next((x for x in progs.get(c["epg"], []) if x["start"] <= now < x["stop"]), None) if c["epg"] else None
         out.append({"number": c["number"], "name": c["name"], "label": c.get("label") or c["name"],
-                    "logo": c.get("logo") or "", "now": {k: p[k] for k in PROG_KEYS} if p else None})
+                    "logo": c.get("logo") or "", "now": {k: p[k] for k in PROG_KEYS} if p else None,
+                    "game": games.get(c["number"])})
     return out
 
 
@@ -47,14 +50,28 @@ def _continue(now):
     return items[:ROW]
 
 
-def _games(now):
-    """(your teams' games, other games): on now, and one of your channels or event feeds carries them.
-    Favorite teams are picked in Settings › Sports."""
+def _sports_now():
     try:
-        games = sports.overview("now").get("on_now", [])
+        return sports.overview("now").get("on_now", [])
     except Exception:  # noqa: BLE001 - the rest of Home still works without sports
         log.exception("Home: sports")
-        return [], []
+        return []
+
+
+def _by_channel(games):
+    """{channel number: scoreboard game} for the channels showing a game right now (its first
+    channel and the others that have it too), so a channel tile can show the score."""
+    out = {}
+    for g in games:
+        if g.get("event"):
+            for c in ([g["ch"]] if g.get("ch") else []) + (g.get("also") or []):
+                out.setdefault(c["number"], g["event"])
+    return out
+
+
+def _games(games):
+    """(your teams' games, other games): on now, and one of your channels or event feeds carries them.
+    Favorite teams are picked in Settings › Sports."""
     games = [g for g in games if g.get("ch") or (g.get("event") and g.get("feeds"))]
     fav = [g for g in games if g.get("event") and g["event"].get("fav")]
     return fav[:ROW], [g for g in games if not (g.get("event") and g["event"].get("fav"))][:ROW]
@@ -80,11 +97,13 @@ def overview(recent=()):
     now = int(time.time())
     favs = [int(n) for n in config.get("favorites") or []]
     recent = [n for n in recent if n not in favs]
-    team_games, games = _games(now)
+    on_now = _sports_now()
+    by_ch = _by_channel(on_now)
+    team_games, games = _games(on_now)
     rec_done = db.rows("""SELECT * FROM recordings WHERE status='done' AND file != '' ORDER BY start DESC LIMIT ?""", (ROW,))
     return {
-        "favorites": _on_now(_channels(favs)[:ROW], now),
-        "recent": _on_now(_channels(recent)[:ROW], now),
+        "favorites": _on_now(_channels(favs)[:ROW], now, by_ch),
+        "recent": _on_now(_channels(recent)[:ROW], now, by_ch),
         "continue": _continue(now),
         "teams": team_games,
         "sports": games,

@@ -78,3 +78,14 @@ def test_recordings_keep_the_shows_picture(monkeypatch):
     monkeypatch.setattr(guide, "channel", lambda n: _chan(n, "gn:4"))
     db.run("INSERT INTO programs(channel, start, stop, title, image) VALUES ('gn:4', 1000, 2800, 'News', 'https://i/n.jpg')")
     assert dvr.schedule_program(4, 1000)["image"] == "https://i/n.jpg"
+
+
+def test_channel_tiles_carry_the_game_they_show(monkeypatch):
+    _setup(monkeypatch)
+    ev = {"id": "nba:1", "name": "Detroit Pistons at Miami Heat", "score": "DET 92, MIA 88", "on": []}
+    monkeypatch.setattr(sports, "overview", lambda tab: {"on_now": [
+        {"title": "NBA Basketball", "ch": {"number": 7}, "also": [{"number": 4}], "event": ev, "feeds": []}]})
+    config.update({"favorites": [4]})
+    d = home.overview([7, 9])
+    assert d["favorites"][0]["game"] == ev                         # channel 4 has the game too
+    assert [(c["number"], c["game"]) for c in d["recent"]] == [(7, ev), (9, None)]

@@ -20,7 +20,11 @@ log = logging.getLogger("tunerbox.epg")
 
 GN_GRID = "https://tvlistings.gracenote.com/api/grid"
 GN_PROVIDERS = "https://tvlistings.gracenote.com/gapzap_webapi/api/Providers/getPostalCodeProviders/{country}/{zip}/gapzap/en-us"
-GN_IMG = "https://zap2it.tmsimg.com/assets/{}.jpg"
+# Gracenote's show pictures. zap2it.tmsimg.com no longer resolves; zpmc serves the same assets,
+# and ?w= asks for a smaller copy (the original is ~2 MB)
+GN_IMG = "https://zpmc.tmsimg.com/assets/{}.jpg"
+GN_IMG_W = 640
+_DEAD_IMG = re.compile(r"^https?://zap2it\.tmsimg\.com/", re.I)
 # The guide's genre filter. Gracenote's categories are a short fixed list; XMLTV guides send any text
 # ("Children", "Sports event", "Newsmagazine"), so match on words.
 GENRES = {"movies": ("movie", "film"), "sports": ("sport",), "news": ("news",),
@@ -502,4 +506,13 @@ def programs(channel_keys, start, stop):
 def image(channel_key, when):
     """Picture of the show on `channel_key` at time `when` (an address, or "")."""
     r = db.one("SELECT image FROM programs WHERE channel=? AND start<=? AND stop>?", (channel_key, when, when))
-    return (r["image"] or "").strip() if r else ""
+    return image_url((r["image"] or "").strip()) if r else ""
+
+
+def image_url(url):
+    """A show picture's address as it can be fetched: Gracenote's on the host that still works (a
+    guide downloaded earlier has the old one) and at a sensible size."""
+    url = _DEAD_IMG.sub("https://zpmc.tmsimg.com/", url)
+    if url.lower().startswith("https://zpmc.tmsimg.com/assets/") and "?" not in url:
+        url += f"?w={GN_IMG_W}"
+    return url

@@ -244,3 +244,11 @@ def test_channels_showing_a_genre(monkeypatch):
     assert c.get("/api/guide/genre?genre=sports&start=0&stop=9000").json() == [24, 60]
     assert c.get("/api/guide/genre?genre=news&start=5000&stop=9000").json() == []
     assert c.get("/api/guide/genre?genre=drama&start=0&stop=1").status_code == 400
+
+
+def test_gracenote_pictures_use_the_host_that_works():
+    from tunerbox import epg
+    assert epg.image_url("https://zap2it.tmsimg.com/assets/p1_b_v13_aq.jpg") == "https://zpmc.tmsimg.com/assets/p1_b_v13_aq.jpg?w=640"
+    assert epg.image_url("https://zpmc.tmsimg.com/assets/p1.jpg?w=55") == "https://zpmc.tmsimg.com/assets/p1.jpg?w=55"
+    assert epg.image_url("https://example.com/x.jpg") == "https://example.com/x.jpg"     # XMLTV pictures as given
+    assert epg.image_url("") == ""

@@ -103,12 +103,15 @@ async function homeLoad(first) {
 function hmTile(it, r, i) {
   const at = `data-r="${r}" data-i="${i}"`;
   if (it.t === "nav") return `<div class="hm-chip" ${at}>${esc(it.label)}</div>`;
-  let pic = "", logo = "", badge = "", live = false, title = "", sub = "", pct = 0, poster = false, tone = "", dimBadge = false, num = "";
+  let matchup = "", pic = "", logo = "", badge = "", live = false, title = "", sub = "", pct = 0, poster = false, tone = "", dimBadge = false, num = "";
   if (it.t === "chan") {
-    const p = it.now;
-    pic = p && p.image ? `/api/art/${it.number}/${p.start}` : "";
+    const p = it.now, e = it.game;
+    // a channel showing a game the scoreboard knows: its logos and score, like the Sports rows
+    matchup = e ? hmMatchup(e, p) : "";
+    pic = !matchup && p && p.image ? `/api/art/${it.number}/${p.start}` : "";
     logo = it.logo; badge = it.number;
     title = p ? p.title : it.name; sub = p ? [p.episode, p.subtitle].filter(Boolean).join(" · ") || it.label : "No information";
+    if (e) { title = e.heading || title; sub = e.name; }
     pct = p ? hmPct(p.start, p.stop) : 0; tone = it.name; num = String(it.number);
   } else if (it.t === "vod") {
     poster = true; pic = `/api/vod/poster/${vodPath(it.id)}`;
@@ -120,11 +123,13 @@ function hmTile(it, r, i) {
     badge = it.watched ? "WATCHED" : it.position > RESUME_MIN ? "" : "NEW"; dimBadge = !!it.watched; tone = it.title;
   } else if (it.t === "game") {
     const p = it.p, e = p.event, score = e && [e.score, e.detail].filter(Boolean).join(" · ");
-    pic = p.ch && p.image ? `/api/art/${p.ch.number}/${p.start}` : "";
+    matchup = hmMatchup(e, p);
+    pic = !matchup && p.ch && p.image ? `/api/art/${p.ch.number}/${p.start}` : "";
     live = !!p.is_live; badge = live ? "LIVE" : p.ch ? p.ch.number : "FEED";
     const [t, s] = spHeading(p);
     title = [sportEmoji(p), t].filter(Boolean).join(" ");
-    sub = [s, score].filter(Boolean).join(" · ") || (p.ch ? p.ch.label || p.ch.name : "Event feed");
+    // the matchup picture has the score on it already
+    sub = [s, !matchup && score].filter(Boolean).join(" · ") || (p.ch ? p.ch.label || p.ch.name : "Event feed");
     pct = hmPct(p.start, p.stop); tone = p.title;
   } else {            // sched (a recording to come) / remind / fail (one that didn't record)
     pic = it.t !== "remind" && it.art ? `/api/recordings/${it.id}/art` : `/api/art/${it.number}/${it.start}`;
@@ -132,12 +137,29 @@ function hmTile(it, r, i) {
     badge = live ? "● REC" : it.t === "fail" ? "FAILED" : it.conflict ? "⚠ CONFLICT" : it.t === "sched" ? "REC" : "REMIND"; dimBadge = it.t === "fail";
     title = it.title; sub = `${fmtWhen(it.start)} · ${it.number} ${it.channel_name || ""}`; tone = it.title;
   }
-  return `<div class="hm-tile t${odTone(String(tone || ""))}${poster ? " poster" : ""}${pic ? " art" : ""}" ${at}${num ? ` data-num="${esc(num)}"` : ""}>`
-    + (logo ? `<img class="logo" alt="" src="${esc(logo)}">` : num && !pic ? `<div class="big">${esc(num)}</div>` : "")
+  return `<div class="hm-tile t${odTone(String(tone || ""))}${poster ? " poster" : ""}${pic || matchup ? " art" : ""}" ${at}${num ? ` data-num="${esc(num)}"` : ""}>`
+    + matchup
+    + (logo ? `<img class="logo" alt="" src="${esc(logo)}">` : num && !pic && !matchup ? `<div class="big">${esc(num)}</div>` : "")
     + (pic ? `<img class="pic" loading="lazy" alt="" src="${esc(pic)}">` : "")
     + (badge !== "" ? `<span class="hm-badge${live ? " live" : dimBadge ? " dim" : ""}">${esc(badge)}</span>` : "")
     + `<div class="tx"><div class="n">${esc(title)}</div><div class="y">${esc(sub)}</div></div>`
     + (pct ? `<div class="bar"><i style="width:${pct}%"></i></div>` : "") + "</div>";
+}
+// a game the scoreboard knows: both teams' logos on their colours, split down the middle, and the
+// score between them once it has started (the leader brighter) with the clock under it. "" if it has
+// no logos, so the tile falls back to the guide's picture.
+function hmMatchup(e, p) {
+  const t = e && e.teams;
+  if (!t || t.length !== 2 || !t[0].logo || !t[1].logo) return "";
+  const col = (x, dflt) => (/^[0-9a-f]{6}$/i.test(x.color || "") ? `#${x.color}` : dflt);
+  const img = (x, side) => `<img class="mu-${side}" loading="lazy" alt="" src="${esc(x.logo)}">`;
+  const a = parseFloat(t[0].score), b = parseFloat(t[1].score), scored = t[0].score !== "" && t[1].score !== "";
+  const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
+  const mid = scored
+    ? `<span class="mu-sc">${sc(t[0], !(a < b))}<i>–</i>${sc(t[1], !(b < a))}</span>${e.detail ? `<small class="mu-clk">${esc(e.detail)}</small>` : ""}`
+    : `<span class="mu-vs">${e.sport === "Soccer" ? "vs" : "@"}</span>${p && p.start > now() ? `<small class="mu-clk">${esc(fmtTime(p.start))}</small>` : ""}`;
+  return `<div class="mu${scored ? " scored" : ""}" style="--l:${col(t[0], "#1d3a7a")};--r:${col(t[1], "#5a1f2a")}">${img(t[0], "l")}`
+    + `<div class="mu-mid">${mid}</div>${img(t[1], "r")}</div>`;
 }
 const HM_EMPTY = {
   loading: "Loading…",
@@ -180,6 +202,8 @@ function hmText(it) {
   else if (it.t === "chan") {
     const p = it.now;
     title = p ? p.title : it.name; sub = p ? [p.episode, p.subtitle].filter(Boolean).join("  ·  ") : "No information available";
+    const e = it.game;
+    if (e) { title = e.heading || title; sub = [e.name, e.score, e.detail].filter(Boolean).join("  ·  "); }
     meta = [`${it.number} ${it.label || it.name}`, p && `${fmtTime(p.start)} – ${fmtTime(p.stop)}`, p && p.category].filter(Boolean).join("  ·  ");
     desc = p ? p.descr || "" : "";
   } else if (it.t === "vod") {

@@ -240,7 +240,11 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .list li.sel .score { color: #000; }
 .list li .sp-s { margin-left: .4em; }
 .list li .sp-ic { display: inline-block; width: 1.3em; margin-right: .35em; text-align: center; }
-.list li .sp-fav { color: #ffd166; margin-right: .3em; }
+/* a favorite team's game: a gold edge and tint, and the star, which goes dark on the gold highlight */
+.list li.fav { box-shadow: inset .3em 0 0 var(--hl); background: #ffd23f1f; }
+.list li.fav.sel { background: var(--hl); box-shadow: inset .3em 0 0 #8a6400; }
+.list li .sp-fav { color: var(--hl); margin-right: .3em; font-size: 1.1em; }
+.list li.sel .sp-fav { color: #000; }
 .list li .sp-s::before { content: "· "; }
 .list li.nochan .sp-main, .list li.nochan .badge { opacity: .55; }
 .list li.sel .live-n { color: #a0001a; }
@@ -449,6 +453,21 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .hm-tile.t4 { background: var(--kids); } .hm-tile.t5 { background: #5a1f4a; } .hm-tile.t6 { background: var(--cell-now); } .hm-tile.t7 { background: #4a3a10; }
 .hm-tile .pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .hm-tile:not(.art) { background-image: linear-gradient(135deg, #ffffff24 0%, #ffffff00 55%); }   /* a soft sheen on plain tiles */
+/* a game: the two teams' logos on their colours (hmMatchup) */
+.hm-tile .mu { position: absolute; inset: 0; background: linear-gradient(105deg, var(--l) 0 49.6%, #fff3 49.6% 50.4%, var(--r) 50.4% 100%); }
+.hm-tile .mu::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 35%, #fff2 0%, #0000 45%, #0007 100%); }
+.hm-tile .mu img { position: absolute; top: 36%; width: 36%; height: 58%; object-fit: contain; transform: translate(-50%, -50%);
+  filter: drop-shadow(0 .12em .3em #000b); }
+.hm-tile .mu-l { left: 25%; } .hm-tile .mu-r { left: 75%; }
+.hm-tile .mu.scored img { width: 27%; height: 50%; } .hm-tile .mu.scored .mu-l { left: 16%; } .hm-tile .mu.scored .mu-r { left: 84%; }
+/* between the logos: "@" before the game, the score and clock during it */
+.hm-tile .mu-mid { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: .2em; }
+.hm-tile .mu-vs { padding: .12em .45em; border-radius: 999px; background: #000a; color: #fff; font-size: .8em; font-weight: 800; }
+.hm-tile .mu-sc { display: flex; align-items: baseline; gap: .25em; padding: .05em .45em; border-radius: .35em; background: #000b;
+  font-size: 1.55em; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
+.hm-tile .mu-sc b { color: #ffffffa6; } .hm-tile .mu-sc b.lead { color: #fff; }
+.hm-tile .mu-sc i { font-style: normal; font-size: .7em; color: #ffffff80; }
+.hm-tile .mu-clk { padding: .05em .4em; border-radius: 999px; background: #000a; color: var(--hl); font-size: .72em; font-weight: 700; white-space: nowrap; }
 .hm-tile .logo { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); max-width: 62%; max-height: 46%; object-fit: contain; }
 .hm-tile .big { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); font-size: 2.8em; font-weight: 800; color: #ffffffcc; letter-spacing: .02em; }
 .hm-tile.art .logo { display: none; }

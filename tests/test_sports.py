@@ -291,3 +291,22 @@ def test_team_list_is_kept(monkeypatch):
     assert scoreboard.teams("nfl") == want
     scoreboard._teams_mem.clear()                     # read back from the database, not downloaded again
     assert scoreboard.teams("nfl") == want and len(calls) == 1
+
+
+def test_public_game_has_both_teams_logos_and_colours():
+    raw = {"id": "7", "date": "2026-11-13T01:15Z", "status": {"type": {"state": "pre"}}, "competitions": [{"competitors": [
+        {"homeAway": "home", "team": {"id": "14", "displayName": "Miami Heat", "abbreviation": "MIA",
+                                      "logo": "http://l/mia.png", "color": "98002E", "alternateColor": "f9a01b"}},
+        {"homeAway": "away", "team": {"id": "8", "displayName": "Detroit Pistons", "abbreviation": "DET",
+                                      "logo": "http://l/det.png", "color": "#1d428a;x", "alternateColor": "c8102e"}}]}]}
+    teams = scoreboard.public(scoreboard.parse_event("nba", raw))["teams"]
+    # away first, as in "Detroit Pistons at Miami Heat"; a colour that isn't plain hex is dropped
+    assert teams == [{"name": "Detroit Pistons", "abbr": "DET", "logo": "http://l/det.png", "color": "", "score": ""},
+                     {"name": "Miami Heat", "abbr": "MIA", "logo": "http://l/mia.png", "color": "98002e", "score": ""}]
+    raw["competitions"][0]["competitors"][1]["team"]["color"] = "98002e"     # same colour: the home team uses its other one
+    teams = scoreboard.public(scoreboard.parse_event("nba", raw))["teams"]
+    assert [t["color"] for t in teams] == ["98002e", "f9a01b"]
+    raw["status"]["type"].update(state="in", shortDetail="Q3 5:21")
+    for c, sc in zip(raw["competitions"][0]["competitors"], ("88", "92")):
+        c["score"] = sc
+    assert [t["score"] for t in scoreboard.public(scoreboard.parse_event("nba", raw))["teams"]] == ["92", "88"]   # away, home

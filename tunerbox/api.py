@@ -985,7 +985,7 @@ def api_rec_progress(rid: int, position: float = Body(...), duration: float = Bo
 @app.get("/api/recordings/{rid}/art")
 async def api_rec_art(rid: int):
     r = await anyio.to_thread.run_sync(db.one, "SELECT image FROM recordings WHERE id=?", (rid,))
-    url = (r or {}).get("image") or ""
+    url = epg.image_url((r or {}).get("image") or "")
     if not url.lower().startswith(("http://", "https://")):
         raise HTTPException(404)
     path = await anyio.to_thread.run_sync(vod.small_image, url, ART_W)
@@ -1059,7 +1059,7 @@ def out_xmltv():
                        + (f'<desc>{escape(p["descr"])}</desc>' if p["descr"] else "")
                        + (f'<category>{escape(p["category"])}</category>' if p["category"] else "")
                        + (f'<episode-num system="onscreen">{escape(p["episode"])}</episode-num>' if p["episode"] else "")
-                       + (f'<icon src="{escape(p["image"])}"/>' if p["image"] else "")
+                       + (f'<icon src="{escape(epg.image_url(p["image"]))}"/>' if p["image"] else "")
                        + ("<new/>" if p["is_new"] else "") + "</programme>")
     out.append("</tv>")
     return Response("\n".join(out), media_type="application/xml")

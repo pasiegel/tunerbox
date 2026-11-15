@@ -228,7 +228,7 @@ function spGame(p, badge, until) {
   const fav = e && e.fav && e.fav.length ? `<span class="sp-fav" title="${esc(e.fav.join(", "))}">★</span>` : "";
   const html = `${badge}<span class="sp-main"><span class="sp-t">${fav}${sportIcon(p)}${esc(t)}</span>${s ? `<small class="sp-s">${esc(s)}</small>` : ""}</span>`
     + (score ? `<small class="score">${esc(score)}</small>` : "");
-  const cls = "game";
+  const cls = fav ? "game fav" : "game";       // a favorite team's game: marked whether or not it's highlighted
   const chans = gameChans(p).length, feeds = gameFeeds(p), more = chans + feeds.length - 1;
   if (p.ch) {
     const also = more > 1 ? ` + ${more} more` : feeds.length ? ` + ${feeds[0].kind === "ppv" ? "PPV" : "feed"}` : more > 0 ? " + 1 more" : "";
@@ -237,7 +237,7 @@ function spGame(p, badge, until) {
   }
   if (feeds.length) return { cls, html, right: esc(feeds[0].group || "Event feed") + (more > 0 ? ` + ${more} more` : ""), act: () => pickGame(p) };
   const on = e.on.length ? `on ${e.on.join(", ")}` : "";
-  return { cls: "game nochan", html, right: esc(on ? `${on} · no channel` : "no channel"),
+  return { cls: `${cls} nochan`, html, right: esc(on ? `${on} · no channel` : "no channel"),
            act: () => toast(`${e.name}: none of your channels or event feeds has it${on ? ` (it's ${on})` : ""}`, 4000) };
 }
 function spItems() {
