@@ -5,7 +5,7 @@ GitHub Actions builds the desktop app for you. No secrets or signing keys are ne
 | Workflow | When | What |
 |---|---|---|
 | **Checks** (`.github/workflows/ci.yml`) | every push and pull request | Python compiles, the server starts and answers, JavaScript syntax, version number. About a minute. |
-| **Build & release** (`.github/workflows/release.yml`) | pushing a tag like `v1.4.1`, or **Actions › Build & release › Run workflow** | Windows installer + portable zip, Mac `.dmg` (Apple Silicon), Linux `.tar.gz`, each with ffmpeg included. With a tag, it publishes them as a GitHub Release. |
+| **Build & release** (`.github/workflows/release.yml`) | pushing a tag like `v1.4.1`, pushing to `main` or `testing`, or **Actions › Build & release › Run workflow** | Windows installer + portable zip, Mac `.dmg` (Apple Silicon), Linux `.tar.gz`, each with ffmpeg included. With a tag, it publishes them as a GitHub Release (and the Docker image). Afterwards it updates the builds list (below). |
 
 ## One-time setup
 
@@ -36,7 +36,18 @@ git push -u origin main
 
 The tag sets the version: the workflow runs `python packaging/set_version.py 1.4.1` before building. To keep the file in the repo matching, run the same command yourself before tagging and commit the result.
 
-A test build without a release: **Actions › Build & release › Run workflow**. The files are under the run's **Artifacts**.
+A test build without a release: push to `main` or `testing`, or **Actions › Build & release › Run workflow**. The files are under the run's **Artifacts**.
+
+## The builds list
+
+Every build and release in one page: a gist with `builds.md`, written by `packaging/builds_page.py` at the end of each **Build & release** run. It shows the releases, and for each branch its recent commits with the Windows, macOS and Linux build of each (branch builds are named like `TunerBox-1.7.2-testing-5f0b230-windows-portable.zip`). Branch builds download as a zip from Actions, need a GitHub login, and expire after 90 days; releases don't.
+
+To set it up once:
+1. Create a gist (any content) and copy its ID from the address: `gist.github.com/<you>/<ID>`.
+2. Make a token that can only edit gists: **GitHub › Settings › Developer settings › Personal access tokens › Tokens (classic) › Generate new token**, tick only **gist**.
+3. In the repository, **Settings › Secrets and variables › Actions**: add the secret `BUILDS_GIST_TOKEN` (the token), and under **Variables** add `BUILDS_GIST_ID` (the ID).
+
+Without them the step is skipped. To see the page locally: `python packaging/builds_page.py` (set `GITHUB_TOKEN` to avoid GitHub's rate limit).
 
 ## What each build uses (all handled by the workflow)
 

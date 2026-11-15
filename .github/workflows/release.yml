@@ -1,12 +1,17 @@
 # Builds TunerBox for Windows, macOS and Linux, and (on a release tag) the Docker image.
 #   * Push a tag like v1.4.1  -> builds all three with that version and publishes a GitHub Release.
-#   * Actions tab > "Build & release" > Run workflow -> builds all three (downloadable artifacts, no release).
-# No secrets needed. See RELEASING.md.
+#   * Push to main or testing -> builds all three as downloadable artifacts (no release, no Docker image);
+#     the file names say the branch and commit, e.g. TunerBox-1.7.2-testing-5f0b230-windows-portable.zip.
+#   * Actions tab > "Build & release" > Run workflow -> the same, for any branch.
+# Afterwards the builds list (packaging/builds_page.py) is written to the gist in the BUILDS_GIST_ID
+# variable, using the BUILDS_GIST_TOKEN secret (a token with only the "gist" scope). Without them
+# that step is skipped; nothing else needs secrets. See RELEASING.md.
 name: Build & release
 
 on:
   push:
     tags: ["v*.*.*"]
+    branches: ["main", "testing"]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +20,8 @@ permissions:
 env:
   PYTHON_VERSION: "3.12"
   IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  # branch builds: "-<branch>-<commit>" goes after the version in the file names
+  BUILD_LABEL: ${{ !startsWith(github.ref, 'refs/tags/v') && format('-{0}-{1}', github.ref_name, github.sha) || '' }}
 
 jobs:
   # ------------------------------------------------------------------ Docker image (server only) -> GitHub Packages
@@ -93,6 +100,10 @@ jobs:
         run: |
           $v = python packaging/set_version.py --check
           Compress-Archive -Path dist/TunerBox/* -DestinationPath "dist/TunerBox-$v-windows-portable.zip"
+          if ($env:BUILD_LABEL) {
+            $label = $env:BUILD_LABEL.Substring(0, $env:BUILD_LABEL.Length - 33)   # keep 7 characters of the commit
+            Get-ChildItem dist -File | ForEach-Object { Rename-Item $_.FullName ($_.Name.Replace("-$v", "-$v$label")) }
+          }
           Get-ChildItem dist -File | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
@@ -130,6 +141,7 @@ jobs:
       - name: Make the .dmg
         run: |
           V=$(python packaging/set_version.py --check)
+          if [ -n "$BUILD_LABEL" ]; then V="$V${BUILD_LABEL::-33}"; fi   # keep 7 characters of the commit
           hdiutil create -volname TunerBox -srcfolder dist/TunerBox.app -ov -format UDZO "dist/TunerBox-$V-macos-arm64.dmg"
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -170,6 +182,7 @@ jobs:
       - name: Pack
         run: |
           V=$(python packaging/set_version.py --check)
+          if [ -n "$BUILD_LABEL" ]; then V="$V${BUILD_LABEL::-33}"; fi   # keep 7 characters of the commit
           tar -czf "dist/TunerBox-$V-linux-x64.tar.gz" -C dist TunerBox
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -199,3 +212,22 @@ jobs:
           generate_release_notes: true
           body_path: .github/release-notes.md
           fail_on_unmatched_files: true
+
+  # ------------------------------------------------------------------ builds list (gist)
+  builds-page:
+    needs: [windows, macos, linux, release]
+    if: ${{ always() && vars.BUILDS_GIST_ID != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write the builds list to the gist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIST_ID: ${{ vars.BUILDS_GIST_ID }}
+          GIST_TOKEN: ${{ secrets.BUILDS_GIST_TOKEN }}
+        run: |
+          if [ -z "$GIST_TOKEN" ]; then echo "::warning::No BUILDS_GIST_TOKEN secret: builds list not updated"; exit 0; fi
+          python packaging/builds_page.py --out builds.md
