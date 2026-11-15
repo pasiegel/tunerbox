@@ -81,7 +81,7 @@ EPISODE_RX = (re.compile(r"^(.*?)[\s._-]*\bS(\d{1,2})[\s._-]*E(\d{1,3})(?:[\s._-
 SEASON_DIR = re.compile(r"^(?:season|series|staffel|saison|temporada|s)[\s._-]*(\d{1,2})$", re.I)
 BARE_EP = re.compile(r"^(?:e|ep|episode)?[\s._-]*(\d{1,3})\b[\s._-]*(.*)$", re.I)
 
-TMDB = "https://api.themoviedb.org/3"
+TMDB = os.environ.get("TUNERBOX_TMDB_API", "https://api.themoviedb.org/3")      # can be pointed elsewhere for testing
 IMG = "https://image.tmdb.org/t/p/"
 GOOD_MATCH = 80             # an automatic match below this is listed under Needs review
 REFRESH_DAYS = 30           # details are downloaded again after this long
@@ -159,7 +159,8 @@ def parse_location(text):
 def location(sh):
     if sh["type"] == "folder":
         return sh["path"]
-    return "\\\\" + "\\".join(x for x in (sh["server"], sh["share"], sh["path"].replace("/", "\\")) if x)
+    server = sh["server"] + (f":{sh['port']}" if int(sh.get("port") or 445) != 445 else "")
+    return "\\\\" + "\\".join(x for x in (server, sh["share"], sh["path"].replace("/", "\\")) if x)
 
 
 class FS:
@@ -710,24 +711,24 @@ def _apply(t, tmdb_id, score, state):
         crew = [c.get("name") for c in d.get("created_by") or [] if c.get("name")]
     name = d.get("title") or d.get("name") or t["name"]
     votes = d.get("vote_count") or 0
-    runtime = (d.get("runtime") or 0) * 60 if kind == "movie" else 0
     from .vod import fold
+    # the length isn't taken from TMDB: your copy may be a different cut, and the player's seek bar needs the
+    # real one (measured from the file the first time it plays)
     db.run("""UPDATE vod_titles SET name=?, search=?, year=?, plot=?, genre=?, rating=?, actors=?, director=?, poster=?,
-              duration=CASE WHEN duration>0 THEN duration ELSE ? END, info_at=? WHERE id=?""",
+              info_at=? WHERE id=?""",
            (name, fold(name), _year_of(d) or t["year"], d.get("overview") or "",
             ", ".join(g["name"] for g in d.get("genres") or [] if g.get("name")),
             f"{d.get('vote_average') or 0:.1f}" if votes >= 5 else "", ", ".join(cast), ", ".join(crew),
-            IMG + "w500" + d["poster_path"] if d.get("poster_path") else "", runtime, int(time.time()), t["id"]))
+            IMG + "w500" + d["poster_path"] if d.get("poster_path") else "", int(time.time()), t["id"]))
     if kind == "series":
         seasons = [r["season"] for r in db.rows("SELECT DISTINCT season FROM vod_episodes WHERE title_id=?", (t["id"],))]
         for n in seasons:
             s = _tmdb(f"/tv/{tmdb_id}/season/{n}") or {}
             for e in s.get("episodes") or []:
-                db.run("""UPDATE vod_episodes SET name=CASE WHEN ?!='' THEN ? ELSE name END, plot=?, aired=?,
-                          duration=CASE WHEN duration>0 THEN duration ELSE ? END
+                db.run("""UPDATE vod_episodes SET name=CASE WHEN ?!='' THEN ? ELSE name END, plot=?, aired=?
                           WHERE title_id=? AND season=? AND episode=?""",
                        (e.get("name") or "", e.get("name") or "", e.get("overview") or "", e.get("air_date") or "",
-                        (e.get("runtime") or 0) * 60, t["id"], n, e.get("episode_number")))
+                        t["id"], n, e.get("episode_number")))
     now = int(time.time())
     db.run("""INSERT INTO lib_meta(title_id, tmdb_id, score, state, query, backdrop, fetched_at, tried_at)
               VALUES (?,?,?,?,?,?,?,?)

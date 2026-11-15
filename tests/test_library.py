@@ -222,7 +222,7 @@ def test_tmdb_details_for_movies(movies, tmdb):
     assert "Details for" in msg
     heat = db.one("SELECT * FROM vod_titles WHERE source_id=? AND year='1995'", (-sid,))
     assert heat["name"] == "Heat" and heat["plot"] == "Plot 949" and heat["director"] == "Michael Mann"
-    assert heat["rating"] == "8.2" and heat["genre"] == "Crime, Drama" and heat["duration"] == 170 * 60
+    assert heat["rating"] == "8.2" and heat["genre"] == "Crime, Drama" and heat["duration"] == 0      # measured when played
     assert heat["poster"] == "https://image.tmdb.org/t/p/w500/p949.jpg"
     dune = db.one("SELECT * FROM vod_titles WHERE source_id=? AND name LIKE 'Dune%'", (-sid,))
     assert dune["name"] == "Dune: Part Two"
@@ -265,7 +265,7 @@ def test_tmdb_for_shows(shows, tmdb):
     sev = db.one("SELECT * FROM vod_titles WHERE source_id=? AND name='Severance'", (-sid,))
     assert sev["plot"] == "Work-life balance." and sev["director"] == "Dan Erickson"
     eps = vod.title(sev["id"])["episodes"]
-    assert [(e["episode"], e["name"], e["duration"]) for e in eps] == [(1, "Good News About Hell", 57 * 60), (4, "Woe's Hollow", 50 * 60)]
+    assert [(e["episode"], e["name"], e["plot"]) for e in eps] == [(1, "Good News About Hell", "Mark."), (4, "Woe's Hollow", "Outdoors.")]
 
 
 def test_settings_hide_key():

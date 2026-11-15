@@ -10,6 +10,7 @@ A personal IPTV "cable box": your local cable channel numbers and guide (pick yo
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
 * **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB.
 * **On Demand.** Movies and TV shows that come with your playlist, each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
+* **Local library.** Your own movies and TV shows in On Demand, read straight from your NAS over the network (SMB, no mount needed) or from a folder, with details and posters from TMDB. Nothing is written next to your files.
 * **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
 
 ## Getting started
@@ -140,6 +141,20 @@ Turn folders of videos into channels that play around the clock, like ErsatzTV o
 Tuning in joins whatever is "on", like real TV. Titles, seasons and episodes come from file names such as `Show - S01E02 - Title.mkv` or `Show.S01E02.Title.1080p.mkv`. Samples and trailers are skipped. Use **Re-read folders** after adding new files.
 
 Every file is converted to one common format while it plays (H.264 + AAC, with black bars as needed), so mixed libraries play smoothly from one file to the next. This uses some CPU on the PC; choose 720p under **Settings › Local channels picture size** for less. The PC running TunerBox needs access to the network share; if the share needs a password, open it once in File Explorer and tick "Remember my credentials".
+
+## Local library (your own movies and TV shows)
+Setup › **Local library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
+
+1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **network location** (`\\nas\Media\Movies` or `smb://192.168.1.20/Media/Movies`) and the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
+2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand.
+3. For details and posters, get a free key at themoviedb.org (Settings › API), paste the *API Key* or *API Read Access Token* under **Details and posters (TMDB)** and **Save**.
+4. Check **Matches** › *Needs review*: **Fix** searches TMDB so you can pick the right title (kept through rescans), **Leave out** hides a file.
+
+* **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming files or folders is safe; a renamed folder is looked up again.
+* **Naming:** movies as `Dune Part Two (2024)/anything.mkv` or `Dune Part Two (2024).mkv` (scene names like `Dune.Part.Two.2024.2160p.WEB-DL.mkv` work too); shows as `Show/Season 01/Show - S01E02 - Title.mkv` (`1x02` and `Season 2/04 - Title.mkv` work too). Samples, trailers and `Extras` folders are skipped.
+* **Network shares** are read with a built-in SMB2/3 client, so Docker doesn't need the share mounted. A plain folder path (`/media/Movies`, `D:\Movies`) works too.
+* **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
+* **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
 
 ## HDHomeRun antenna tuner
 Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a playlist › Type: HDHomeRun antenna tuner**, then **Find tuners on my network** (or type its IP address) and **Add**.

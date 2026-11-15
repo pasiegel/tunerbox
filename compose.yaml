@@ -12,6 +12,7 @@ services:
     volumes:
       - tunerbox-data:/data                  # settings.json, tunerbox.db, recordings/, logs
       # To keep it as a plain folder you can edit instead:  - ./tunerbox-data:/data
+      # Local library (Setup › Local library) reads your NAS shares over the network itself: no mount needed.
       # Local channels (your own videos), read-only; then use /media/... as the folder in Setup:
       # - /path/to/videos:/media:ro
     # HDHomeRun auto-discovery uses a UDP broadcast, which doesn't cross Docker's bridge network.
