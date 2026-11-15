@@ -121,24 +121,25 @@ def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path)
 
 
 def test_nas_server_lets_home_network_pair_until_locked(monkeypatch):
-    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network stands in
-    for it until the lock is on. The pairing link uses the address the browser used, not the container's."""
+    """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network may pair
+    phones until the lock is on. It doesn't get the other PC-only powers. The pairing link uses the
+    address the browser used, not the container's."""
     from fastapi.testclient import TestClient
     lan = TestClient(api.app, client=("192.168.10.50", 5000), base_url="http://192.168.10.9:8642")
     assert lan.post("/api/pair/start").status_code == 403           # a desktop install: only the PC itself
     monkeypatch.setenv("TUNERBOX_TRUST_LAN", "1")
     me = lan.get("/api/me").json()
-    assert me["pc"] and me["manage"] and me["server"]
+    assert me["manage"] and me["server"] and not me["pc"]
+    assert lan.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403     # still PC-only
+    assert lan.get("/api/sources/export").status_code == 403                            # logins stay put
     r = lan.post("/api/pair/start")
     assert r.status_code == 200 and r.json()["address"] == "http://192.168.10.9:8642/pair"
-    code = r.json()["code"]
     phone = TestClient(api.app, client=("192.168.10.77", 5000), base_url="http://192.168.10.9:8642")
-    assert phone.post("/api/pair/complete", json={"code": code, "name": "Pixel"}).status_code == 200
-    config.update({"require_pairing": True})
-    assert lan.post("/api/pair/start").status_code == 403           # locked: not any more
-    assert lan.post("/api/settings", json={"require_pairing": False}).status_code == 403
-    assert phone.get("/api/me").json()["pc"]                        # the paired phone can still manage it
+    assert phone.post("/api/pair/complete", json={"code": r.json()["code"], "name": "Pixel"}).status_code == 200
+    assert phone.post("/api/settings", json={"require_pairing": True}).status_code == 200   # paired: may lock
+    assert phone.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403      # but nothing else PC-only
+    assert lan.post("/api/pair/start").status_code == 403           # locked: the home network can't pair now
+    assert phone.post("/api/pair/start").status_code == 200         # the paired phone still can
     assert phone.post("/api/settings", json={"require_pairing": False}).status_code == 200
     outside = TestClient(api.app, client=("8.8.8.8", 5000))
-    config.update({"require_pairing": False})
-    assert not outside.get("/api/me").json()["pc"]                 # only private addresses count
+    assert not outside.get("/api/me").json()["manage"]              # only private addresses count

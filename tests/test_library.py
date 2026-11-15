@@ -293,3 +293,13 @@ def test_api_add_scan_and_review(movies, monkeypatch, tmp_path):
     assert len(c.get("/api/library/titles?filter=all").json()) == 5
     r = c.post("/api/library/settings", json={"tmdb_key": "", "language": "en-GB"})
     assert r.json()["language"] == "en-GB" and not r.json()["tmdb_key_set"]
+
+
+def test_saved_password_not_sent_to_a_new_server():
+    sid = library.add({"kind": "movie", "location": r"\\nas\Media", "username": "u", "password": "secret"})
+    with pytest.raises(ValueError):          # someone points it at another machine to collect the login
+        library.update(sid, {"location": r"\\evil\Media"})
+    with pytest.raises(ValueError):
+        library.clean({"location": r"\\evil\x", "kind": "movie"}, library.share(sid))
+    library.update(sid, {"location": r"\\nas\Media\Movies"})    # same server, other folder: kept
+    assert library.share(sid)["password"] == "secret"

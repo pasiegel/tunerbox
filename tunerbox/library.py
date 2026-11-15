@@ -328,6 +328,12 @@ def clean(data, old=None):
             d.update(type="folder", server="", share="", path=path)
     if old and not data.get("password"):
         d["password"] = old["password"]
+        # never send the saved password to a different server: a changed location needs it typed again
+        moved = any(str(d.get(k) or "") != str(old.get(k) or "") for k in ("type", "server", "port"))
+        if moved and old["password"]:
+            d["password"] = ""
+            if d.get("username"):
+                raise ValueError("Enter the password again for the new server")
     d["name"] = str(d.get("name") or "").strip()[:60]
     d["kind"] = d.get("kind") if d.get("kind") in KINDS else ""
     d["type"] = "folder" if d.get("type") == "folder" else "smb"

@@ -8,8 +8,9 @@
   * Optional lock ("require_pairing"): only this PC and paired phones can change setup. Watching TV
     stays open to every device on the network, so the iPad, Android app and Plex keep working.
   * On a server with no screen of its own (Docker on a NAS: TUNERBOX_TRUST_LAN=1, set by the image),
-    nobody ever browses from "this PC". There, any device on the home network counts as this PC until
-    the lock is turned on; after that, only paired phones and browsers.
+    nobody ever browses from "this PC". There, any device on the home network may pair phones (and
+    browsers) until the lock is turned on; paired devices may also turn the lock on and off. Everything
+    else that needs "this PC" stays that way.
 """
 import asyncio
 import hashlib
@@ -75,12 +76,28 @@ def is_pc(request):
             a = a.ipv4_mapped
     except ValueError:
         return False
-    if a.is_loopback or str(a) in local_ips():
-        return True
-    if not trust_lan():
+    return a.is_loopback or str(a) in local_ips()
+
+
+def _home_network(request):
+    host = request.client.host if request.client else ""
+    try:
+        a = ipaddress.ip_address(host.split("%")[0])
+        if a.version == 6 and a.ipv4_mapped:
+            a = a.ipv4_mapped
+    except ValueError:
         return False
-    # a server: the home network until the lock is on, then paired phones and browsers
-    return (a.is_private and not a.is_link_local and not _locked()) or device(request) is not None
+    return a.is_private and not a.is_link_local
+
+
+def can_pair(request):
+    """Who may pair phones and see the paired list: this PC and paired devices; on a server without a
+    screen (TUNERBOX_TRUST_LAN), also any browser on the home network until the lock is turned on.
+    Deliberately narrower than is_pc: PC-only settings (ffmpeg, folders, port) and exporting logins
+    still need this PC or a paired device."""
+    if trusted(request):
+        return True
+    return trust_lan() and not _locked() and _home_network(request)
 
 
 def trust_lan():

@@ -297,7 +297,7 @@ def _check_value(key, value, default):
     raise ValueError(f"{key}: expected {type(default).__name__}, got {type(value).__name__}")
 
 
-def clean_changes(changes: dict, from_pc: bool) -> dict:
+def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
     """Check settings sent by a page before saving them. Unknown keys and wrong types are refused
     (ValueError); PC-only settings from another device are refused if they would change (PermissionError).
     Unchanged PC-only values are dropped, so a phone can still save the whole Settings form."""
@@ -317,7 +317,7 @@ def clean_changes(changes: dict, from_pc: bool) -> dict:
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
-        if k in PC_ONLY and not from_pc:
+        if k in PC_ONLY and not from_pc and k not in allow:
             if v == cur.get(k):
                 continue
             raise PermissionError(f"'{k}' can only be changed on the TunerBox PC")

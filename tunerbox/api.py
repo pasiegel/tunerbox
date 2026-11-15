@@ -607,7 +607,9 @@ def api_settings():
 @app.post("/api/settings")
 def api_save_settings(request: Request, data: dict = Body(...)):
     try:
-        data = config.clean_changes(data, from_pc=remote.is_pc(request))
+        # a NAS has no "PC": there a paired device may turn the setup lock on and off (nothing else PC-only)
+        allow = {"require_pairing"} if remote.trust_lan() and remote.device(request) else set()
+        data = config.clean_changes(data, from_pc=remote.is_pc(request), allow=allow)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
@@ -640,8 +642,8 @@ def _pc_only(request: Request):
 
 
 def _manager(request: Request):
-    """Pairing and the paired-phone list: this PC, or a phone or browser that's already paired."""
-    if not remote.trusted(request):
+    """Pairing and the paired-phone list (see remote.can_pair)."""
+    if not remote.can_pair(request):
         raise HTTPException(403, "Only on the TunerBox PC or a paired phone")
 
 
@@ -654,7 +656,7 @@ def _trusted(request: Request):
 def api_me(request: Request):
     d = remote.device(request)
     return {"pc": remote.is_pc(request), "paired": bool(d), "name": d["name"] if d else None,
-            "manage": remote.trusted(request), "server": remote.trust_lan(),
+            "manage": remote.can_pair(request), "server": remote.trust_lan(),
             "require_pairing": bool(config.get("require_pairing"))}
 
 

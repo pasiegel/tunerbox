@@ -1102,9 +1102,9 @@ loaders.phones = async () => {
   const me = await api("/api/me");
   $("lock-setup").checked = !!me.require_pairing;
   // on a NAS (Docker) any browser at home counts as the TunerBox PC until the lock is on; then paired ones do
-  $("lock-setup").disabled = !me.pc;
-  $("lock-hint").textContent = me.server && !me.paired && !me.require_pairing
-    ? "Before turning this on, pair this browser too (open /pair here with a code), or only your phones will be able to change setup." : "";
+  $("lock-setup").disabled = !(me.pc || (me.server && me.paired));
+  $("lock-hint").textContent = me.server && !me.paired
+    ? "To turn this on, first pair this browser (Pair a phone, then open /pair here and enter the code)." : "";
   $("pair-start").classList.toggle("hidden", !me.manage);
   $("pair-pconly").classList.toggle("hidden", me.manage);
   if (me.manage) renderDevices(await api("/api/devices"));
