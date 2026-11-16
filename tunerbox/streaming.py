@@ -45,6 +45,21 @@ def ffmpeg_bin():
     return path
 
 
+_options = {}
+
+
+def has_option(name):
+    """Does this ffmpeg know the option -name? (Read once per ffmpeg from `ffmpeg -h full`.)"""
+    exe = ffmpeg_bin()
+    if exe not in _options:
+        try:
+            _options[exe] = subprocess.run([exe, "-hide_banner", "-h", "full"], capture_output=True, text=True,
+                                           errors="replace", timeout=20, creationflags=NO_WINDOW).stdout
+        except (OSError, subprocess.SubprocessError):
+            _options[exe] = ""
+    return f"\n-{name} " in _options[exe]
+
+
 def _make_job():
     """Windows job object: every ffmpeg we start is killed when TunerBox exits,
     even if it crashes or is force-closed."""

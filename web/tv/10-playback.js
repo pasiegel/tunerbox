@@ -285,7 +285,7 @@ async function showBanner(full = false) {
     const p = d.now;
     if (p) {
       $("b-title").textContent = p.title || ch.name;
-      $("b-flags").innerHTML = flags(p);
+      $("b-flags").innerHTML = flags(p) + (cuAvailable(ch, p) ? '<span class="flag cu" title="Press S to start over">&#8634; START OVER: S</span>' : "");
       $("b-sub").textContent = [p.episode, p.subtitle].filter(Boolean).join("  ·  ");
       $("b-time").textContent = `${fmtTime(p.start)} – ${fmtTime(p.stop)}`;
       $("b-progress").style.width = `${Math.min(100, (now() - p.start) / (p.stop - p.start) * 100)}%`;

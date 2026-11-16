@@ -75,6 +75,7 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .flag.rec { background: var(--red); }
 .flag.cc { background: transparent; box-shadow: inset 0 0 0 1px var(--c-fg-40); color: var(--dim); }
 .flag.remind { background: #e0a800; color: #1a1300; }
+.flag.cu { background: var(--hl); color: var(--hl-text); }
 
 /* reminder pop-up: flashes its border until answered */
 #reminder { position: absolute; right: 3vw; top: 6vh; z-index: 65; width: min(34em, 90vw); background: var(--surface); backdrop-filter: blur(14px);
@@ -160,6 +161,10 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .g-p.empty { background: var(--c-bg3); color: var(--dim); font-weight: 400; }
 .g-p .t { overflow: hidden; text-overflow: ellipsis; }
 .g-p .dot { color: var(--red); font-size: .9em; }
+.g-p.past:not(.sel) { color: var(--dim); }
+.g-p.past.cu:not(.sel) { color: inherit; }
+.g-p .cu-i { color: var(--hl); font-weight: 700; }
+.g-p.sel .cu-i { color: inherit; }
 .g-p.sel { background: var(--hl) !important; color: var(--hl-text); z-index: 1; }
 .g-p.dim:not(.sel) { background: var(--c-bg3); color: var(--c-t6); font-weight: 400; border-left-color: transparent; }   /* genre filter: other genres, like an empty cell */
 .g-genre { margin-right: .5em; color: var(--hl); background: var(--cell-now); padding: 0 .4em; border-radius: .35em; font-weight: 700; cursor: pointer; }

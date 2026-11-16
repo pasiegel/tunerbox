@@ -757,19 +757,19 @@ def prepare(item_id):
     return it
 
 
-def stream_cmd(raw_url, start=0.0, mode=None):
+def stream_cmd(raw_url, start=0.0, mode=None, pace=None):
     """ffmpeg command for a title from `start` seconds in: read at playing speed (a file would
-    otherwise arrive all at once), MPEG-TS out like a live channel."""
+    otherwise arrive all at once; `pace` = other reading options), MPEG-TS out like a live channel."""
     inp, vid, aud = play_args(raw_url, mode)
     seek = ["-ss", f"{start:.2f}"] if start > 0 else []
-    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-re", *seek, *inp,
+    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or ["-re"]), *seek, *inp,
             "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn", *vid, *aud,
             "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
 
 
-def hls_pre(start=0.0):
+def hls_pre(start=0.0, pace=None):
     """Input options for the HLS output (iPad/iPhone): the same speed limit and start time."""
-    return ["-re"] + (["-ss", f"{start:.2f}"] if start > 0 else [])
+    return (pace or ["-re"]) + (["-ss", f"{start:.2f}"] if start > 0 else [])
 
 
 def _title_of(item_id):

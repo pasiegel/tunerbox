@@ -92,6 +92,7 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | ▲ on the first channel, then ◀ ▶ (or C) | | filter by genre: All, Movies, Sports, News, Kids |
 | R | record current show | record options |
 | L / Backspace | last channel | back |
+| S | start the show over ([catch-up](#catch-up-tv) channels) | |
 | D | recordings | |
 | / | search | search |
 | T | Sports & Events | Sports & Events |
@@ -127,6 +128,19 @@ Recordings remember where you stopped, on the server, so any screen can **Resume
 
 ## Guide genre filter
 In the guide, press **▲** on the first channel to highlight the genre picker next to the date, then **◀ ▶** to pick **All, Movies, Sports, News or Kids**; **OK** or **▼** goes back to the channels. That needs only the arrows and OK, so it works with any remote. **C** on a keyboard steps through the genres too (or give it a button of its own in **Remote control setup**: *Guide: filter by genre*), and on a touch screen you tap the day at the top left. Only channels with a show of that genre on in the hours shown are listed, and their other shows are dimmed; moving through time updates the list. It works with the Favorites guide too (V). Genres come from the guide's categories, so channels whose guide has none never show up in a filter.
+
+## Catch-up TV
+Some providers keep an archive of what their channels showed in the last few days: catch-up, also called timeshift or replay. TunerBox reads it from the playlist and shows it in the guide. No setup is needed.
+
+* **Xtream logins:** channels the provider marks with an archive (`tv_archive`), with the number of days it keeps.
+* **M3U playlists:** the `catchup`, `catchup-days` and `catchup-source` attributes (as in Kodi and TiviMate: `default`, `append`, `shift`, `flussonic` and `xc`), or the older `timeshift` / `tvg-rec`.
+
+On a channel with catch-up:
+
+* **Start over:** press **S** while watching (or Menu › **Start this show over**, or **Start over** under **More** on the on-screen controls) to watch the show on now from the beginning. The info banner shows **↺ START OVER: S**.
+* **Watch shows that already aired:** in the guide, **◀** goes back as far as the archive does. Shows you can still watch have a **↺**. OK on one gives **Watch (catch-up)**; on the show on now, **Start over**.
+
+A catch-up show plays in the On Demand player: OK pauses, **◀ ▶** move a minute (the archive starts on the minute), PgUp/PgDn 5 minutes, and Back returns to live TV. It uses one of the provider's connections, like a live channel. Only the channels the provider keeps an archive for have it. With a big provider that is often a few hundred channels, mostly UK and European ones. The guide keeps past listings for those channels for as long as their archive.
 
 ## Themes
 **Setup › Settings › Screens › Theme** sets the colours for every TV screen, Setup and the phone remote: **Midnight** (the default), **Classic Blue**, **Retro 90s**, **High Contrast** and **Light**. A TV screen can pick its own in **Menu › Theme** (kept in that browser); *Use the default* follows Setup again. Light is for Setup and the phone remote: TV screens stay dark with it, since their text sits on pictures and video.

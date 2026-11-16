@@ -16,7 +16,7 @@ def invalidate():
 
 def _build():
     streams = {s["key"]: s for s in db.rows(
-        """SELECT s.key, s.name, s.tvg_id, s.logo, s.norm, s.status, s.grp FROM streams s
+        """SELECT s.key, s.name, s.tvg_id, s.logo, s.norm, s.status, s.grp, s.archive_days FROM streams s
            JOIN sources src ON src.id=s.source_id WHERE src.enabled=1""")}
     epg_chans = {r["channel"] for r in db.rows("SELECT DISTINCT channel FROM programs")}
     by_name = {}
@@ -47,6 +47,7 @@ def _build():
             "kind": "lineup", "streams": keys, "mapped": bool(keys),
             "mode": m["mode"] if m else "",
             "epg": gn if gn in epg_chans else epg_for_stream(s),
+            "catchup": _catchup(streams, keys),
         })
     extras = db.rows("SELECT * FROM extras WHERE active=1 AND enabled=1 ORDER BY number") if config.get("extras_enabled", True) else []
     for e in extras:
@@ -57,6 +58,7 @@ def _build():
             "number": e["number"], "name": s["name"], "label": _label(s["name"]),
             "logo": s["logo"], "kind": "extra", "group": s["grp"], "streams": [s["key"]],
             "mapped": True, "mode": "extra", "epg": epg_for_stream(s),
+            "catchup": _catchup(streams, [s["key"]]),
         })
     taken = {c["number"] for c in out}
     for m in db.rows("SELECT * FROM media_channels WHERE enabled=1 ORDER BY number"):
@@ -69,6 +71,11 @@ def _build():
         })
     out.sort(key=lambda c: c["number"])
     return out
+
+
+def _catchup(streams, keys):
+    """Days of catch-up the channel has: those of the first of its streams with an archive (0 = none)."""
+    return next((streams[k]["archive_days"] for k in keys if (streams[k]["archive_days"] or 0) > 0), 0)
 
 
 def _label(name):
