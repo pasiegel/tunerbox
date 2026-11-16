@@ -508,7 +508,9 @@ function vodStart(at) {
   if (v.it.catchup) at = Math.floor(at / 60) * 60;      // the archive starts on the minute
   v.base = at; v.target = null; v.parked = false; v.paused = false;
   destroyPlayer(); hideStatic();
-  const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`;
+  const key = `v:${v.it.id}`, mode = h264Keys.has(key) ? "h264" : "";
+  const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`
+    + (mode && !hls ? `&mode=${mode}` : "");
   const fail = () => { if (S.vod === v) vodDropped(); };
   const started = (pr, mine) => { if (pr && pr.catch) pr.catch((e) => { if (e && e.name === "NotAllowedError" && mine()) showTapPlay(); }); };
   if (useHls()) {
@@ -524,7 +526,10 @@ function vodStart(at) {
         autoCleanupSourceBuffer: true, liveBufferLatencyChasing: false });
     S.player = p;
     p.attachMediaElement(video);
-    p.on(mpegts.Events.ERROR, (type, detail) => { if (S.player === p) { console.warn("player error", type, detail); fail(); } });
+    const codecErr = codecFallback(p, key, mode, () => S.vod === v && vodStart(at));
+    p.on(mpegts.Events.ERROR, (type, detail) => {
+      if (S.player === p) { console.warn("player error", type, detail); if (!codecErr(type)) fail(); }
+    });
     // the stream ended: the end of the title, or the provider dropped the connection (vodEnded tells which)
     p.on(mpegts.Events.LOADING_COMPLETE, () => {
       if (S.player !== p) return;
