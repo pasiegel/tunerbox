@@ -57,7 +57,7 @@ The PC running TunerBox does the tuning, guide and DVR, and must be on for the o
 
 iPhone/iPad Safari plays the server's HLS output (`/api/hls/<number>`); other browsers use MPEG-TS over Media Source Extensions.
 
-On a phone the TV screen switches to a touch layout: bigger buttons, panels that fit the screen and a **Close** button to leave the guide or a menu. Tap the picture to show or hide the buttons and swipe up or down to change channel. On an iPhone, **FULL** opens the video in Safari's own player.
+On a phone the TV screen switches to a touch layout: bigger buttons, panels that fit the screen and a **Close** button to leave the guide or a menu. Tap the picture to show or hide the controls (see [On-screen controls](#on-screen-controls)) and swipe up or down to change channel. Held upright, the top buttons show a small label under each icon so they all fit. On an iPhone, the full-screen button opens the video in Safari's own player.
 
 Roku and other slow devices: set a playlist's **Video** to *Re-encode to 720p*, or add `?mode=roku720` to a stream URL (`http://<pc-ip>:8642/api/stream/<number>?mode=roku720`). It deinterlaces, caps the picture at 720p and the bitrate at 8 Mbps.
 
@@ -102,12 +102,18 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 
 **Using a real remote:** open **Menu › Remote control setup** on the device the remote is paired with. Highlight an action, press OK, then press the remote button. Any key a remote sends works, including odd codes, media keys and color buttons. Game controllers and gamepad-style Bluetooth remotes work too. Mappings are saved per device; **Save as default for all devices** stores them on the server. Arrow keys, Enter and Esc always work on that screen, so you can't lock yourself out.
 
-Mouse and touch also work. Click the video for the banner, move the mouse for an on-screen remote, and swipe up/down to change channel.
+### On-screen controls
+Mouse and touch also work. Move the mouse (or tap the picture) for the on-screen controls; click the video for the banner; swipe up/down to change channel.
+
+* **Top:** **Home**, **Guide**, **On Demand**, **Sports & Events** and **Search**, plus full screen on the right.
+* **Bottom:** what's on, then channel up/down, **Last**, **Info**, **Favorite** and **Record**, the volume, **Menu**, and **More** (⋯) for **Recordings** and the **Favorites guide**.
+
+Buttons for features that are off (On Demand, Recordings, Home) are left out. On a phone the bottom buttons are icons only; on a tablet held upright they wrap onto a second row.
 
 **Watching a recording:** Space/OK pause, ← → skip back 10 s / ahead 30 s, PgUp/PgDn 5 minutes. **I** shows the recording's info (episode, when it was recorded, description, how much you've watched), **G** opens the guide over it (closing the guide goes back to the recording, picking a channel switches to live TV), Back hides the info or stops, **S** stops.
 
 ## Home
-When the TV turns on it opens on **Home**, with the last channel playing in the corner. Press **H** (or the remote's Home button, **Menu › Home**, or HOME on the on-screen and phone remotes) to get back to it from anywhere; Back or H again returns to full-screen TV.
+When the TV turns on it opens on **Home**, with the last channel playing in the corner. Press **H** (or the remote's Home button, **Menu › Home**, or **Home** on the on-screen controls and the phone remote) to get back to it from anywhere; Back or H again returns to full-screen TV.
 
 Home has shortcuts (Guide, On Demand, Sports, Recordings, Search, Menu) and then rows, each shown only when it has something in it:
 * **★ Favorites on now** and **Recent channels** (the ones this screen tuned to): what's on, with the show's picture and how far in it is. OK tunes; * adds or removes a favorite.
@@ -121,6 +127,9 @@ Recordings remember where you stopped, on the server, so any screen can **Resume
 
 ## Guide genre filter
 In the guide, press **▲** on the first channel to highlight the genre picker next to the date, then **◀ ▶** to pick **All, Movies, Sports, News or Kids**; **OK** or **▼** goes back to the channels. That needs only the arrows and OK, so it works with any remote. **C** on a keyboard steps through the genres too (or give it a button of its own in **Remote control setup**: *Guide: filter by genre*), and on a touch screen you tap the day at the top left. Only channels with a show of that genre on in the hours shown are listed, and their other shows are dimmed; moving through time updates the list. It works with the Favorites guide too (V). Genres come from the guide's categories, so channels whose guide has none never show up in a filter.
+
+## Themes
+**Setup › Settings › Screens › Theme** sets the colours for every TV screen, Setup and the phone remote: **Midnight** (the default), **Classic Blue**, **Retro 90s**, **High Contrast** and **Light**. A TV screen can pick its own in **Menu › Theme** (kept in that browser); *Use the default* follows Setup again. Light is for Setup and the phone remote: TV screens stay dark with it, since their text sits on pictures and video.
 
 ## Favorites
 Star the channels you watch most, then see just those in the guide.
@@ -182,15 +191,17 @@ Xtream accounts usually allow only 1 or 2 streams at once, and an HDHomeRun has 
 ## Phone remote
 Pair a phone once and use it as the remote for any TunerBox screen (the PC window, a browser on the TV, the iPad), or to manage playlists from the sofa.
 
-1. On the PC open **Setup › Phones › Pair a phone** (or on the TV screen: **Menu › Use a phone as the remote**).
+1. On the PC open **Setup › Phones › Pair a phone** (or on the TV screen: **Menu › Use a phone as the remote**). On Docker or a NAS, open Setup from any browser at home.
 2. Scan the QR code with the phone's camera, or open the address shown and type the 6-digit code. The code lasts 5 minutes.
 3. The phone opens the remote: D-pad, OK, Guide, Menu, channel and volume, number pad, plus **Channels**, **Search** and **Sports** lists you tap to tune. **Add to Home Screen** makes it an app icon.
 
 The phone must be on the same Wi-Fi. If several screens are on, pick one at the top. Paired phones are listed under Setup › Phones, where you can rename or remove them. Only a hash of each phone's key is stored.
 
-**Lock setup** (Setup › Phones): only the PC and paired phones can change playlists, channels and settings, delete recordings, or see a channel's original stream address (it can contain your provider login). Watching TV and scheduling recordings stay open to every device on the network, so other TVs, tablets and Plex keep working.
+**On Docker or a NAS** there's no screen of its own, so nobody browses from "the PC". Until setup is locked, any browser on your home network counts as the PC: it can pair phones, change every setting and add folders on the server. The QR code and link use the address that browser opened TunerBox with. Pair the browser you use for Setup too (Pair a phone, then open `/pair` in that browser and type the code), so it can still change things once the lock is on.
 
-Whether or not setup is locked, the settings that name a program or a place on disk (ffmpeg path, recordings folder, lineup CSV, guide files on disk, port) can only be changed on the PC itself.
+**Lock setup** (Setup › Phones): only the PC and paired phones can change playlists, channels and settings, delete recordings, or see a channel's original stream address (it can contain your provider login). Watching TV and scheduling recordings stay open to every device on the network, so other TVs, tablets and Plex keep working. Turning the lock on or off needs the PC or a paired device, so whoever turns it on can still get in.
+
+Whether or not setup is locked, the settings that name a program or a place on disk (ffmpeg path, recordings folder, lineup CSV, guide files on disk, port, HTTPS) can only be changed on the PC itself; on Docker, from any browser at home until setup is locked, then from paired devices. Folders and playlist files on the TunerBox computer (My Library, a playlist file) need the PC or a paired device in the same way. Exporting playlists, which holds their logins, always needs the PC or a paired device.
 
 ## HTTPS (install as an app)
 Browsers only offer **Install app** (Android Chrome, desktop Chrome and Edge) for secure pages. TunerBox can also serve itself over HTTPS on a second port, **8643**, while the normal address on **8642** stays plain http and works exactly as before. Plex, Emby, Jellyfin, Channels, VLC, the Roku app and `/playlist.m3u` keep using http on 8642.
@@ -216,10 +227,10 @@ Like a cable box, a TV screen asks **"Are you still watching?"** after 4 hours w
 Neither happens while a recording is running or a phone remote is open. Turn either one on or off, or change its time, in **Menu › Sleep timer & screensaver** on the TV (OK switches or steps through the times), or in **Setup › Settings**. The settings apply to every screen.
 
 ## Search and Sports & Events
-* **Search** (`/`, Menu › Search, or SEARCH on the on-screen remote) looks through channel names and numbers, the next 7 days of the guide (shows, teams, games), and event feeds.
+* **Search** (`/`, Menu › Search, or **Search** on the on-screen controls) looks through channel names and numbers, the next 7 days of the guide (shows, teams, games), and event feeds.
   * Type on a keyboard, or use the on-screen keyboard with a remote: ◀ ▶ move between the keyboard and the results.
   * OK on a show that's on now tunes it. A later show opens the record options.
-* **Sports & Events** (`T`, or Menu › Sports & Events) has four tabs:
+* **Sports & Events** (`T`, Menu › Sports & Events, or **Sports & Events** on the on-screen controls) has four tabs:
   * **On Now:** live games from the guide.
   * **Coming Up:** the next 2 days. OK opens the record options.
   * **Live games and scores.** Pick the leagues you follow in Setup › Settings › **Sports** (NFL, college football, NBA, college basketball, MLB and NHL to start with; WNBA and soccer leagues are there too). Their games come from ESPN's public scoreboard, which needs no account, and each one is matched to a guide listing or an event feed by team names and start time. Matched games show in On Now and Coming Up with the score, even when the guide doesn't label the listing as sports or the game runs past its slot. Games none of your channels carry are listed dimmed with where they air; turn that off with *List games you have no channel for*.
@@ -240,7 +251,7 @@ Many playlists come with a library of movies and shows besides the live channels
 * **Categories…** next to each switch picks which movie or TV show categories are shown (untick the ones you don't want). Categories named like `EN - MOVIES` can be filtered by language there too.
 * **Languages…** picks which labels are shown. Big providers put a label in front of every title: a language (`EN - Dune`, `DE - …`), a language and quality (`4K-EN`, `IN-EN`) or a platform (`NF` for Netflix, `D+` for Disney+). TunerBox cuts the label off the name, shows it as a small badge, and lists each label with how many titles have it and an example, so unfamiliar ones are easy to judge. Untick the languages you don't watch: with only English, a 235,000-title catalogue shrinks to about 37,000. Labels a provider adds later start unticked. Titles with no label are their own entry. This also works for TV shows, whose categories often have no language in them.
 
-Press `O` (or Menu › **On Demand**, or the **ON DEMAND** button) to open On Demand, where you left it. Live TV keeps playing in the corner. The tabs are **Movies** and **TV Shows** (each with its categories and posters), **Continue Watching** and **My List** (movies and shows together) and **Search**. Arrows move between the tabs, the categories and the titles; OK on a movie gives Resume / Play / My List; OK on a show opens its seasons and episodes; `*` adds to My List; `O` or Back closes it.
+Press `O` (or Menu › **On Demand**, or **On Demand** on the on-screen controls) to open On Demand, where you left it. Live TV keeps playing in the corner. The tabs are **Movies** and **TV Shows** (each with its categories and posters), **Continue Watching** and **My List** (movies and shows together) and **Search**. Arrows move between the tabs, the categories and the titles; OK on a movie gives Resume / Play / My List; OK on a show opens its seasons and episodes; `*` adds to My List; `O` or Back closes it.
 
 **Search** (`/` in On Demand) looks through the movies and shows. Accents and punctuation don't matter (*amelie* finds *Amélie*), the words can be in any order, a year narrows it (*dune 2021*), small typos still find it, and movies are found by actor or director too. A film the playlist has under several labels (*Dune* in EN, 4K-EN, DE…) is listed once; its options have **Other versions** to pick another language or quality. The main **Search** (`/` while watching) finds movies, shows and episodes alongside channels and guide listings.
 
@@ -329,3 +340,4 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 
 ## Credits
 * On Demand (movies and TV shows with resume, Continue Watching, My List and search), live game scores in Sports, reminders, the grouped Settings page, the Docker image, the 720p (Roku) re-encode mode, the phone / iPhone Safari touch layout, the test suite, Gracenote retries, faster guide downloads, PPV/event playlist refreshes and DVR disk-space safety by Kevin Richards ([@richakev](https://github.com/richakev), from the [richakev/tunerbox](https://github.com/richakev/tunerbox) fork).
+* My Library (your own movies and shows from a NAS or a folder in On Demand, with TMDB details and posters), the Midnight look, the on-screen controls, the Setup sidebar and Overview page, the phone remote restyle, phone pairing on a NAS, and the protections against other websites and unknown host names by Hawkeyez88 ([@hawkeyez88](https://github.com/hawkeyez88)).
