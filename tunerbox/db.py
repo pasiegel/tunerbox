@@ -53,6 +53,11 @@ CREATE TABLE IF NOT EXISTS mappings (
     score INTEGER DEFAULT 0,
     reason TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS rejected_feeds (   -- feeds removed from a lineup channel: auto match skips them
+    number INTEGER NOT NULL,
+    stream_key TEXT NOT NULL,
+    PRIMARY KEY (number, stream_key)
+);
 CREATE TABLE IF NOT EXISTS extras (
     stream_key TEXT PRIMARY KEY,
     number INTEGER UNIQUE,

@@ -9,9 +9,10 @@ Signal after the provider turns it away. A recording that's starting may take a 
 TV (Setup › Settings › DVR)."""
 import logging
 import threading
+import time
 from urllib.parse import urlsplit
 
-from . import config, db, guide, hls, remote, streaming, tuner
+from . import config, db, epg, guide, hls, remote, streaming, tuner
 
 log = logging.getLogger("tunerbox.connections")
 
@@ -29,6 +30,15 @@ class Full(Exception):
         self.source_id, self.source, self.used, self.limit = src["id"], src["name"], used, limit
         super().__init__(f"{src['name']} allows {limit} connection{'' if limit == 1 else 's'} at a time, "
                          f"and {'it is' if limit == 1 else 'all are'} in use")
+
+
+class Stopped(Full):
+    """The stream was just stopped from Setup › Tuners, and this app is asking for it again (Roku, Plex
+    and VLC reconnect by themselves). A Full, so every endpoint already answers it with a 503."""
+
+    def __init__(self):
+        Exception.__init__(self, "This stream was stopped from Setup › Tuners")
+        self.source_id, self.source, self.used, self.limit = None, "", 0, 0
 
 
 def auto_limit(src):
@@ -131,10 +141,84 @@ def _source_for(url, by_url, sources):
     return best[0]["id"] if best else None
 
 
+# Players that say who they are in their User-Agent, for streams opened without a client id (the
+# Roku app's live channels, Plex, VLC…). Only prefixes these players really send; anything else stays
+# "Another app". Roku's media player sends "Roku/DVP-14.5 (…)".
+_AGENTS = (("roku/", "Roku"), ("plexmediaserver", "Plex"), ("plex ", "Plex"), ("vlc/", "VLC"), ("kodi/", "Kodi"),
+           ("jellyfin", "Jellyfin"), ("emby", "Emby"), ("channels", "Channels DVR"))
+
+
+_client_names = {}      # client id -> the name a device gave itself (?name= on a stream: the Roku app)
+
+
+def name_client(client, name):
+    """Remember what a device that isn't a TV screen calls itself, for Setup › Tuners."""
+    name = (name or "").strip()[:40]
+    if client and name:
+        if len(_client_names) > 200 and client not in _client_names:
+            _client_names.clear()           # only ever a handful of devices; never let it grow
+        _client_names[client] = name
+
+
+def app_reader(user_agent, ip=""):
+    """The reader name for a stream with no client id: "app:Roku@192.168.1.50", or "" when unknown."""
+    ua = (user_agent or "").lower()
+    app = next((n for p, n in _AGENTS if ua.startswith(p)), "")
+    return f"app:{app}@{ip}" if app else ""
+
+
+# After Setup › Tuners › Stop, so whatever was watching doesn't just reconnect. A TV screen asks
+# /api/stopped before it reconnects or tries a backup feed by itself (so a channel it picks on purpose
+# always plays); apps can't be asked, so they're refused for a while instead: by their client id (the
+# Roku app) or, with none, by the stream (Plex, VLC…).
+APP_HOLD, SCREEN_HOLD = 30, 120          # seconds
+_stopped = {}                            # hold key -> time.monotonic() it ends
+
+
+def _hold_key(name, url):
+    if not name or name.startswith("app:"):
+        return "url:" + url
+    return name.removeprefix("hls:")
+
+
+def _app(key):
+    return key.startswith(("url:", "roku-"))
+
+
+def _hold(names, url):
+    now = time.monotonic()
+    for k in [k for k, until in _stopped.items() if until <= now]:
+        del _stopped[k]
+    for n in names:
+        if not n.startswith(("dvr:", "setup-")):
+            k = _hold_key(n, url)
+            _stopped[k] = now + (APP_HOLD if _app(k) else SCREEN_HOLD)
+
+
+def after_stop(client, url):
+    """Before a stream opens: raises Stopped when an app asks again for what Setup just stopped. A TV
+    screen tuning means it (it checks was_stopped before retrying by itself), so its hold just ends."""
+    k = _hold_key(client or "", url)
+    if not _app(k):
+        _stopped.pop(k, None)
+    elif _stopped.get(k, 0) > time.monotonic():
+        raise Stopped()
+
+
+def was_stopped(client):
+    """For a TV screen whose stream ended: was it stopped from Setup? Until it tunes something (after_stop)."""
+    return bool(client) and _stopped.get(_hold_key(client, ""), 0) > time.monotonic()
+
+
 def _who(name, screens, recs):
     """A reader's name (tuner.py / streaming.py) as something a person recognises."""
     if not name:
         return {"kind": "app", "name": "Another app (Plex, VLC…)"}
+    if name.startswith("app:"):
+        app, _, ip = name[4:].partition("@")
+        return {"kind": "roku" if app == "Roku" else "app", "name": f"{app} · {ip}" if ip else app}
+    if name.startswith("roku-"):        # the Roku app's own client id (On Demand)
+        return {"kind": "roku", "name": _client_names.get(name, "Roku")}
     if name.startswith("dvr:"):
         r = recs.get(name[4:])
         return {"kind": "dvr", "name": f"Recording: {r['title']}" if r and r["title"] else "Recording"}
@@ -162,9 +246,19 @@ def in_use():
     return {"sources": srcs, "tuners": out}
 
 
+def _show(p):
+    """What's on a channel now (a guide programme row), for Setup › Tuners; None without a guide."""
+    if not p or not p["title"]:
+        return None
+    return {"title": p["title"], "subtitle": p["subtitle"] or "", "episode": p["episode"] or "",
+            "start": p["start"], "stop": p["stop"]}
+
+
 def _entries():
     """Everything holding a connection, oldest first, with `_names`: the raw reader names."""
-    tuners, ondemand = tuner.running(), streaming.playing() + hls.playing()
+    tuners = tuner.running()
+    ondemand = ([dict(p, _key=f"s{p.get('id')}") for p in streaming.playing()]
+                + [dict(p, _key=f"h{p.get('id')}") for p in hls.playing()])
     sources = db.rows("SELECT id, name, type, url, username, enabled FROM sources ORDER BY id")
     urls = [t["url"] for t in tuners] + [p["url"] for p in ondemand]
     streams = {}
@@ -183,26 +277,57 @@ def _entries():
         q = ",".join("?" * len(dvr_ids))
         recs = {str(r["id"]): r for r in db.rows(f"SELECT id, title FROM recordings WHERE id IN ({q})", tuple(map(int, dvr_ids)))}
 
+    # the show on each channel in use right now, from the guide (one query for all of them)
+    chans = {t["url"]: chan_of.get(streams[t["url"]]["key"]) for t in tuners if t["url"] in streams}
+    now = int(time.time())
+    on_now = epg.programs({c["epg"] for c in chans.values() if c and c.get("epg")}, now, now + 1)
+
     out = []
     for t in tuners:
         st = streams.get(t["url"])
-        c = chan_of.get(st["key"]) if st else None
+        c = chans.get(t["url"])
+        p = (on_now.get(c["epg"]) or [None])[0] if c and c.get("epg") else None
         if c:
             kind, title = "channel", f"{c['number']} {c['name']}"
         else:
             kind, title = "feed", st["name"] if st else "A channel"
-        out.append({"kind": kind, "title": title, "stream": st["name"] if st else "",
+        out.append({"id": f"t{t.get('id')}", "kind": kind, "title": title, "stream": st["name"] if st else "",
                     "number": c["number"] if c else None, "feed": st["key"] if st and not c else None,
                     "source_id": t.get("source_id") or _source_for(t["url"], by_url, sources),
-                    "since": t["since"], "mb": t["mb"],
+                    "since": t["since"], "mb": t["mb"], "show": _show(p),
                     "viewers": [_who(n, screens, recs) for n in t["viewers"]], "_names": list(t["viewers"])})
     for p in ondemand:
-        out.append({"kind": "ondemand", "title": p["label"] or "On Demand", "stream": "", "number": None, "feed": None,
+        out.append({"id": p["_key"], "kind": "ondemand", "title": p["label"] or "On Demand", "stream": "", "number": None, "feed": None,
                     "source_id": p.get("source_id") or _source_for(p["url"], by_url, sources), "since": p["since"],
-                    "mb": None, "viewers": [_who(p["client"], screens, recs)] if p["client"] else [],
+                    "mb": None, "show": None, "viewers": [_who(p["client"], screens, recs)] if p["client"] else [],
                     "_names": [p["client"]] if p["client"] else []})
     out.sort(key=lambda x: x["since"])
     return out
+
+
+def stop(entry_id, cancel=lambda rec_id: None):
+    """Force-stop one thing holding a connection (Setup › Tuners › Stop), by the `id` in_use() gave it.
+    `cancel(rec_id)` is called for each recording on it *before* the stream is stopped: otherwise the DVR
+    can see the drop first, take it for an interruption and reopen the stream. Returns those recording
+    ids, or None when nothing by that id is running any more."""
+    kind, key = (entry_id or "")[:1], (entry_id or "")[1:]
+    if kind == "t" and key.isdigit():
+        t = next((t for t in tuner.running() if t.get("id") == int(key)), None)
+        if not t:
+            return None
+        recs = [int(n[4:]) for n in t["viewers"] if n.startswith("dvr:") and n[4:].isdigit()]
+        for rid in recs:
+            cancel(rid)
+        _hold(t["viewers"], t["url"])
+        return recs if tuner.stop_id(int(key)) else None
+    if kind in "sh" and key:
+        mod = streaming if kind == "s" else hls
+        p = next((p for p in mod.playing() if str(p.get("id")) == key), None)
+        if not p:
+            return None
+        _hold([p["client"]], p["url"])
+        return [] if mod.stop_id(p["id"]) else None
+    return None
 
 
 def busy(stream_rows, client="", mode=None, audio="aac"):

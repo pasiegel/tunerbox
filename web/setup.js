@@ -136,6 +136,7 @@ $("btn-epg").onclick = () => startJob("epg");
 
 // ---------------------------------------------------------------- lineup
 let lineup = [];
+const openFeeds = new Set();        // lineup numbers whose feed list is shown
 loaders.channels = async () => {
   lineup = await api("/api/lineup");
   renderLineup();
@@ -163,13 +164,30 @@ function renderLineup() {
     const feed = s ? `<div class="feed"><span class="dot ${s.status}" title="${s.status}"></span>${s.logo ? `<img src="${esc(safePic(s.logo))}" onerror="this.remove()">` : ""}
         <div><div>${esc(feedName(s))}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div></div>`
       : '<span class="muted">—</span>';
-    return `<tr data-n="${c.number}"><td class="num">${c.number}</td>
+    return `<tr data-n="${c.number}"${openFeeds.has(c.number) ? ' class="fd-open"' : ""}><td class="num">${c.number}</td>
       <td>${esc(c.name)}<div class="cs">${esc(c.callsign || "")}${c.affiliate ? " · " + esc(c.affiliate) : ""}</div></td>
       <td>${feed}</td><td>${tag}</td>
-      <td class="acts"><button class="btn small" data-a="pick">Change</button>${s ? '<button class="btn small" data-a="play">&#9654;</button>' : ""}
+      <td class="acts">${hasFeedList(c) ? `<button class="btn small" data-a="feeds" aria-expanded="${openFeeds.has(c.number)}" title="See every feed matched to this channel">Feeds ${c.feeds.length} ${openFeeds.has(c.number) ? "&#9652;" : "&#9662;"}</button>` : ""}<button class="btn small" data-a="pick">Change</button>${s ? '<button class="btn small" data-a="play">&#9654;</button>' : ""}
       ${c.mode === "none" ? "" : '<button class="btn small" data-a="off" title="Never map this channel">Off</button>'}
-      ${c.mode === "manual" || c.mode === "none" ? '<button class="btn small" data-a="auto" title="Go back to automatic matching">Auto</button>' : ""}</td></tr>`;
+      ${c.mode === "manual" || c.mode === "none" ? '<button class="btn small" data-a="auto" title="Go back to automatic matching">Auto</button>' : ""}</td></tr>`
+      + (openFeeds.has(c.number) ? feedRows(c) : "");
   }).join("");
+}
+// every feed on a channel: the main one, then the backups tried when it fails. Wrong ones can be removed.
+// (also once every feed is removed, so "Allow again" stays reachable)
+const hasFeedList = (c) => c.removed > 0 || (c.mode === "auto" && c.feeds.length > 1);
+function feedRows(c) {
+  const canRemove = c.mode === "auto";
+  const items = c.feeds.map((s, i) => `<li data-k="${esc(s.key)}" data-nm="${esc(feedName(s))}">
+      <span class="fd-role">${i ? `Backup ${i}` : "Main"}</span><span class="dot ${s.status}" title="${s.status}"></span>
+      <div class="nm"><div>${esc(feedName(s))}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div>
+      <button class="btn small" data-a="fprev" title="Preview">&#9654;</button>
+      ${canRemove ? '<button class="btn small" data-a="fdel" title="Not this channel: never match it here again">Remove</button>' : ""}</li>`).join("");
+  const foot = c.removed ? `<div class="fd-foot muted small">${c.removed} feed${c.removed > 1 ? "s" : ""} removed from this channel.
+      <button class="btn small" data-a="frestore">Allow again</button></div>` : "";
+  return `<tr class="fd-row" data-n="${c.number}"><td></td><td colspan="4">
+    <div class="muted small">Feeds for this channel. The main one plays; if it fails, the backups are tried in order.</div>
+    <ul class="fd-list">${items || '<li class="muted">No feeds left.</li>'}</ul>${foot}</td></tr>`;
 }
 $("ch-search").oninput = renderLineup;
 $("ch-filter").onchange = renderLineup;
@@ -181,6 +199,17 @@ $("ch-body").addEventListener("click", async (e) => {
   if (b.dataset.a === "play") { openPicker(c); preview(c.stream.key, feedName(c.stream)); }
   if (b.dataset.a === "off") { await api("/api/mapping", { method: "POST", body: { number: n, mode: "none" } }); loaders.channels(); }
   if (b.dataset.a === "auto") { await api("/api/mapping", { method: "POST", body: { number: n, mode: "auto" } }); toast("Re-matching…"); pollJob(); }
+  if (b.dataset.a === "feeds") { openFeeds.has(n) ? openFeeds.delete(n) : openFeeds.add(n); renderLineup(); }
+  const li = b.closest("li");
+  if (b.dataset.a === "fprev") { openPicker(c); preview(li.dataset.k, li.dataset.nm); }
+  if (b.dataset.a === "fdel") {
+    await api("/api/mapping/remove-feed", { method: "POST", body: { number: n, stream_key: li.dataset.k } });
+    toast(`Removed ${li.dataset.nm} from channel ${n}`); loaders.channels();
+  }
+  if (b.dataset.a === "frestore") {
+    await api("/api/mapping/restore-feeds", { method: "POST", body: { number: n } });
+    toast("Re-matching…"); pollJob();
+  }
 });
 
 // ---------------------------------------------------------------- picker
@@ -741,13 +770,17 @@ document.querySelector("#tab-dvr").addEventListener("click", async (e) => {
 });
 
 // ---------------------------------------------------------------- tuners in use
-const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙" };
-let tnTimer;
+const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙", roku: "📺" };
+let tnTimer, tnRows = {};
+const tnTime = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+// the show on now (from the guide), under the channel: "Jeopardy! · S41E62 — until 7:30 PM"
+const tnShow = (s) => !s ? "" : `<div class="small">${esc(s.title)}${s.subtitle ? ` · ${esc(s.subtitle)}` : ""}${s.episode ? ` · ${esc(s.episode)}` : ""}
+  <span class="muted">— until ${tnTime(s.stop)}</span></div>`;
 loaders.tuners = async () => {
   clearTimeout(tnTimer);
   if ((location.hash.slice(1) || "overview") !== "tuners") return;
   let d;
-  try { d = await api("/api/tuners"); } catch (e) { $("tn-body").innerHTML = `<tr><td colspan="4" class="muted">${esc(e.message)}</td></tr>`; }
+  try { d = await api("/api/tuners"); } catch (e) { $("tn-body").innerHTML = `<tr><td colspan="5" class="muted">${esc(e.message)}</td></tr>`; }
   if (d) {
     const names = Object.fromEntries(d.sources.map((s) => [s.id, s.name]));
     $("tn-src").innerHTML = d.sources.map((s) => {
@@ -760,15 +793,32 @@ loaders.tuners = async () => {
           : s.limit ? `${s.limit - s.used} free` : s.type === "xtream" ? "Limit not known yet (it's read when the playlist is scanned). You can set one under Playlists." : "No limit set. If your provider has one, set it under Playlists › Connections."}</div>
       </div>`;
     }).join("") || '<p class="muted">No playlists yet.</p>';
-    $("tn-body").innerHTML = d.tuners.map((t) => `<tr>
-      <td>${t.kind === "ondemand" ? '<span class="tag">On Demand</span> ' : t.kind === "feed" ? '<span class="tag">Feed</span> ' : ""}${esc(t.title)}${t.stream && t.kind === "channel" ? `<div class="muted small">${esc(t.stream)}</div>` : ""}</td>
+    tnRows = Object.fromEntries(d.tuners.map((t) => [t.id, t]));
+    $("tn-body").innerHTML = d.tuners.map((t) => `<tr data-id="${esc(t.id)}">
+      <td>${t.kind === "ondemand" ? '<span class="tag">On Demand</span> ' : t.kind === "feed" ? '<span class="tag">Feed</span> ' : ""}${esc(t.title)}${tnShow(t.show)}${t.stream && t.kind === "channel" ? `<div class="muted small">${esc(t.stream)}</div>` : ""}</td>
       <td>${esc(names[t.source_id] || "Unknown")}</td>
       <td>${t.viewers.map((v) => `<div>${TN_WHO[v.kind] || ""} ${esc(v.name)}</div>`).join("") || '<span class="muted">Starting…</span>'}</td>
-      <td>${new Date(t.since * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${t.mb ? `<div class="muted small">${t.mb >= 1000 ? (t.mb / 1000).toFixed(1) + " GB" : Math.round(t.mb) + " MB"}</div>` : ""}</td>
-    </tr>`).join("") || '<tr><td colspan="4" class="muted">Nothing is playing or recording right now.</td></tr>';
+      <td>${tnTime(t.since)}${t.mb ? `<div class="muted small">${t.mb >= 1000 ? (t.mb / 1000).toFixed(1) + " GB" : Math.round(t.mb) + " MB"}</div>` : ""}</td>
+      <td class="acts"><button class="btn small danger" data-a="stop">Stop</button></td>
+    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nothing is playing or recording right now.</td></tr>';
   }
   tnTimer = setTimeout(loaders.tuners, 4000);
 };
+
+// force-stop a stream (stuck, or holding a connection something else needs)
+$("tn-body").addEventListener("click", async (e) => {
+  const b = e.target.closest('button[data-a="stop"]'); if (!b) return;
+  const t = tnRows[b.closest("tr").dataset.id]; if (!t) return;
+  const rec = t.viewers.filter((v) => v.kind === "dvr").map((v) => v.name);
+  const who = t.viewers.filter((v) => v.kind !== "dvr").map((v) => v.name);
+  const msg = [`Stop ${t.title}?`, who.length ? `It ends for: ${who.join(", ")}.` : "",
+    rec.length ? `This also stops ${rec.length === 1 ? "the recording" : "these recordings"}: ${rec.map((n) => n.replace(/^Recording: /, "")).join(", ")}.` : ""].filter(Boolean).join("\n\n");
+  if (!confirm(msg)) return;
+  b.disabled = true;
+  try { await api("/api/tuners/stop", { method: "POST", body: { id: t.id } }); toast(`Stopped ${t.title}`); }
+  catch (err) { toast(err.message); }
+  loaders.tuners();
+});
 
 // ---------------------------------------------------------------- settings
 // categories on the left; one group of settings is shown at a time (the whole form still saves together)

@@ -125,7 +125,24 @@ function playFeed(f) {
   play(ch, 0, fail, () => S.feedCh === ch && playFeed(f));
 }
 
+// Setup › Tuners › Stop ended this screen's stream: say so, rather than reconnecting or trying a backup
+// feed (which would just take the connection again). Resolves true when it was stopped.
+const STOPPED_LIVE = "Someone stopped this in Setup › Tuners. Pick a channel to watch again.";
+async function stoppedFromSetup(badge, sub = STOPPED_LIVE) {
+  const pl = S.player;
+  let r;
+  try { r = await api(`/api/stopped?client=${encodeURIComponent(CID)}`); } catch (_) { return false; }
+  if (!r.stopped) return false;
+  if (S.player === pl) { destroyPlayer(); showStatic(badge, "Stopped from Setup", sub); }
+  return true;
+}
+
 function play(ch, alt, onFail, again) {
+  // the first failure of this player decides (the check is async: an error and the end can both fire)
+  const badge = ch.number || ch.badge || "", failed = onFail;
+  let done = false;
+  const once = () => !done && (done = true);
+  onFail = () => { if (once()) stoppedFromSetup(badge).then((s) => { if (!s) failed(); }); };
   if (useHls()) { playHls(ch, alt, onFail); return; }
   if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
     showStatic(ch.number, "Playback not supported", "This browser can't play live video"); return;
@@ -150,10 +167,14 @@ function play(ch, alt, onFail, again) {
   p.on(mpegts.Events.LOADING_COMPLETE, () => {
     if (S.player !== p) return;
     if (!played) { onFail(); return; }
-    // live feed dropped mid-show: reconnect like a cable box re-acquiring signal
-    S.retries = (S.retries || 0) + 1;
-    if (S.retries <= 3) { toast("Reacquiring signal…"); setTimeout(() => S.player === p && again(), 1500); }
-    else onFail();
+    // live feed dropped mid-show: reconnect like a cable box re-acquiring signal (unless Setup stopped it)
+    if (!once()) return;
+    stoppedFromSetup(badge).then((stopped) => {
+      if (stopped || S.player !== p) return;
+      S.retries = (S.retries || 0) + 1;
+      if (S.retries <= 3) { toast("Reacquiring signal…"); setTimeout(() => S.player === p && again(), 1500); }
+      else failed();
+    });
   });
   p.load();
   const start = () => {

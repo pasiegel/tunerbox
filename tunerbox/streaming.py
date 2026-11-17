@@ -254,7 +254,20 @@ def playing():
     """On Demand (and other ready-made-command) streams running now: [{url, label, client, since}].
     `url` holds the provider login: never send it to a page as is."""
     with _lock:
-        return [dict(v) for v in _playing.values()]
+        return [{**{x: y for x, y in v.items() if x != "proc"}, "id": k} for k, v in _playing.items()]
+
+
+def stop_id(pid):
+    """Force-stop one On Demand stream (Setup › Tuners › Stop); `pid` is the id from playing()."""
+    with _lock:
+        p = _playing.pop(pid, None)
+        if p is None:
+            return False
+        proc = p["proc"]
+        for k in [k for k, p in _sessions.items() if p is proc]:
+            _sessions.pop(k)
+    threading.Thread(target=kill, args=(proc,), daemon=True).start()   # taskkill takes a moment
+    return True
 
 
 def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
@@ -262,6 +275,8 @@ def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
     playing. Raises connections.Full (leaving what it plays alone) when `source_id`'s playlist has no connection left; checking and
     registering happen under connections.admit, so two screens can't both take the last one."""
     from . import connections, hls
+    if raw_url:
+        connections.after_stop(client_id, raw_url)
     if source_id is not None:   # room first: a full playlist doesn't cost the viewer what it was watching
         connections.check(source_id, client=client_id or "")
     if client_id:   # this viewer's previous channel or movie first (Xtream allows few connections)
@@ -278,7 +293,7 @@ def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
                 _sessions[client_id] = proc
             if raw_url:
                 _playing[id(proc)] = {"url": raw_url, "label": label, "client": client_id or "",
-                                      "since": int(time.time()), "source_id": source_id}
+                                      "since": int(time.time()), "source_id": source_id, "proc": proc}
     return proc
 
 
