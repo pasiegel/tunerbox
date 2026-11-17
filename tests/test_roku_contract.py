@@ -79,9 +79,14 @@ def test_settings_has_home_screen(client):
     assert isinstance(client.get("/api/settings").json().get("home_screen"), bool)
 
 
+def test_settings_has_theme(client):
+    # the Roku's default colour theme (MainScene.brs applySettings; "light" means Midnight there, as on TV screens)
+    assert client.get("/api/settings").json().get("theme") in ("midnight", "classic", "retro", "contrast", "light")
+
+
 def test_home_lists(client):
     d = client.get("/api/home").json()
-    for key in ("favorites", "recent", "continue", "sports", "recorded", "coming"):   # HomeView.brs buildRows
+    for key in ("favorites", "teams", "recent", "continue", "sports", "recorded", "coming"):   # HomeView.brs buildRows
         assert isinstance(d.get(key), list), key
 
 
