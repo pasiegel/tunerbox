@@ -204,7 +204,17 @@ function toggleOverlay() {
 }
 $("learn").addEventListener("click", stopLearn);
 $("back").addEventListener("click", () => { if (top()) handleKey("Back"); });
-setInterval(() => { $("back").classList.toggle("hidden", !(isPhone() && top() && top() !== "learn")); }, 250);
+// The floating Close: on phones and touch screens (iPad, tablets) always, and with a mouse once it's been
+// used (Chrome on a PC). A remote or keyboard has Back, so a key press hides it again until the mouse moves.
+const touchScreen = navigator.maxTouchPoints > 0 && !!(window.matchMedia && matchMedia("(any-pointer: coarse)").matches);
+let mouseUsed = false;
+document.addEventListener("pointermove", (e) => { if (e.pointerType === "mouse") mouseUsed = true; }, { passive: true });
+document.addEventListener("pointerdown", (e) => { if (e.pointerType === "mouse") mouseUsed = true; }, { passive: true });
+document.addEventListener("keydown", () => { mouseUsed = false; }, true);
+setInterval(() => {
+  const want = isPhone() || touchScreen || mouseUsed;
+  $("back").classList.toggle("hidden", !(want && top() && top() !== "learn"));
+}, 250);
 video.addEventListener("click", () => {
   // Home's corner TV: a click or tap goes back to full-screen TV, like Home's "Watch TV"
   if (top() === "home") { closeHome(); if (S.mode === "live") showBanner(); return; }
