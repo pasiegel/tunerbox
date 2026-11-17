@@ -13,7 +13,7 @@ function screenName() {
 function closeOverlays() {
   if (S.digits) { clearTimeout(S.digitTimer); S.digits = ""; $("digits").classList.add("hidden"); }
   if (top() === "guide") G.close();
-  closePanels(); closeMenu(); closeDvr(); closeDialog(); closeOD();
+  closePanels(); closeMenu(); closeDvr(); closeDialog(); closeOD(); closeStats();
 }
 async function remoteCmd(c) {
   wake(false);

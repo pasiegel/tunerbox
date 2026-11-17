@@ -152,6 +152,7 @@ const MENU = [
     },
     act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
   { label: "↺ Start this show over", catchup: true, act: () => { closeMenu(); startOver(); } },
+  { label: "Game stats & live scores (X)", act: () => { closeMenu(); openStats(); } },
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
     const url = ch.feed ? `${location.origin}/api/feed/stream?key=${encodeURIComponent(ch.feed)}` : `${location.origin}/api/stream/${ch.number}`;

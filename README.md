@@ -6,12 +6,36 @@ A personal IPTV "cable box": your local cable channel numbers and guide (pick yo
 * **Local guide.** Listings come from Gracenote (the data behind zap2it and TV Guide) for your provider, so the guide matches your numbers. US and Canada.
 * **Everything else gets a number too.** Every working playlist channel that isn't on the lineup is numbered from 20000 up, with online XMLTV guides.
 * **Manual mapping.** A Tunarr-style picker lets you search every feed, preview it, and pin the one you want.
-* **M3U and Xtream Codes.** Paste an Xtream `get.php` link and it switches to the Xtream API automatically.
+* **Many kinds of source.** M3U playlists (a web address or a file), Xtream Codes logins (paste a `get.php` link and it switches to the Xtream API automatically), a SiliconDust HDHomeRun antenna tuner on your network, and your own video folders as 24/7 channels. Mix as many as you like; see [Sources and outputs](#sources-and-outputs).
 * **Cable box UI.** Picture-in-picture guide grid, channel banner with now/next and progress, number-key tuning, last channel, and static "No Signal" screens. Dead feeds fail over to backups automatically.
 * **DVR.** Record one show, a series on one channel, or new episodes on any channel. Recordings are saved as MP4. If TunerBox stops mid-recording, what was captured is kept; recordings don't start with under 2 GB free and stop (keeping what they have) below 0.5 GB. Don't need it? Turn off **Setup › Settings › DVR › Recordings** and Record, Recordings and the DVR tab disappear from every screen.
-* **On Demand.** Movies and TV shows that come with your playlist, each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
+* **On Demand.** Movies and TV shows that come with your playlist (an Xtream login's movies and series, or the video files in an M3U), each on its own screen, with posters, resume, Continue Watching, My List and search. Off until you turn it on for a playlist.
 * **My Library.** Your own movies and TV shows in On Demand, read straight from your NAS over the network (SMB, no mount needed) or from a folder, with details and posters from TMDB. Nothing is written next to your files.
-* **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and it emulates an HDHomeRun tuner for Plex, Emby and Jellyfin.
+* **Works with other apps.** `/playlist.m3u` and `/epg.xml` work in VLC or TiviMate, and TunerBox shows up as an HDHomeRun tuner in Plex, Emby, Jellyfin and Channels DVR.
+
+## Sources and outputs
+TunerBox can **use a real HDHomeRun as a source** and, separately, **act as an HDHomeRun** for other apps. Both work at the same time.
+
+**Sources (what TunerBox plays from).** Any mix of these; every channel gets a number on your lineup, and a lineup channel found in more than one source keeps the others as backup feeds.
+
+| Source | Where in Setup | Live channels | On Demand |
+|---|---|---|---|
+| **M3U playlist**: a web address or a file | Playlists › Add › *M3U playlist* | Yes. Streams can be http(s), HLS (`.m3u8`), udp/rtp, rtsp, rtmp or srt. A guide named in the playlist header (`x-tvg-url`) is read automatically. | Entries whose address is a video file (`.mp4`, `.mkv`…), when **On Demand** is on for the playlist |
+| **Xtream Codes login**: server, username and password, or a `get.php` link | Playlists › Add › *Xtream Codes login* | Yes, as MPEG-TS or HLS (**Stream format**). The provider's guide and connection limit are read automatically. | Movies and TV shows, each with its own switch |
+| **HDHomeRun antenna tuner** (SiliconDust) | Playlists › Add › *HDHomeRun antenna tuner*, then **Find tuners on my network** or type its IP address | Yes: antenna channels are matched to your lineup by callsign. One tuner per channel in use. See [HDHomeRun](#hdhomerun-as-a-source-and-as-a-tuner-for-plex). | - |
+| **My Channels**: folders of your own videos | My Channels | Yes, as 24/7 channels from 2000 up | - |
+| **My Library**: movie and TV folders on a NAS (SMB) or this computer | My Library | - | Yes, with TMDB details and posters |
+
+Guide listings come from Gracenote for your lineup, plus the playlists' own guides and any online XMLTV guides you add in Setup › **Guide**.
+
+**Outputs (what other apps can use).** The addresses are listed with **Copy** buttons in Setup › Settings › **Other apps**.
+
+| Output | Address | Use it in |
+|---|---|---|
+| Web TV screen and Setup | `http://<tunerbox>:8642/` | Any browser: PC, TV, tablet, phone (also the phone remote) |
+| M3U playlist | `http://<tunerbox>:8642/playlist.m3u` | VLC, TiviMate and other IPTV players |
+| XMLTV guide | `http://<tunerbox>:8642/epg.xml` | The same players, and as the guide in Plex, Emby or Jellyfin |
+| HDHomeRun tuner (emulated) | `http://<tunerbox>:8642` | Plex (Live TV & DVR), Emby, Jellyfin, Channels DVR: add it as an HDHomeRun tuner |
 
 ## Getting started
 1. **Install.** Download the latest build for your computer from the **Releases** page: the Windows `TunerBox-Setup-….exe`, the Mac `.dmg` or the Linux `.tar.gz`. ffmpeg is included, nothing else to install. (Or run from source, below.)
@@ -66,7 +90,7 @@ Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno
 ## First-time setup
 1. With no channels, the screen says **No channels yet**. Press Enter or click it to open **Setup** (also Menu › Channel Setup).
 2. To use your own provider's channel numbers, go to **Guide**, enter your ZIP or postal code and press **Find providers**. Choose your provider (for example *Xfinity - Digital*, *DIRECTV* or *Local Over the Air Broadcast* for an antenna) and press **Save**. Its channel numbers become your lineup.
-3. Go to **Playlists** and add your M3U URL or file, or your Xtream server, username and password.
+3. Go to **Playlists** and add your M3U URL or file, your Xtream server, username and password, or an HDHomeRun antenna tuner (see [Sources and outputs](#sources-and-outputs) for everything TunerBox can use).
 4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. **Check all** / **Uncheck all** apply to the groups listed, so after picking a country or typing a search they only change those groups (the buttons then show the count, e.g. *Uncheck 93 listed*). **Only keep listed** keeps the listed groups and hides every other one.
    * Hidden groups are removed straight away. Ticking one again rescans the playlist to bring it back.
 5. Press **Scan playlists now**. The scan loads the playlist, checks which streams work, matches channels to your lineup, numbers the leftovers, and downloads the guides. The first scan takes a few minutes.
@@ -96,6 +120,7 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | D | recordings | |
 | / | search | search |
 | T | Sports & Events | Sports & Events |
+| X | game stats | |
 | O | On Demand | On Demand |
 | M | menu | |
 | U, +/− | mute, volume | |
@@ -182,7 +207,10 @@ Setup › **My Library** adds your own movie and TV folders to On Demand, next t
 * **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
 * **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
 
-## HDHomeRun antenna tuner
+## HDHomeRun: as a source, and as a tuner for Plex
+TunerBox works with HDHomeRun both ways, at the same time.
+
+### A real HDHomeRun as a source
 Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a playlist › Type: HDHomeRun antenna tuner**, then **Find tuners on my network** (or type its IP address) and **Add**.
 
 * Antenna channels are matched to your lineup by callsign, using the local over-the-air lineup from Gracenote. For example a station on antenna 3.1 becomes its cable channel, and its subchannels go to the matching lineup channels. Antenna channels not on your lineup are added as extra channels.
@@ -190,7 +218,17 @@ Use a SiliconDust HDHomeRun as a channel source: **Setup › Playlists › Add a
 * Antenna TV is MPEG-2, which browsers can't play, so tuner channels are re-encoded to H.264 by default. You can change this per playlist with the **Video** setting on its card.
 * Each antenna channel being watched or recorded uses one tuner, however many screens are on it. When all tuners are busy, the screen says what's using them (see [Connection limits](#connection-limits)).
 
-This is separate from TunerBox *pretending* to be an HDHomeRun for Plex, Emby and Jellyfin, which still works as before. That emulated tuner offers Plex as many connections as your playlists allow in total (when every playlist has a limit), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself. When they're all in use it answers Plex the way a real HDHomeRun does ("All tuners in use").
+* Adding a TunerBox's own address here is refused, so TunerBox can't be added to itself.
+
+### TunerBox as an HDHomeRun for Plex, Emby, Jellyfin and Channels DVR
+TunerBox also *pretends* to be an HDHomeRun, so those apps can add it as a tuner and get every channel on your lineup, with your channel numbers, from all your sources (playlists, antenna and My Channels).
+
+1. In the app, add an HDHomeRun tuner by its network address and enter TunerBox's address, `http://<tunerbox>:8642` (Setup › Settings › **Other apps** shows it with a **Copy** button). In Plex: **Settings › Live TV & DVR › Set up Plex DVR**, then *enter its network address manually*. TunerBox isn't found by the apps' automatic search, so type the address.
+2. For the guide, use the XMLTV address `http://<tunerbox>:8642/epg.xml`, so the listings match TunerBox's numbers.
+
+* **Tuners:** it offers as many as your playlists allow in total (when every playlist has a limit), otherwise 4; set **Tuners offered to Plex** in Settings to choose the number yourself. When they're all in use it answers the way a real HDHomeRun does ("All tuners in use").
+* **Sharing:** Plex watching a channel that a TV screen or a recording is already on shares that one connection (see [Connection limits](#connection-limits)).
+* **Two TunerBoxes:** give each its own **Network name** (Setup › Settings › Other apps) before adding them, so the apps tell them apart. Each one has its own HDHomeRun device ID.
 
 ## Connection limits
 Xtream accounts usually allow only 1 or 2 streams at once, and an HDHomeRun has a fixed number of tuners. TunerBox keeps to that limit for each playlist, so a channel that can't start tells you why instead of showing No Signal.
@@ -256,6 +294,18 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Xtream feeds aren't checked unless *probe Xtream* is on in Settings, because providers limit connections.
   * Empty and ended slots ("NO EVENT STREAMING", "ESPN+ 12") are folded away under **Show empty and ended slots**.
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
+
+### Game stats
+While a game is on, press **X** (or Menu › **Game stats & live scores**) for its box score in a panel down the right. The picture keeps playing, shrunk into the space beside it; on a phone held upright the panel is a sheet along the bottom with the picture above it.
+
+* **Tabs** (◀ ▶): each team's players, **Team stats**, **Plays** (the latest 10, newest first) and **Live scores**. ▲ ▼ scroll.
+  * Basketball shows points, rebounds, assists and field goals; football passing, rushing and receiving; hockey skaters and goalies; baseball batting and pitching. Soccer has team stats only.
+  * Stats start when the game does, and update every 20 seconds.
+* **Live scores** lists every other game being played in the leagues you follow (men's college basketball is Division I only; women's college basketball is left out), your teams' games first, up to 15 at a time. ▲ ▼ pick one and OK watches it. If more than one channel or event feed has it, you choose which, as on the Sports screen. The panel stays open and switches to that game.
+* On a channel with no game the scoreboard knows about, the panel shows just the **Live scores** tab, or says no games are live. With no leagues or teams picked in Setup › Settings › **Sports**, it says to turn them on there.
+* Channel up/down, number keys, volume and mute still work with the panel open. Back or X closes it.
+* It works for games in the leagues ticked in Setup › Settings › **Sports** that are matched to the channel or event feed you're watching (the ones with a score in Sports › On Now). Stats come from ESPN's public game summaries, with no account needed.
+* **Roku:** **\*** opens the Menu: choose **Game stats & live scores** (also under **More** on the control bar).
 
 ## On Demand (movies and TV shows)
 Many playlists come with a library of movies and shows besides the live channels. TunerBox leaves it alone until you turn it on in Setup › **Playlists**, on the playlist's card: Until a playlist has it turned on, On Demand is left out of Home, the Menu, the key hints and the phone remote.
