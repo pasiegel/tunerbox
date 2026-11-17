@@ -277,7 +277,7 @@ function odMovieDialog(d) {
   entries.push(odListEntry(d));
   entries.push({ label: d.watched ? "Mark as not watched" : "Mark as watched", act: () => odMark(d.id, !d.watched) });
   const others = (d.versions || []).filter((v) => !v.current);
-  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || "no label").join(", ")})`, act: () => odVersions(d) });
+  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || v.where || "no label").join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
   openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
@@ -299,8 +299,9 @@ function odVersions(d) {
   const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else odMovie(v.id); };
   openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
     ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
-      const same = all.filter((x) => x.tag === v.tag), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
-      return { label: `${v.tag || "No label"}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
+      const name = (x) => x.tag || x.where || "No label";
+      const same = all.filter((x) => name(x) === name(v)), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
+      return { label: `${name(v)}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
     }),
     { label: "Close", act: closeDialog }]);
 }

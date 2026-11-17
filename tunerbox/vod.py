@@ -639,11 +639,13 @@ def _by_preference(rows, first=None):
 
 def versions(t):
     """The same film or show under the playlist's other labels ("EN", "4K-EN", "DE"…) that are shown."""
-    rows = db.rows(f"SELECT t.id, t.tag, t.country {_FROM} WHERE t.kind=? AND t.search=? AND t.year=?",
+    rows = db.rows(f"SELECT t.id, t.tag, t.country, src.name AS place {_FROM} WHERE t.kind=? AND t.search=? AND t.year=?",
                    (t["kind"], t["search"], t["year"]))
     if len(rows) < 2:
         return []
-    return [{"id": r["id"], "tag": r["tag"], "current": r["id"] == t["id"]} for r in _by_preference(rows)]
+    # "where": the playlist or library it's in, so copies with no label can be told apart ("Movies", "35mm")
+    return [{"id": r["id"], "tag": r["tag"], "where": r["place"] or "", "current": r["id"] == t["id"]}
+            for r in _by_preference(rows)]
 
 
 def search(q, limit=12):
