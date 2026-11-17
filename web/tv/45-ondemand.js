@@ -542,8 +542,16 @@ function vodStart(at) {
   showVodBar();
 }
 function vodDropped() {
-  const v = S.vod; if (!v) return;
+  const v = S.vod; if (!v || v.checking) return;       // one check at a time: an error and the end can both fire
   const pos = vodPos();
+  v.checking = true;
+  stoppedFromSetup("", `${v.it.title} was stopped in Setup › Tuners. Press Back.`).then((stopped) => {
+    v.checking = false;
+    if (S.vod !== v) return;
+    if (stopped) { v.base = pos; v.parked = true; } else vodRetry(v, pos);
+  });
+}
+function vodRetry(v, pos) {
   if (v.retries < 3) {
     v.retries++; toast("Reconnecting…");
     v.base = pos; v.parked = true; destroyPlayer();

@@ -344,17 +344,19 @@ def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name="", source_
             return t.add(buffer, name)
 
 
-def open_for(url, client_id=None, mode=None, audio="aac", buffer=None, source_id=None):
+def open_for(url, client_id=None, mode=None, audio="aac", buffer=None, source_id=None, name=""):
     """A screen tunes `url`: take it off whatever it was playing (channel, movie, TS or HLS), then join
     the tuner. Raises connections.Full when the playlist has no connection left, before any response
     is sent, so the screen gets a 503 instead of an empty stream. Checked before the old stream is
-    stopped, so a full playlist doesn't cost the screen what it was watching (join checks again)."""
+    stopped, so a full playlist doesn't cost the screen what it was watching (join checks again).
+    `name`: who it is for Setup › Tuners when there's no `client_id` (connections.app_reader)."""
     from . import connections, hls
+    connections.after_stop(client_id, url)
     connections.check(source_id, url, mode or config.get("video_mode", "copy"), audio, client_id or "")
     if client_id:
         streaming.stop_client(client_id)
         hls.stop_client(client_id)
-    sub = join(url, mode, audio, buffer, name=client_id or "", source_id=source_id)
+    sub = join(url, mode, audio, buffer, name=client_id or name, source_id=source_id)
     if client_id:
         _clients[client_id] = sub
     return sub
@@ -385,9 +387,19 @@ def running():
     for t in ts:
         with t.lock:
             names = [s.name for s in t.subs]
-        out.append({"url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names, "source_id": t.source_id,
+        out.append({"id": id(t), "url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names, "source_id": t.source_id,
                     "since": int(t.started), "mb": round(t.sent / 1e6, 1)})
     return out
+
+
+def stop_id(tid):
+    """Force-stop one running tuner (Setup › Tuners › Stop): every viewer on it gets the end of the stream.
+    `tid` is the id from running(). True if it was running."""
+    with _lock:
+        ts = [t for t in _tuners if id(t) == tid and not t.ended]
+    for t in ts:
+        t.stop()
+    return bool(ts)
 
 
 def stop_client(client_id):

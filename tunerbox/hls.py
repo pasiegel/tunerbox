@@ -75,6 +75,7 @@ def start(raw_url, client=None, mode=None, buffer=None, pre=(), label="", source
     global _reaper
     from . import connections, streaming, tuner
     buffer = buffer_seconds(buffer)
+    connections.after_stop(client, raw_url)
     # room first, so a full playlist doesn't cost the viewer what it was watching (checked again below)
     if pre:
         connections.check(source_id, client=client or "")
@@ -122,9 +123,17 @@ def playing():
     """HLS sessions with their own provider connection (On Demand on iPhone / iPad): [{url, label, client, since}].
     Channels share a tuner, so tuner.running() lists them. `url` holds the provider login."""
     with _lock:
-        return [{"url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"],
+        return [{"id": sid, "url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"],
                  "source_id": s.get("source_id")}
-                for s in _sessions.values() if not s["sub"] and s.get("url")]
+                for sid, s in _sessions.items() if not s["sub"] and s.get("url")]
+
+
+def stop_id(sid):
+    """Force-stop one session (Setup › Tuners › Stop). True if it was running."""
+    if sid not in _sessions:
+        return False
+    _stop(sid)
+    return True
 
 
 def _feed(sub, proc):
