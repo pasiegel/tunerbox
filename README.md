@@ -38,6 +38,8 @@ Guide listings come from Gracenote for your lineup, plus the playlists' own guid
 | HDHomeRun tuner (emulated) | `http://<tunerbox>:8642` | Plex (Live TV & DVR), Emby, Jellyfin, Channels DVR: add it as an HDHomeRun tuner |
 
 ## Getting started
+New to TunerBox? The **[Getting started guide](docs/getting-started.md)** walks through the first setup with screenshots.
+
 1. **Install.** Download the latest build for your computer from the **Releases** page: the Windows `TunerBox-Setup-….exe`, the Mac `.dmg` or the Linux `.tar.gz`. ffmpeg is included, nothing else to install. (Or run from source, below.)
 2. **Open TunerBox.** It shows **No channels yet**; press Enter or click to open **Setup**.
 3. **Pick your area.** It starts with a sample cable lineup. To use yours: Setup › **Guide**, enter your ZIP or postal code, press **Find providers**, choose your cable, satellite or antenna lineup and press **Save**.
@@ -81,7 +83,7 @@ The PC running TunerBox does the tuning, guide and DVR, and must be on for the o
 
 iPhone/iPad Safari plays the server's HLS output (`/api/hls/<number>`); other browsers use MPEG-TS over Media Source Extensions.
 
-On a phone the TV screen switches to a touch layout: bigger buttons, panels that fit the screen and a **Close** button to leave the guide or a menu. Tap the picture to show or hide the controls (see [On-screen controls](#on-screen-controls)) and swipe up or down to change channel. Held upright, the top buttons show a small label under each icon so they all fit. On an iPhone, the full-screen button opens the video in Safari's own player.
+On a phone the TV screen switches to a touch layout: bigger buttons and panels that fit the screen. A **Close** button (bottom right) leaves the guide or a menu on phones, tablets and iPads, and in any browser once the mouse is used. Tap the picture to show or hide the controls (see [On-screen controls](#on-screen-controls)) and swipe up or down to change channel. Held upright, the top buttons show a small label under each icon so they all fit. On an iPhone, the full-screen button opens the video in Safari's own player.
 
 Roku and other slow devices: set a playlist's **Video** to *Re-encode to 720p*, or add `?mode=roku720` to a stream URL (`http://<pc-ip>:8642/api/stream/<number>?mode=roku720`). It deinterlaces, caps the picture at 720p and the bitrate at 8 Mbps.
 
@@ -94,7 +96,7 @@ Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno
 4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. **Check all** / **Uncheck all** apply to the groups listed, so after picking a country or typing a search they only change those groups (the buttons then show the count, e.g. *Uncheck 93 listed*). **Only keep listed** keeps the listed groups and hides every other one.
    * Hidden groups are removed straight away. Ticking one again rescans the playlist to bring it back.
 5. Press **Scan playlists now**. The scan loads the playlist, checks which streams work, matches channels to your lineup, numbers the leftovers, and downloads the guides. The first scan takes a few minutes.
-6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans.
+6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans. **Feeds** shows a channel's main feed and backups, and **Remove** drops a wrong one.
 7. Press **Watch TV**.
 
 **Backing up your playlists, or moving them to another PC:** in **Setup › Playlists**, **Export playlists** saves every playlist (with its login, hidden groups, skip pattern and video setting) as a `tunerbox-playlists-<date>.json` file. **Import playlists…** on this or another TunerBox adds them back and scans; a playlist that's already there (same address and login) is updated instead of added twice. The file holds your passwords in plain text, so keep it private. Exporting only works on the TunerBox PC itself or a paired phone.
@@ -244,7 +246,8 @@ Xtream accounts usually allow only 1 or 2 streams at once, and an HDHomeRun has 
 * **When a playlist is full:** a channel with a backup feed on another playlist plays from there. Otherwise the screen shows **All connections in use**, lists what's using them (for example *Recording: The News* on 8) and offers **Watch 8 instead**: a channel that's already on can be watched on more screens for free.
 * **Recordings come first:** a recording that's starting takes a connection from live TV or On Demand when the playlist is full. That screen then gets the same message, with the recording's channel to switch to. Turn this off in **Setup › Settings › DVR › Recordings come first**: the recording then waits for a connection to free up. A recording never takes over from another recording.
 * **Conflicts:** recordings on different channels that overlap by more than a playlist allows are marked **⚠ CONFLICT** under Coming up in Recordings, with the reason, and you're warned when you schedule one. A channel whose backup feed is on another playlist with room doesn't count as a conflict.
-* **Setup › Tuners** shows each playlist's connections in use against its limit, and who is using each one.
+* **Setup › Tuners** shows each playlist's connections in use against its limit, what each one is playing (with the show on now), and who is using it: a TV screen, a recording, a Roku by its name, or Plex, VLC, Kodi, Jellyfin, Emby or Channels DVR.
+* **Stop** (Setup › Tuners, on each stream) ends a stuck or unwanted stream for everyone on it and frees its connection, after asking. A recording on it is stopped too. TV screens show *Stopped from Setup* instead of reconnecting, until a channel is picked; apps like Roku and Plex can't reopen it for 30 seconds.
 
 ## Phone remote
 Pair a phone once and use it as the remote for any TunerBox screen (the PC window, a browser on the TV, the iPad), or to manage playlists from the sofa.
@@ -387,6 +390,7 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * **Cable networks** match by normalized name plus aliases (CNN = Cable News Network, HGTV, A&E…). The tvg-id only supports a name match, since many playlists set tvg-ids loosely.
 * **Penalties** push down UK/Canada feeds, West/Pacific feeds, and Spanish feeds on English channels.
 * **Backups.** Up to 4 more matching feeds are kept per channel. If the main one dies, the box tries them in order.
+* **Feeds list.** In **Setup › Channel lineup**, an automatically matched channel with backups has a **Feeds** button: it lists the main feed and its backups in the order they're tried, each with a preview. **Remove** takes a wrong feed off that channel for good (rescans and re-matching skip it); removing the main feed makes the first backup the main one. **Allow again** brings the removed feeds back and re-matches.
 * **Skipped** on purpose: public-access, government-access and PPV slots.
 
 ## Files
