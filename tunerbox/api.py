@@ -19,7 +19,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -287,6 +287,19 @@ def api_sports_teams(league: str):
         return scoreboard.teams(league)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Couldn't get the teams from ESPN: {e}")
+
+
+@app.get("/api/sports/stats")
+def api_sports_stats(ch: str = "", feed: str = "", id: str = ""):
+    """Box score of the game on channel `ch` or event feed `feed` (or game `id`), for the stats panel
+    while watching, and the other live games. "game" is null when the scoreboard doesn't know a game
+    there; "others" still lists every live game, so the panel can open on its Live scores tab.
+    "enabled" is false when no leagues or favorite teams are picked in Setup › Settings › Sports."""
+    if not scoreboard.selected():
+        return {"game": None, "others": [], "enabled": False}
+    gid = id or gamestats.game_for(ch=ch, feed=feed)
+    game = gamestats.summary(gid) if gid else None
+    return {"game": game, "others": gamestats.others(gid if game else None), "enabled": True}
 
 
 @app.get("/api/sports/alerts")

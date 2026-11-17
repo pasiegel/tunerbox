@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.routing import Route
 
-from tunerbox import api, db
+from tunerbox import api, db, gamestats, scoreboard, sports
 
 # (method, path) exactly as the Roku calls them; {x} marks a value the Roku fills in
 ROKU_ROUTES = [
@@ -22,6 +22,7 @@ ROKU_ROUTES = [
     ("GET", "/api/sports"),
     ("GET", "/api/sports/group"),
     ("GET", "/api/sports/check"),
+    ("GET", "/api/sports/stats"),
     ("POST", "/api/sports/check"),
     ("GET", "/api/vod"),
     ("GET", "/api/vod/categories"),
@@ -118,3 +119,32 @@ def test_vod_counts(client):
     for kind in ("movie", "series"):
         for key in ("total", "list", "continue"):
             assert key in c[kind], f"{kind}.{key}"
+
+
+def test_sports_stats_fields(client, monkeypatch):
+    # StatsView.brs reads these: the game (header, team tabs, Team stats, Plays) and the other live games
+    from test_gamestats import _ev, _nba
+    monkeypatch.setattr(gamestats, "game_for", lambda ch="", feed="": "nba:1")
+    monkeypatch.setattr(gamestats, "summary", lambda gid: {**gamestats.parse("nba", _nba()), "id": gid})
+    gamestats._lookup["t"] = 0
+    feed = {"key": "f9", "name": "NBA 03", "group": "NBA League Pass", "status": "ok", "slot": False}
+    monkeypatch.setattr(sports, "overview", lambda tab="": {"on_now": [
+        {"event": _ev("nba:2"), "ch": {"number": 206, "name": "ESPN"}, "also": [{"number": 207, "name": "ESPN2"}], "feeds": [feed]}]})
+    monkeypatch.setattr(gamestats, "_live_scores", lambda lg, now: {})
+    monkeypatch.setattr(scoreboard, "selected", lambda: ["nba"])
+    d = client.get("/api/sports/stats", params={"ch": "5"}).json()
+    assert d["enabled"] is True                  # false: StatsView says to turn sports on in Settings
+    gamestats._lookup["t"] = 0
+    g = d["game"]
+    for key in ("id", "league", "state", "detail", "teams", "players", "team_stats", "plays"):
+        assert key in g, key
+    for key in ("name", "abbr", "color", "score", "record"):
+        assert key in g["teams"][0], key
+    tb = g["players"][0]["tables"][0]
+    assert {"abbr"} <= g["players"][0].keys() and {"title", "cols", "rows"} <= tb.keys()
+    assert {"name", "num", "stats"} <= tb["rows"][0].keys()
+    assert {"label", "values"} <= g["team_stats"][0].keys() and {"text", "when", "score"} <= g["plays"][0].keys()
+    o = d["others"][0]
+    for key in ("id", "name", "league", "detail", "teams", "ch", "also", "feeds"):
+        assert key in o, key
+    assert {"number", "name"} <= o["ch"].keys() and {"key", "name", "group", "status", "slot"} <= o["feeds"][0].keys()
