@@ -52,14 +52,14 @@ DEFAULTS = {
     "lineup_csv": "channels.csv",
     # The provider lineup that channels.csv was made for. If you pick a different provider in
     # Setup > Guide the CSV is ignored, so the two don't mix. "" = always use the CSV.
-    "lineup_csv_lineup": "USA-MI21490-X",
+    "lineup_csv_lineup": "USA-CA00053-DEFAULT",
     # Local guide from Gracenote (same data zap2it/TV Guide sites use)
     "gracenote": {
         "enabled": True,
-        "postal_code": "49503",
+        "postal_code": "90210",
         "country": "USA",
-        "lineup_id": "USA-MI21490-X",      # Xfinity - Digital, Grand Rapids
-        "headend_id": "MI21490",
+        "lineup_id": "USA-CA00053-DEFAULT",   # Charter Spectrum - Digital, Beverly Hills
+        "headend_id": "CA00053",
         "device": "X",
         "hours": 48,
     },
