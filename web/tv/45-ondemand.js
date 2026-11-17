@@ -472,7 +472,7 @@ function vodPos() {
   return v.parked ? v.base : v.base + (video.currentTime || 0);
 }
 function vodSave() {
-  const v = S.vod; if (!v || v.done) return;
+  const v = S.vod; if (!v || v.done || v.it.catchup) return;     // catch-up shows aren't resumed later
   const pos = vodPos();
   if (pos < 5) return;
   fetch("/api/vod/progress", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
@@ -498,16 +498,19 @@ async function playVod(id, start, back) {
   vodLeave();
   recLeave(); S.mode = "vod"; hideBanner();
   S.vod = { it, dur: it.duration || 0, base: start, back, retries: 0, target: null, parked: false, paused: false, done: false };
-  toast(start > 0 ? `Resuming from ${fmtDur(start)}` : it.title, 2500);
+  toast(start > 0 ? `Resuming from ${fmtDur(start)}` : it.catchup ? `↺ ${it.title}` : it.title, 2500);
   vodStart(start);
 }
 function vodStart(at) {
   const v = S.vod; if (!v) return;
   clearTimeout(v.parkTimer); clearTimeout(v.seekTimer); clearTimeout(v.endTimer);
   at = Math.max(0, v.dur ? Math.min(at, v.dur - 5) : at);
+  if (v.it.catchup) at = Math.floor(at / 60) * 60;      // the archive starts on the minute
   v.base = at; v.target = null; v.parked = false; v.paused = false;
   destroyPlayer(); hideStatic();
-  const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`;
+  const key = `v:${v.it.id}`, mode = h264Keys.has(key) ? "h264" : "";
+  const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`
+    + (mode && !hls ? `&mode=${mode}` : "");
   const fail = () => { if (S.vod === v) vodDropped(); };
   const started = (pr, mine) => { if (pr && pr.catch) pr.catch((e) => { if (e && e.name === "NotAllowedError" && mine()) showTapPlay(); }); };
   if (useHls()) {
@@ -523,7 +526,10 @@ function vodStart(at) {
         autoCleanupSourceBuffer: true, liveBufferLatencyChasing: false });
     S.player = p;
     p.attachMediaElement(video);
-    p.on(mpegts.Events.ERROR, (type, detail) => { if (S.player === p) { console.warn("player error", type, detail); fail(); } });
+    const codecErr = codecFallback(p, key, mode, () => S.vod === v && vodStart(at));
+    p.on(mpegts.Events.ERROR, (type, detail) => {
+      if (S.player === p) { console.warn("player error", type, detail); if (!codecErr(type)) fail(); }
+    });
     // the stream ended: the end of the title, or the provider dropped the connection (vodEnded tells which)
     p.on(mpegts.Events.LOADING_COMPLETE, () => {
       if (S.player !== p) return;
@@ -557,7 +563,7 @@ function vodEnded() {
 function vodFinish() {
   const v = S.vod; if (!v || v.done) return;
   v.done = true; v.base = v.dur || vodPos(); v.parked = true;
-  api("/api/vod/watched", { method: "POST", body: { id: v.it.id, watched: true } }).catch(() => {});
+  if (!v.it.catchup) api("/api/vod/watched", { method: "POST", body: { id: v.it.id, watched: true } }).catch(() => {});
   destroyPlayer(); $("playback").classList.add("hidden");
   const nx = v.it.next;
   if (!nx) { vodStop(); return; }
@@ -590,7 +596,10 @@ function vodPause() {
 function vodSeek(delta) {
   const v = S.vod; if (!v || v.done) return;
   let t = Math.max(0, vodPos() + delta);
+  // catch-up: whole minutes (◀ ▶ = 1 minute), as the archive is asked for by the minute
+  if (v.it.catchup) t = Math.max(0, Math.floor((vodPos() + Math.sign(delta) * Math.max(60, Math.abs(delta))) / 60) * 60);
   if (v.dur) t = Math.min(t, Math.max(0, v.dur - 10));
+  if (v.it.catchup && v.it.stop > now()) t = Math.min(t, Math.max(0, now() - v.it.start - 90));    // not past what has aired
   v.target = t;
   showVodBar();
   clearTimeout(v.seekTimer); v.seekTimer = setTimeout(() => { if (S.vod === v) vodStart(t); }, 600);   // several presses = one jump
@@ -599,10 +608,10 @@ let vodBarTimer;
 function drawVodBar() {
   const v = S.vod; if (!v) return;
   const pos = vodPos();
-  $("pb-title").textContent = v.it.title + (v.it.sub ? ` · ${v.it.sub}` : "");
+  $("pb-title").textContent = (v.it.catchup ? "↺ " : "") + v.it.title + (v.it.sub ? ` · ${v.it.sub}` : "");
   $("pb-progress").style.width = v.dur ? `${Math.min(100, pos / v.dur * 100)}%` : "0";
   $("pb-time").textContent = `${fmtDur(pos)}${v.dur ? ` / ${fmtDur(v.dur)}` : ""}${v.target !== null ? "   Skipping…" : v.paused ? "   ❚❚ Paused" : v.parked || video.readyState < 3 ? "   Loading…" : ""}`
-    + "      ◀ 10s   ▶ 30s   OK Pause   Back Stop";
+    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop");
 }
 function showVodBar() {
   hideBanner(); drawVodBar();

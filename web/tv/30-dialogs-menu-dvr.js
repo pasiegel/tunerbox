@@ -90,7 +90,9 @@ function programDialog(ch, p) {
   const sub = `${ch.number} ${ch.name}\n${fmtDay(p.start)} ${fmtTime(p.start)} – ${fmtTime(p.stop)}` + (p.subtitle ? `\n${p.subtitle}` : "");
   const n0 = now();
   const entries = [];
+  const ended = p.stop <= n0, cu = cuAvailable(ch, p, n0);
   if (p.start <= n0 && n0 < p.stop) entries.push({ label: "Watch now", act: () => { closeDialog(); G.close(); closeHome(); tune(S.byNum.get(ch.number)); } });
+  if (cu) entries.push({ label: ended ? "↺ Watch (catch-up)" : "↺ Start over (from the beginning)", act: () => playCatchup(ch, p) });
   const rec = async (body, msg) => {
     try {
       const r = await api("/api/recordings", { method: "POST", body: { number: ch.number, start: p.start, ...body } });
@@ -106,7 +108,9 @@ function programDialog(ch, p) {
       ? { label: "🔕 Cancel reminder", act: () => { closeDialog(); toggleReminder(ch, p); } }
       : { label: "🔔 Remind me when it starts", act: () => { closeDialog(); toggleReminder(ch, p); } });
   }
-  if (p.rec) {
+  if (ended) {
+    // already aired: no recording or reminder to set
+  } else if (p.rec) {
     entries.push({ label: "Cancel this recording", act: async () => {
       const recs = await api("/api/recordings");
       const r = recs.find((x) => x.number === ch.number && x.start === p.start);
@@ -116,14 +120,15 @@ function programDialog(ch, p) {
   } else if (dvrOn()) {
     entries.push({ label: "Record this episode", act: () => rec({}, `Recording scheduled: ${p.title}`) });
   }
-  if (dvrOn()) {
+  if (dvrOn() && !ended) {
     entries.push({ label: "Record series (this channel)", act: () => rec({ series: true }, `Series recording set: ${p.title}`) });
     entries.push({ label: "Record series (new episodes, any channel)", act: () => rec({ series: true, new_only: true, any_channel: true }, `Series recording set: ${p.title}`) });
   }
   entries.push({ label: S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`,
                  act: () => { closeDialog(); toggleFav(ch); } });
   entries.push({ label: "Close", act: closeDialog });
-  openDialog(p.title, sub, entries);
+  const gone = ended && !cu ? `\nThis show has ended${ch.catchup ? " and is no longer in the channel's archive" : ""}` : "";
+  openDialog(p.title, sub + gone, entries);
   $("dlg-img").classList.add("art"); showArt($("dlg-img"), ch.number, p);
 }
 
@@ -139,13 +144,22 @@ const MENU = [
   { label: "Sports & Events", homeOff: true, act: () => { closeMenu(); openSports(); } },
   { label: "Search", homeOff: true, act: () => { closeMenu(); openSearch(); } },
   { label: "My Recordings (DVR)", homeOff: true, feat: "dvr", act: () => { closeMenu(); openDvr(); } },
-  { head: "This channel" },
+  { head: "This channel",
+    get headHtml() {
+      const ch = cuLive() && curCh();
+      return ch ? `This channel <span class="cu-head">· &#8634; Catch-up: ${cuDaysText(ch).toLowerCase()}</span>` : "";
+    } },
   { get label() {
       const ch = S.mode === "live" && curCh();
       if (!ch || ch.feed) return "Add to Favorites (tune to a channel first)";
       return S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`;
     },
     act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
+  { get label() {
+      const ch = cuLive() && curCh();
+      return `↺ Start this show over${ch ? ` (or a show from the last ${cuDaysText(ch).toLowerCase()} in the Guide)` : ""}`;
+    }, catchup: true, act: () => { closeMenu(); startOver(); } },
+  { label: "Game stats & live scores (X)", act: () => { closeMenu(); openStats(); } },
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
     const url = ch.feed ? `${location.origin}/api/feed/stream?key=${encodeURIComponent(ch.feed)}` : `${location.origin}/api/stream/${ch.number}`;
@@ -187,11 +201,11 @@ if (window.TunerBoxApp) MENU.splice(MENU.findIndex((e) => e.id === "full"), 1, {
 let menuShown = MENU;
 function renderMenu(sel) {
   if (sel === undefined || sel < 0 || menuShown[sel].head !== undefined) sel = menuShown.findIndex((e) => e.head === undefined);
-  fillList($("menu-list"), menuShown.map((e) => (e.head !== undefined ? { cls: e.head ? "hdr" : "hdr line", html: esc(e.head) } : e)), sel);
+  fillList($("menu-list"), menuShown.map((e) => (e.head !== undefined ? { cls: e.head ? "hdr" : "hdr line", html: e.headHtml || esc(e.head) } : e)), sel);
 }
 function openMenu() {
   hideBanner();
-  const items = MENU.filter((e) => !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
+  const items = MENU.filter((e) => !(e.catchup && !cuLive()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
   menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
   renderMenu();
   S.layer.push("menu"); $("menu").classList.remove("hidden", "two");

@@ -108,7 +108,8 @@ const G = {
     if (top() === "home") homeReveal();                                // back to Home, TV still in its corner
     else if (!S.layer.includes("home")) video.classList.remove("pip");
   },
-  minWin() { return Math.floor(now() / HALF) * HALF; },
+  // as far back as the longest catch-up archive goes (now, without catch-up)
+  minWin() { return Math.floor((now() - cuDays() * 86400) / HALF) * HALF; },
 
   progsFor(num) {
     const e = this.cache.get(num);
@@ -218,12 +219,14 @@ const G = {
       for (const p of this.cells(ch.number)) {
         const l = Math.max(p.start, this.win), r = Math.min(p.stop, this.win + this.span);
         const isSel = !this.filterFocus && i === this.row && sel && p.start === sel.start;
+        const past = !p.empty && p.stop <= n0, cu = past && cuAvailable(ch, p, n0);
         const c = ["g-p", p.empty ? "empty" : (p.category || ""), (p.start <= n0 && n0 < p.stop) ? "now" : "", isSel ? "sel" : "",
-                   this.genre && !p.empty && p.genre !== this.genre ? "dim" : ""].join(" ");
+                   past ? "past" : "", cu ? "cu" : "", this.genre && !p.empty && p.genre !== this.genre ? "dim" : ""].join(" ");
         const pre = p.start < this.win ? "&#9664; " : "";
         const post = p.stop > this.win + this.span ? " &#9654;" : "";
         const title = p.empty && !ch.epg ? ch.name : p.title;
-        const dot = p.rec ? '<span class="dot">&#9679;</span>' : (p.series ? '<span class="dot">&#9679;&#9679;</span>' : "");
+        const dot = (p.rec ? '<span class="dot">&#9679;</span>' : (p.series ? '<span class="dot">&#9679;&#9679;</span>' : ""))
+          + (cu ? '<span class="cu-i" title="Catch-up">&#8634;</span>' : "");
         html += `<div class="${c}" data-i="${i}" data-s="${p.start}" style="left:${(l - this.win) / this.span * 100}%;width:${(r - l) / this.span * 100}%">`
           + `${dot}<span class="t">${pre}${esc(title)}${post}</span></div>`;
       }
@@ -254,7 +257,9 @@ const G = {
     }
     $("gi-title").innerHTML = esc(p.title) + " " + flags(p);
     $("gi-sub").textContent = [p.episode, p.subtitle].filter(Boolean).join("  ·  ");
-    $("gi-meta").textContent = `${fmtDay(p.start)}  ${fmtTime(p.start)} – ${fmtTime(p.stop)}   ·   ${ch.number} ${ch.label || ch.name}` + (p.category ? `   ·   ${p.category}` : "");
+    const n0 = now(), cu = cuAvailable(ch, p, n0);
+    const cuNote = !cu ? "" : p.stop <= n0 ? "   ·   ↺ OK to watch (catch-up)" : "   ·   ↺ OK › Start over";
+    $("gi-meta").textContent = `${fmtDay(p.start)}  ${fmtTime(p.start)} – ${fmtTime(p.stop)}   ·   ${ch.number} ${ch.label || ch.name}` + (p.category ? `   ·   ${p.category}` : "") + cuNote;
     $("gi-desc").textContent = p.descr || "";
   },
   move(dr) {
@@ -319,7 +324,7 @@ const G = {
   ok() {
     const p = this.selected(); const ch = this.ch(this.row);
     const n0 = now();
-    if (!p || p.empty || (p.start <= n0 && n0 < p.stop)) {
+    if (!p || p.empty || (p.start <= n0 && n0 < p.stop && !cuAvailable(ch, p, n0))) {
       if (this.list[this.row] !== S.idx || S.mode !== "live") tune(this.list[this.row]);
       closeHome(); this.close();          // watching: full-screen TV, not back to Home
       return;

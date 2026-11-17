@@ -119,6 +119,7 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | D | recordings | |
 | / | search | search |
 | T | Sports & Events | Sports & Events |
+| X | game stats | |
 | O | On Demand | On Demand |
 | M | menu | |
 | U, +/− | mute, volume | |
@@ -151,6 +152,20 @@ Recordings remember where you stopped, on the server, so any screen can **Resume
 
 ## Guide genre filter
 In the guide, press **▲** on the first channel to highlight the genre picker next to the date, then **◀ ▶** to pick **All, Movies, Sports, News or Kids**; **OK** or **▼** goes back to the channels. That needs only the arrows and OK, so it works with any remote. **C** on a keyboard steps through the genres too (or give it a button of its own in **Remote control setup**: *Guide: filter by genre*), and on a touch screen you tap the day at the top left. Only channels with a show of that genre on in the hours shown are listed, and their other shows are dimmed; moving through time updates the list. It works with the Favorites guide too (V). Genres come from the guide's categories, so channels whose guide has none never show up in a filter.
+
+## Catch-up TV
+Some providers keep an archive of what their channels showed in the last few days: catch-up, also called timeshift or replay. TunerBox reads it from the playlist and shows it in the guide. No setup is needed.
+
+* **Xtream logins:** channels the provider marks with an archive (`tv_archive`), with the number of days it keeps.
+* **M3U playlists:** the `catchup`, `catchup-days` and `catchup-source` attributes (as in Kodi and TiviMate: `default`, `append`, `shift`, `flussonic` and `xc`), or the older `timeshift` / `tvg-rec`.
+
+On a channel with catch-up:
+
+* **You can tell:** the info banner shows **↺ CATCH-UP 3 DAYS** (or however long that channel's archive is), and the Menu's *This channel* heading says the same.
+* **Start over:** Menu › **↺ Start this show over** (or **Start over** under **More** on the on-screen controls) plays the show on now from the beginning. It's in the Menu rather than on a key, so it works with any remote.
+* **Watch shows that already aired:** in the guide, **◀** goes back as far as the archive does. Shows you can still watch have a **↺**. OK on one gives **Watch (catch-up)**; on the show on now, **Start over**.
+
+A catch-up show plays in the On Demand player: OK pauses, **◀ ▶** move a minute (the archive starts on the minute), PgUp/PgDn 5 minutes, and Back returns to live TV. It uses one of the provider's connections, like a live channel. Only the channels the provider keeps an archive for have it. With a big provider that is often a few hundred channels, mostly UK and European ones. The guide keeps past listings for those channels for as long as their archive.
 
 ## Themes
 **Setup › Settings › Screens › Theme** sets the colours for every TV screen, Setup and the phone remote: **Midnight** (the default), **Classic Blue**, **Retro 90s**, **High Contrast** and **Light**. A TV screen can pick its own in **Menu › Theme** (kept in that browser); *Use the default* follows Setup again. Light is for Setup and the phone remote: TV screens stay dark with it, since their text sits on pictures and video.
@@ -279,6 +294,18 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Xtream feeds aren't checked unless *probe Xtream* is on in Settings, because providers limit connections.
   * Empty and ended slots ("NO EVENT STREAMING", "ESPN+ 12") are folded away under **Show empty and ended slots**.
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
+
+### Game stats
+While a game is on, press **X** (or Menu › **Game stats & live scores**) for its box score in a panel down the right. The picture keeps playing, shrunk into the space beside it; on a phone held upright the panel is a sheet along the bottom with the picture above it.
+
+* **Tabs** (◀ ▶): each team's players, **Team stats**, **Plays** (the latest 10, newest first) and **Live scores**. ▲ ▼ scroll.
+  * Basketball shows points, rebounds, assists and field goals; football passing, rushing and receiving; hockey skaters and goalies; baseball batting and pitching. Soccer has team stats only.
+  * Stats start when the game does, and update every 20 seconds.
+* **Live scores** lists every other game being played in the leagues you follow (men's college basketball is Division I only; women's college basketball is left out), your teams' games first, up to 15 at a time. ▲ ▼ pick one and OK watches it. If more than one channel or event feed has it, you choose which, as on the Sports screen. The panel stays open and switches to that game.
+* On a channel with no game the scoreboard knows about, the panel shows just the **Live scores** tab, or says no games are live. With no leagues or teams picked in Setup › Settings › **Sports**, it says to turn them on there.
+* Channel up/down, number keys, volume and mute still work with the panel open. Back or X closes it.
+* It works for games in the leagues ticked in Setup › Settings › **Sports** that are matched to the channel or event feed you're watching (the ones with a score in Sports › On Now). Stats come from ESPN's public game summaries, with no account needed.
+* **Roku:** **\*** opens the Menu: choose **Game stats & live scores** (also under **More** on the control bar).
 
 ## On Demand (movies and TV shows)
 Many playlists come with a library of movies and shows besides the live channels. TunerBox leaves it alone until you turn it on in Setup › **Playlists**, on the playlist's card: Until a playlist has it turned on, On Demand is left out of Home, the Menu, the key hints and the phone remote.

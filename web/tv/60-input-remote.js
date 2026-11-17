@@ -7,7 +7,7 @@ const ACTIONS = [
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
   ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"], ["c", "Guide: filter by genre"],
-  ["h", "Home"], ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["o", "On Demand"],
+  ["h", "Home"], ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["x", "Game stats"], ["o", "On Demand"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [String(n), `Number ${n}`]),
@@ -27,7 +27,7 @@ const DEFAULT_BINDINGS = {
   r: "r", MediaRecord: "r", ColorF0Red: "r",
   d: "d", DVR: "d",
   "*": "*", a: "*", Favorites: "v", v: "v", c: "c",
-  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", o: "o",
+  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", x: "x", o: "o",
   "+": "VolUp", "=": "VolUp", AudioVolumeUp: "VolUp",
   "-": "VolDown", "_": "VolDown", AudioVolumeDown: "VolDown",
   u: "u", AudioVolumeMute: "u",
@@ -172,6 +172,7 @@ function handleKey(k, ev) {
   }
   if (layer === "search") { searchKey(k); return true; }
   if (layer === "sports") { sportsKey(k); return true; }
+  if (layer === "stats") { statsKey(k); return true; }
   if (layer === "od") { odKey(k); return true; }
   if (layer === "menu") {
     if (k === "Back" || k === "m") closeMenu();
@@ -263,6 +264,7 @@ function handleKey(k, ev) {
     case "d": openDvr(); break;
     case "/": openSearch(); break;
     case "t": openSports(); break;
+    case "x": openStats(); break;
     case "o": openOD(); break;
     case "r": {
       if (!dvrOn()) { toast(DVR_OFF, 5000); break; }

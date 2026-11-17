@@ -175,7 +175,13 @@ class FS:
             self.auth = {"username": sh.get("username") or None, "password": sh.get("password") or None,
                          "port": int(sh.get("port") or 445), "connection_timeout": 10}
             if not self.auth["username"]:
-                self.auth["username"], self.auth["password"] = "guest", self.auth["password"] or ""
+                # An open share (Unraid "Public", Samba "guest ok"): log in as guest over NTLM. The password
+                # mustn't be empty (an empty one makes the client look for a Kerberos ticket instead), and a
+                # guest session has no signing key, so signing and the negotiate check can't be required.
+                import smbclient
+                self.auth.update(username="guest", password=self.auth["password"] or "guest",
+                                 auth_protocol="ntlm", require_signing=False)
+                smbclient.ClientConfig(require_secure_negotiate=False)
 
     def full(self, rel=""):
         rel = str(rel or "").strip("/")

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -87,12 +88,15 @@ def fetch_m3u(src):
     else:
         text = Path(loc).read_text(encoding="utf-8", errors="replace")
     header, entries = parse_m3u(text)
+    from . import catchup
     out = []
     for e in entries:
         a = e["attrs"]
+        days, rule = catchup.m3u_info(a, header)
         out.append({
             "name": e["name"], "url": e["url"], "tvg_id": a.get("tvg-id", ""),
             "logo": a.get("tvg-logo", ""), "grp": a.get("group-title", ""),
+            "archive_days": days, "catchup": rule,
         })
     epg = (header.get("x-tvg-url") or header.get("url-tvg") or "").split(",")[0].strip()
     if epg and not re.match(r"^https?://", epg, re.I) and not Path(epg).is_absolute():
@@ -142,6 +146,16 @@ def save_account(src, info):
            "trial": str(ui.get("is_trial") or "0").strip() in ("1", "true", "True"),
            "created": _int(ui.get("created_at")), "checked": int(time.time())}
     db.set_meta(f"xtream_account_{src['id']}", json.dumps(acc))
+    si = info.get("server_info") if isinstance(info, dict) else None
+    if isinstance(si, dict) and si.get("time_now") and si.get("timestamp_now"):
+        # catch-up starts are written in the server's clock: how far ahead of UTC it is (to 15 minutes)
+        try:
+            wall = datetime.strptime(str(si["time_now"]).strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            off = round((wall.timestamp() - int(si["timestamp_now"])) / 900) * 900
+            if abs(off) <= 14 * 3600:
+                db.set_meta(f"xtream_tz_{src['id']}", off)
+        except (TypeError, ValueError):
+            pass
     if "max_connections" in ui:
         db.set_meta(f"xtream_max_{src['id']}", _int(ui.get("max_connections")))
     return acc
@@ -191,6 +205,7 @@ def fetch_xtream(src):
     streams = xtream_api(src, "get_live_streams") or []
     ext = src.get("xtream_format") or "ts"
     base = xtream_base(src)
+    from . import catchup
     out = []
     for s in streams:
         sid = s.get("stream_id")
@@ -203,6 +218,7 @@ def fetch_xtream(src):
             "tvg_id": s.get("epg_channel_id") or "",
             "logo": s.get("stream_icon") or "",
             "grp": cats.get(str(s.get("category_id")), ""),
+            "archive_days": catchup.xtream_days(s),
         })
     epg = f"{base}/xmltv.php?username={src['username']}&password={src['password']}"
     return out, epg
@@ -353,13 +369,16 @@ def refresh_source(src):
         c.execute("DELETE FROM source_groups WHERE source_id=?", (src["id"],))
         c.executemany("INSERT INTO source_groups(source_id, grp, count) VALUES (?,?,?)",
                       [(src["id"], g, n) for g, n in all_groups.items()])
-        c.executemany("""INSERT INTO streams(key, source_id, name, url, tvg_id, logo, grp, norm, seen_at)
-                         VALUES (?,?,?,?,?,?,?,?,?)
+        c.executemany("""INSERT INTO streams(key, source_id, name, url, tvg_id, logo, grp, norm, seen_at,
+                                             archive_days, catchup)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?)
                          ON CONFLICT(key) DO UPDATE SET name=excluded.name, url=excluded.url,
                            tvg_id=excluded.tvg_id, logo=excluded.logo, grp=excluded.grp,
-                           norm=excluded.norm, seen_at=excluded.seen_at""",
+                           norm=excluded.norm, seen_at=excluded.seen_at,
+                           archive_days=excluded.archive_days, catchup=excluded.catchup""",
                       [(key, src["id"], it["name"], it["url"], it["tvg_id"], it["logo"], it["grp"],
-                        norm(it["name"]), now) for key, it in zip(keys, kept)])
+                        norm(it["name"]), now, it.get("archive_days") or 0, it.get("catchup") or "")
+                       for key, it in zip(keys, kept)])
         c.execute("DELETE FROM streams WHERE source_id=? AND seen_at<?", (src["id"], now))
         c.execute("UPDATE sources SET status=?, epg_url=?, updated_at=? WHERE id=?",
                   (f"ok: {len(seen)} channels", epg or "", now, src["id"]))

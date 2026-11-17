@@ -176,7 +176,11 @@ $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.id === "rm-more") { $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return; }
+  if (b.id === "rm-more") {
+    $("rm-startover").classList.toggle("hidden", !cuLive());        // only on channels with catch-up
+    $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return;
+  }
+  if (b.id === "rm-startover") { clearTimeout(idleTimer); hideRemote(); startOver(); return; }
   if (!b.dataset.k) return;
   // CH up/down, favorite and mute keep the controls up (flipping through channels); others put them away
   const stay = ["ChannelUp", "ChannelDown", "*", "u"].includes(b.dataset.k);

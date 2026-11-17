@@ -43,10 +43,31 @@ function bufSecs() {
   const v = own !== null && own !== "" ? +own : +(S.settings.stream_buffer || 0);
   return isNaN(v) ? 0 : v;
 }
-function streamUrl(ch, alt, hls) {
-  const b = `&buf=${bufSecs()}`;
+function streamUrl(ch, alt, hls, mode = "") {
+  const b = `&buf=${bufSecs()}` + (mode ? `&mode=${mode}` : "");
   if (ch.feed) return `${location.origin}/api/feed/${hls ? "hls" : "stream"}?key=${encodeURIComponent(ch.feed)}&client=${CID}${b}`;
   return `${location.origin}/api/${hls ? "hls" : "stream"}/${ch.number}?alt=${alt}&client=${CID}${b}`;
+}
+// A picture this browser can't decode (HEVC/H.265 without hardware support, MPEG-2): the server converts
+// that channel / title to H.264 instead, and it's remembered for this visit. `key` names what's playing,
+// `redo` starts it again. Returns a test for player errors: true when it took over.
+const h264Keys = new Set();
+function codecFallback(p, key, mode, redo) {
+  if (mode) return () => false;
+  let done = false;
+  const go = () => {
+    if (done || S.player !== p) return done;
+    done = true; h264Keys.add(key);
+    toast("Converting the picture for this screen…", 3000);
+    setTimeout(redo, 0);
+    return true;
+  };
+  p.on(mpegts.Events.MEDIA_INFO, (mi) => {
+    const c = mi && mi.videoCodec;
+    if (c && /^(hvc1|hev1)/i.test(c) && window.MediaSource && MediaSource.isTypeSupported
+        && !MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)) go();
+  });
+  return (type) => type === mpegts.ErrorTypes.MEDIA_ERROR && go();
 }
 const bufferedAhead = () => {
   const b = video.buffered;
@@ -109,14 +130,18 @@ function play(ch, alt, onFail, again) {
   if (!window.mpegts || !mpegts.getFeatureList().mseLivePlayback) {
     showStatic(ch.number, "Playback not supported", "This browser can't play live video"); return;
   }
-  const p = mpegts.createPlayer({ type: "mpegts", isLive: true, url: streamUrl(ch, alt, false) },
+  const key = ch.feed ? `f:${ch.feed}` : `${ch.number}:${alt}`;
+  const mode = h264Keys.has(key) ? "h264" : "";
+  const p = mpegts.createPlayer({ type: "mpegts", isLive: true, url: streamUrl(ch, alt, false, mode) },
     { enableWorker: true, lazyLoad: false, enableStashBuffer: true, stashInitialSize: 256 * 1024,
       autoCleanupSourceBuffer: true, liveBufferLatencyChasing: false });
   S.player = p;
   p.attachMediaElement(video);
+  const codecErr = codecFallback(p, key, mode, again);
   p.on(mpegts.Events.ERROR, (type, detail) => {
     if (S.player !== p) return;
     console.warn("player error", type, detail);
+    if (codecErr(type)) return;
     onFail();
   });
   let played = false;
@@ -285,7 +310,8 @@ async function showBanner(full = false) {
     const p = d.now;
     if (p) {
       $("b-title").textContent = p.title || ch.name;
-      $("b-flags").innerHTML = flags(p);
+      $("b-flags").innerHTML = flags(p) + (ch.catchup && !ch.feed
+        ? `<span class="flag cu" title="Start over, or watch earlier shows: Menu, or OK on a show in the Guide">&#8634; CATCH-UP ${cuDaysText(ch)}</span>` : "");
       $("b-sub").textContent = [p.episode, p.subtitle].filter(Boolean).join("  ·  ");
       $("b-time").textContent = `${fmtTime(p.start)} – ${fmtTime(p.stop)}`;
       $("b-progress").style.width = `${Math.min(100, (now() - p.start) / (p.stop - p.start) * 100)}%`;

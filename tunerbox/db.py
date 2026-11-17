@@ -169,6 +169,8 @@ MIGRATIONS = [
     lambda c: _add_column(c, "recordings", "watched", "INTEGER DEFAULT 0"),
     lambda c: _add_column(c, "recordings", "watched_at", "INTEGER DEFAULT 0"),
     lambda c: _add_column(c, "sources", "max_conn", "INTEGER DEFAULT 0"),        # connections allowed (0 = automatic)
+    lambda c: _add_column(c, "streams", "archive_days", "INTEGER DEFAULT 0"),    # 1.9: catch-up days (0 = none)
+    lambda c: _add_column(c, "streams", "catchup", "TEXT DEFAULT ''"),           # 1.9: an M3U channel's catch-up rule
 ]
 
 

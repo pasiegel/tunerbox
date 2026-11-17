@@ -466,7 +466,8 @@ def _store(rows, windows, channels=None):
     rows = list(rows)
     chans = channels or sorted({r[0] for r in rows})
     with db.conn() as c:
-        c.execute("DELETE FROM programs WHERE stop < ?", (int(time.time()) - 6 * 3600,))
+        from . import catchup
+        catchup.prune(c)                # ended shows: kept for the archive on channels with catch-up
         for ch in chans:
             for lo, hi in windows:
                 if hi is None:

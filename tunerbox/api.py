@@ -19,10 +19,11 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
+from . import catchup  # noqa: I001
 
 log = logging.getLogger("tunerbox.api")
 ART_W = 480                     # guide show pictures: sharp in the guide panel, still small
@@ -287,6 +288,19 @@ def api_sports_teams(league: str):
         return scoreboard.teams(league)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Couldn't get the teams from ESPN: {e}")
+
+
+@app.get("/api/sports/stats")
+def api_sports_stats(ch: str = "", feed: str = "", id: str = ""):
+    """Box score of the game on channel `ch` or event feed `feed` (or game `id`), for the stats panel
+    while watching, and the other live games. "game" is null when the scoreboard doesn't know a game
+    there; "others" still lists every live game, so the panel can open on its Live scores tab.
+    "enabled" is false when no leagues or favorite teams are picked in Setup › Settings › Sports."""
+    if not scoreboard.selected():
+        return {"game": None, "others": [], "enabled": False}
+    gid = id or gamestats.game_for(ch=ch, feed=feed)
+    game = gamestats.summary(gid) if gid else None
+    return {"game": game, "others": gamestats.others(gid if game else None), "enabled": True}
 
 
 @app.get("/api/sports/alerts")
@@ -981,10 +995,22 @@ async def api_vod_poster(title_id: str):
 
 
 def _vod_item(item_id, prepare=False):
+    if catchup.is_item(item_id):                    # a show from a channel's catch-up archive
+        it = catchup.item(item_id)
+        if not it:
+            raise HTTPException(404, "That show is no longer in the channel's archive")
+        return it
     it = (vod.prepare if prepare else vod.item)(item_id)
     if not it:
         raise HTTPException(404, "That title is no longer in the playlist")
     return it
+
+
+def _vod_source(it, ss):
+    """(address, start in it) to play an On Demand title or a catch-up show from ss seconds in."""
+    if it.get("catchup"):
+        return catchup.url_at(it, ss)
+    return it["url"], ss
 
 
 def _vod_label(it):
@@ -995,15 +1021,18 @@ def _vod_label(it):
 def api_vod_play(item_id: str):
     """What the player needs before it starts: title, length, where to resume, the next episode."""
     it = _vod_item(item_id, prepare=True)
-    return {k: v for k, v in it.items() if k not in ("url", "video_mode")}     # the address holds the provider login
+    return {k: v for k, v in it.items() if k not in ("url", "video_mode", "row")}     # the address holds the provider login
 
 
 @app.get("/api/vod/stream/{item_id}")
 async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
-    cmd = vod.stream_cmd(it["url"], max(0.0, ss), mode or it["video_mode"] or None)
-    proc = await _started(lambda: streaming.start_cmd(cmd, client or None, it["url"], _vod_label(it), it["source_id"]))
-    return LiveResponse(ffmpeg_stream(it["url"], client or None, request=request, buffer=0, proc=proc),
+    url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
+    if not url:
+        raise HTTPException(404, "Can't play this")
+    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None)
+    proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
+    return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
                         cleanup=lambda: streaming.release(proc, client or None))
 
@@ -1011,8 +1040,12 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
 @app.get("/api/vod/hls/{item_id}")
 async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
-    sid = await _started(lambda: hls.start(it["url"], client or None, mode or it["video_mode"] or None, 0,
-                                           vod.hls_pre(max(0.0, ss)), _vod_label(it), it["source_id"]))
+    url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
+    if not url:
+        raise HTTPException(404, "Can't play this")
+    sid = await _started(lambda: hls.start(url, client or None, mode or it["video_mode"] or None, 0,
+                                           vod.hls_pre(ss, catchup.pace(ss) if it.get("catchup") else None),
+                                           _vod_label(it), it["source_id"]))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
@@ -1020,6 +1053,8 @@ async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str
 
 @app.post("/api/vod/progress")
 def api_vod_progress(id: str = Body(...), position: float = Body(...), duration: float = Body(0)):
+    if catchup.is_item(id):
+        return {"watched": False}                   # catch-up shows aren't kept in Continue Watching
     r = vod.set_progress(id, position, duration)
     if r is None:
         raise HTTPException(404)
@@ -1028,6 +1063,8 @@ def api_vod_progress(id: str = Body(...), position: float = Body(...), duration:
 
 @app.post("/api/vod/watched")
 def api_vod_watched(id: str = Body(...), watched: bool = Body(True)):
+    if catchup.is_item(id):
+        return {}
     return vod.set_watched(id, watched)
 
 
