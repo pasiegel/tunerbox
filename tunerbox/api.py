@@ -376,12 +376,15 @@ def api_lineup():
     streams = {s["key"]: s for s in db.rows(
         """SELECT s.key, s.name, s.grp, s.status, s.tvg_id, s.logo, src.name AS source_name
            FROM streams s JOIN sources src ON src.id=s.source_id""")}
+    removed = matcher.rejected()
     out = []
     for ch in lineup.all_channels():
         m = maps.get(ch["number"]) or {}
         s = streams.get(m.get("stream_key"))
+        alts = json.loads(m.get("alt_keys") or "[]")
+        feeds = [streams[k] for k in [m.get("stream_key")] + alts if k in streams]   # main first, then backups
         out.append({**ch, "mode": m.get("mode", ""), "score": m.get("score", 0), "reason": m.get("reason", ""),
-                    "stream": s, "alts": len(json.loads(m.get("alt_keys") or "[]"))})
+                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ()))})
     return out
 
 
@@ -406,6 +409,40 @@ def api_mapping(number: int = Body(...), stream_key: str | None = Body(None), mo
     if mode != "auto":
         matcher.rebuild_extras()
     guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/remove-feed")
+def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)):
+    """Take a wrongly matched feed (main or backup) off an auto-matched channel, for good: re-matching and
+    scans skip it. Removing the main feed makes the first backup the main one."""
+    m = db.one("SELECT * FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] != "auto":
+        raise HTTPException(400, "Only automatically matched channels have feeds to remove")
+    keys = [m["stream_key"]] + json.loads(m["alt_keys"] or "[]")
+    if stream_key not in keys:
+        raise HTTPException(404, "That feed isn't on this channel")
+    db.run("INSERT OR IGNORE INTO rejected_feeds(number, stream_key) VALUES (?,?)", (number, stream_key))
+    keys.remove(stream_key)
+    if not keys:
+        db.run("DELETE FROM mappings WHERE number=?", (number,))
+    elif stream_key == m["stream_key"]:
+        db.run("UPDATE mappings SET stream_key=?, alt_keys=?, reason=? WHERE number=?",
+               (keys[0], json.dumps(keys[1:]), "backup moved up (main feed removed)", number))
+    else:
+        db.run("UPDATE mappings SET alt_keys=? WHERE number=?", (json.dumps(keys[1:]), number))
+    matcher.rebuild_extras()
+    guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/restore-feeds")
+def api_mapping_restore_feeds(number: int = Body(..., embed=True)):
+    """Let auto match use the feeds removed from this channel again (re-matches)."""
+    db.run("DELETE FROM rejected_feeds WHERE number=?", (number,))
+    m = db.one("SELECT mode FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] == "auto":
+        jobs.rematch()
     return {"ok": True}
 
 
