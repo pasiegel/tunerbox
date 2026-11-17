@@ -26,12 +26,13 @@ _lock = threading.Lock()
 _reaper = None
 
 
-def _cmd(raw_url, mode=None, buffer=0, pre=()):
+def _cmd(raw_url, mode=None, buffer=0, pre=(), audio=None):
     if raw_url is None:         # from a tuner on stdin: already in the right format
         src = ["-f", "mpegts", "-i", "pipe:0", "-c", "copy"]
     else:
         inp, vid, aud = play_args(raw_url, mode or config.get("video_mode", "copy"), buffer)
-        src = ["-nostdin", *pre, *inp, "-sn", "-dn", *vid, *aud]
+        maps = ["-map", "0:v:0?", "-map", f"0:a:{int(audio)}?"] if audio is not None else []    # a chosen audio track
+        src = ["-nostdin", *pre, *inp, *maps, "-sn", "-dn", *vid, *aud]
     return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", *src,
             "-f", "hls", "-hls_time", "2", "-hls_list_size", str(8 + buffer // 2), "-hls_allow_cache", "0",
             "-hls_flags", "delete_segments+independent_segments+omit_endlist",
@@ -68,13 +69,14 @@ def _reap():
                 _stop(sid)
 
 
-def start(raw_url, client=None, mode=None, buffer=None, pre=(), label="", source_id=None):
+def start(raw_url, client=None, mode=None, buffer=None, pre=(), label="", source_id=None, audio=None):
     """`pre`: extra ffmpeg input options (On Demand: play at normal speed, from a start time).
     `label` names what it plays in Setup › Tuners; `source_id` is the playlist whose connection it
     uses. A channel on a full playlist raises connections.Full."""
     global _reaper
     from . import connections, streaming, tuner
     buffer = buffer_seconds(buffer)
+    connections.after_stop(client, raw_url)
     # room first, so a full playlist doesn't cost the viewer what it was watching (checked again below)
     if pre:
         connections.check(source_id, client=client or "")
@@ -94,7 +96,7 @@ def start(raw_url, client=None, mode=None, buffer=None, pre=(), label="", source
                 sub = tuner.join(raw_url, mode, "aac", buffer, name=f"hls:{client or sid}", source_id=source_id)
             elif source_id is not None:     # On Demand: a connection of its own
                 connections.check(source_id, client=client or "")
-            proc = subprocess.Popen(_cmd(None if sub else raw_url, mode, buffer, pre), cwd=d,
+            proc = subprocess.Popen(_cmd(None if sub else raw_url, mode, buffer, pre, audio), cwd=d,
                                     stdin=subprocess.PIPE if sub else subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE, creationflags=NO_WINDOW)
         except Exception:
@@ -122,9 +124,17 @@ def playing():
     """HLS sessions with their own provider connection (On Demand on iPhone / iPad): [{url, label, client, since}].
     Channels share a tuner, so tuner.running() lists them. `url` holds the provider login."""
     with _lock:
-        return [{"url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"],
+        return [{"id": sid, "url": s["url"], "label": s["label"], "client": s["client"] or "", "since": s["since"],
                  "source_id": s.get("source_id")}
-                for s in _sessions.values() if not s["sub"] and s.get("url")]
+                for sid, s in _sessions.items() if not s["sub"] and s.get("url")]
+
+
+def stop_id(sid):
+    """Force-stop one session (Setup › Tuners › Stop). True if it was running."""
+    if sid not in _sessions:
+        return False
+    _stop(sid)
+    return True
 
 
 def _feed(sub, proc):

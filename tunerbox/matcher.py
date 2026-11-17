@@ -200,10 +200,19 @@ def load_streams():
     return [r for r in rows if r["status"] != "dead" and r["norm"]]
 
 
-def _fingerprint(streams, lineup, existing):
+def rejected():
+    """Lineup number -> the feed keys removed from it in Setup (auto match never picks them again)."""
+    out = defaultdict(set)
+    for r in db.rows("SELECT number, stream_key FROM rejected_feeds"):
+        out[r["number"]].add(r["stream_key"])
+    return out
+
+
+def _fingerprint(streams, lineup, existing, removed):
     """Everything the matching pass reads. Same fingerprint = same result, so the pass can be skipped."""
     h = hashlib.sha1()
     h.update(repr((config.get("match_threshold", 86), config.get("network_fallback", True))).encode())
+    h.update(repr(sorted((n, sorted(ks)) for n, ks in removed.items())).encode())
     for ch in lineup:
         h.update(repr(sorted(ch.items())).encode())
     for num in sorted(existing):
@@ -223,7 +232,8 @@ def match_all(progress=None, force=True):
     streams = load_streams()
     lineup = db.rows("SELECT * FROM lineup ORDER BY number")
     existing = {m["number"]: m for m in db.rows("SELECT * FROM mappings")}
-    fp = _fingerprint(streams, lineup, existing)
+    removed = rejected()
+    fp = _fingerprint(streams, lineup, existing, removed)
     if not force and db.get_meta("match_fp") == fp:
         mapped = db.one("""SELECT count(*) n FROM mappings WHERE stream_key IS NOT NULL
                            AND number IN (SELECT number FROM lineup)""")["n"]
@@ -314,10 +324,10 @@ def match_all(progress=None, force=True):
             good.sort(reverse=True)
             reason = f"{inf['network'].upper()} network feed"
         # distinct URLs only
-        picked, urls = [], set()
+        picked, urls, skip = [], set(), removed.get(num, ())
         for sc, si in good:
             u = streams[si]["url"]
-            if u in urls:
+            if u in urls or streams[si]["key"] in skip:
                 continue
             urls.add(u)
             picked.append((sc, si))

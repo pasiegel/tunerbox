@@ -19,7 +19,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -170,9 +170,12 @@ async def _started(fn):
         raise HTTPException(502, str(e)) from None
 
 
-async def _live(request, row, client, mode, audio, buf):
+async def _live(request, row, client, mode, audio, buf, name=""):
     mode = mode or row.get("video_mode") or None
-    sub = await _started(lambda: tuner.open_for(row["url"], client or None, mode, audio, buf, row.get("source_id")))
+    connections.name_client(client, name)
+    who = "" if client else connections.app_reader(request.headers.get("user-agent", ""),
+                                                   request.client.host if request.client else "")
+    sub = await _started(lambda: tuner.open_for(row["url"], client or None, mode, audio, buf, row.get("source_id"), who))
     return LiveResponse(ffmpeg_stream(row["url"], client or None, mode, audio, request, buf, sub=sub),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
                         cleanup=lambda: sub.close(wait=False))
@@ -188,7 +191,7 @@ async def _hls(row, client, mode, buf, gone="No signal"):
 
 @app.get("/api/stream/{number}")
 async def api_stream(request: Request, number: int, alt: int = 0, client: str = "", mode: str = "", audio: str = "aac",
-                     buf: int = -1):
+                     buf: int = -1, name: str = ""):
     # channel list rebuilds can take a second with big playlists: keep them off the event loop
     c = await anyio.to_thread.run_sync(guide.channel, number)
     if not c or not c["streams"]:
@@ -196,7 +199,7 @@ async def api_stream(request: Request, number: int, alt: int = 0, client: str = 
     rows = await anyio.to_thread.run_sync(guide.stream_rows, c["streams"])
     if alt >= len(rows):
         raise HTTPException(404, "No more alternates")
-    return await _live(request, rows[alt], client, mode, audio, buf)
+    return await _live(request, rows[alt], client, mode, audio, buf, name)
 
 
 @app.get("/api/hls/{number}")
@@ -232,9 +235,9 @@ def _feed_row(key):
 
 @app.get("/api/feed/stream")
 async def api_feed_stream(request: Request, key: str, client: str = "", mode: str = "", audio: str = "aac",
-                          buf: int = -1):
+                          buf: int = -1, name: str = ""):
     r = await anyio.to_thread.run_sync(_feed_row, key)
-    return await _live(request, r, client, mode, audio, buf)
+    return await _live(request, r, client, mode, audio, buf, name)
 
 
 @app.get("/api/feed/hls")
@@ -373,12 +376,15 @@ def api_lineup():
     streams = {s["key"]: s for s in db.rows(
         """SELECT s.key, s.name, s.grp, s.status, s.tvg_id, s.logo, src.name AS source_name
            FROM streams s JOIN sources src ON src.id=s.source_id""")}
+    removed = matcher.rejected()
     out = []
     for ch in lineup.all_channels():
         m = maps.get(ch["number"]) or {}
         s = streams.get(m.get("stream_key"))
+        alts = json.loads(m.get("alt_keys") or "[]")
+        feeds = [streams[k] for k in [m.get("stream_key")] + alts if k in streams]   # main first, then backups
         out.append({**ch, "mode": m.get("mode", ""), "score": m.get("score", 0), "reason": m.get("reason", ""),
-                    "stream": s, "alts": len(json.loads(m.get("alt_keys") or "[]"))})
+                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ()))})
     return out
 
 
@@ -403,6 +409,40 @@ def api_mapping(number: int = Body(...), stream_key: str | None = Body(None), mo
     if mode != "auto":
         matcher.rebuild_extras()
     guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/remove-feed")
+def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)):
+    """Take a wrongly matched feed (main or backup) off an auto-matched channel, for good: re-matching and
+    scans skip it. Removing the main feed makes the first backup the main one."""
+    m = db.one("SELECT * FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] != "auto":
+        raise HTTPException(400, "Only automatically matched channels have feeds to remove")
+    keys = [m["stream_key"]] + json.loads(m["alt_keys"] or "[]")
+    if stream_key not in keys:
+        raise HTTPException(404, "That feed isn't on this channel")
+    db.run("INSERT OR IGNORE INTO rejected_feeds(number, stream_key) VALUES (?,?)", (number, stream_key))
+    keys.remove(stream_key)
+    if not keys:
+        db.run("DELETE FROM mappings WHERE number=?", (number,))
+    elif stream_key == m["stream_key"]:
+        db.run("UPDATE mappings SET stream_key=?, alt_keys=?, reason=? WHERE number=?",
+               (keys[0], json.dumps(keys[1:]), "backup moved up (main feed removed)", number))
+    else:
+        db.run("UPDATE mappings SET alt_keys=? WHERE number=?", (json.dumps(keys[1:]), number))
+    matcher.rebuild_extras()
+    guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/restore-feeds")
+def api_mapping_restore_feeds(number: int = Body(..., embed=True)):
+    """Let auto match use the feeds removed from this channel again (re-matches)."""
+    db.run("DELETE FROM rejected_feeds WHERE number=?", (number,))
+    m = db.one("SELECT mode FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] == "auto":
+        jobs.rematch()
     return {"ok": True}
 
 
@@ -1025,12 +1065,15 @@ def api_vod_play(item_id: str):
 
 
 @app.get("/api/vod/stream/{item_id}")
-async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = "", a: int = 0,
+                         name: str = ""):
+    connections.name_client(client, name)
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
-    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None)
+    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
+                         max(0, a))
     proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
     return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
@@ -1038,17 +1081,51 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
 
 
 @app.get("/api/vod/hls/{item_id}")
-async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = "", a: int = 0):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
     sid = await _started(lambda: hls.start(url, client or None, mode or it["video_mode"] or None, 0,
                                            vod.hls_pre(ss, catchup.pace(ss) if it.get("catchup") else None),
-                                           _vod_label(it), it["source_id"]))
+                                           _vod_label(it), it["source_id"], max(0, a) if a > 0 else None))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+
+
+def _lib_item(item_id):
+    """A title from your own libraries (audio tracks and subtitles are read only for those)."""
+    if catchup.is_item(item_id):
+        return None
+    it = vod.item(item_id)
+    if not it:
+        raise HTTPException(404, "That title is no longer in the library")
+    return it if library.is_library(it["source_id"]) else None
+
+
+@app.get("/api/vod/tracks/{item_id}")
+def api_vod_tracks(item_id: str):
+    """A title's audio tracks and subtitles, for the Menu while it plays. Empty for playlist titles."""
+    it = _lib_item(item_id)
+    if not it:
+        return {"audio": [], "subs": [], "library": False}
+    return {**tracks.public(tracks.info(item_id, it["url"])), "library": True}
+
+
+@app.get("/api/vod/subs/{item_id}/{sub_id}")
+def api_vod_subs(item_id: str, sub_id: str):
+    """One subtitle track as timed lines: {cues: [[start, end, text]]}. The first time, the file is read
+    for it (a long film over the network can take a minute); after that it comes from the cache."""
+    it = _lib_item(item_id)
+    if not it:
+        raise HTTPException(404, "No subtitles for this title")
+    try:
+        return {"cues": tracks.cues(item_id, it["url"], sub_id)}
+    except KeyError:
+        raise HTTPException(404, "No such subtitles") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @app.post("/api/vod/progress")
@@ -1101,6 +1178,26 @@ def api_remind_cancel(rid: int):
 def api_tuners():
     """Setup › Tuners: each running tuner and On Demand stream, who's on it, and each playlist's connection limit."""
     return connections.in_use()
+
+
+@app.get("/api/stopped")
+def api_stopped(client: str = ""):
+    """A TV screen whose stream ended asks this before reconnecting or trying a backup feed: true when
+    Setup › Tuners › Stop ended it, so it says so instead."""
+    return {"stopped": connections.was_stopped(client)}
+
+
+@app.post("/api/tuners/stop")
+def api_tuner_stop(request: Request, id: str = Body(..., embed=True)):
+    """Setup › Tuners › Stop: force-stop a stuck or unwanted stream and free its connection. Every screen
+    on it gets the end of the stream; a recording on it is stopped too (else the DVR would reopen it)."""
+    if config.get("require_pairing"):
+        _trusted(request)
+    recs = connections.stop(id, cancel=dvr.cancel)
+    if recs is None:
+        raise HTTPException(404, "That stream has already stopped")
+    log.info("Setup stopped stream %s (recordings stopped: %s)", id, recs or "none")
+    return {"ok": True, "recordings": recs}
 
 
 # ------------------------------------------------------------------ DVR

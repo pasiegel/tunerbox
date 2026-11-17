@@ -136,6 +136,10 @@ function programDialog(ch, p) {
 // homeOff: only when Home is turned off in Setup; otherwise Home's shortcuts (and V in the guide) reach them,
 // and leaving them out keeps the menu short enough not to scroll.
 const MENU = [
+  // while one of your own titles plays: its audio tracks and subtitles (47-tracks.js)
+  { head: "This title", av: true },
+  { get label() { return `Audio: ${avAudioLabel()}`; }, av: "audio", act: () => { closeMenu(); pickAudio(); } },
+  { get label() { return `Subtitles: ${S.vod && S.vod.sub ? S.vod.sub.label : "Off"}`; }, av: "subs", act: () => { closeMenu(); pickSubs(); } },
   { head: "Watch" },
   { label: "Home", needsHome: true, act: () => { closeMenu(); openHome(); } },
   { label: "TV Guide", act: () => { closeMenu(); G.open(); } },
@@ -205,7 +209,9 @@ function renderMenu(sel) {
 }
 function openMenu() {
   hideBanner();
-  const items = MENU.filter((e) => !(e.catchup && !cuLive()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
+  const t = S.mode === "vod" && S.vod && S.vod.tracks;
+  const avOn = (e) => !e.av || (t && (e.av === true || (e.av === "audio" ? t.audio.length > 1 : t.subs.length > 0)));
+  const items = MENU.filter((e) => avOn(e) && !(e.catchup && !cuLive()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
   menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
   renderMenu();
   S.layer.push("menu"); $("menu").classList.remove("hidden", "two");

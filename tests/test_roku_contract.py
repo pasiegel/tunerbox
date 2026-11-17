@@ -148,3 +148,12 @@ def test_sports_stats_fields(client, monkeypatch):
     for key in ("id", "name", "league", "detail", "teams", "ch", "also", "feeds"):
         assert key in o, key
     assert {"number", "name"} <= o["ch"].keys() and {"key", "name", "group", "status", "slot"} <= o["feeds"][0].keys()
+
+
+@pytest.mark.parametrize("path", ["/api/stream/{number}", "/api/feed/stream", "/api/vod/stream/{item_id}"])
+def test_stream_takes_roku_client_and_name(path):
+    # the Roku adds ?client=roku-<id>&name=<its name> (MainScene.brs withDevice / playVodAt) so
+    # Setup › Tuners can say which Roku is watching
+    route = next(r for r in api.app.routes if isinstance(r, Route) and r.path == path)
+    params = {p.name for p in route.dependant.query_params}
+    assert {"client", "name"} <= params

@@ -206,6 +206,12 @@ Setup › **My Library** adds your own movie and TV folders to On Demand, next t
 * **Who can add folders:** the TunerBox PC and paired devices; on a Docker server, also any browser on your home network until **Lock setup** is on (see [Security notes](#security-notes)).
 * **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
 * **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
+* **Audio tracks and subtitles:** while one of your own titles plays, Menu › **This title** has **Audio** (when the file has more than one track, e.g. a commentary or another language) and **Subtitles**. The choice is kept for that movie or show, so the next episode uses the same.
+  * Subtitles can be text ones inside the file (SRT, ASS, WebVTT, MP4 text) or subtitle files next to the video: `Movie.srt`, `Movie.en.srt`, `Movie.en.forced.srt`, or any `.srt`/`.ass`/`.vtt` in a `Subs` folder beside it. They're drawn over the picture and stay in step when you skip.
+  * The first time a film's built-in subtitles are turned on, TunerBox reads the whole file for them (about 30 seconds for a 2½-hour film over the network); after that they come straight from its cache (`cache/subs` in its data folder, nothing is written next to your files).
+  * Picture subtitles (PGS from Blu-ray, VobSub from DVD) are listed but can't be shown yet.
+  * Playlist titles (Xtream, M3U) play their first audio track without subtitles: reading them would take a second provider connection.
+* **Copies of the same film** in two libraries (or a library and a playlist) are one title with **Other versions**, named by their library or playlist when they have no language or quality label. **Your own copy comes first**: Search, the title's options and Play use it, ahead of the playlists' versions (and of *List these languages first*), and among equally good search matches films you own are listed first.
 
 ## HDHomeRun: as a source, and as a tuner for Plex
 TunerBox works with HDHomeRun both ways, at the same time.

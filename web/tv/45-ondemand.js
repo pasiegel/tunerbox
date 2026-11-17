@@ -277,7 +277,7 @@ function odMovieDialog(d) {
   entries.push(odListEntry(d));
   entries.push({ label: d.watched ? "Mark as not watched" : "Mark as watched", act: () => odMark(d.id, !d.watched) });
   const others = (d.versions || []).filter((v) => !v.current);
-  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || "no label").join(", ")})`, act: () => odVersions(d) });
+  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || v.where || "no label").join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
   openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
@@ -299,8 +299,9 @@ function odVersions(d) {
   const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else odMovie(v.id); };
   openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
     ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
-      const same = all.filter((x) => x.tag === v.tag), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
-      return { label: `${v.tag || "No label"}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
+      const name = (x) => x.tag || x.where || "No label";
+      const same = all.filter((x) => name(x) === name(v)), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
+      return { label: `${name(v)}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
     }),
     { label: "Close", act: closeDialog }]);
 }
@@ -485,6 +486,7 @@ function vodLeave() {
   clearTimeout(v.parkTimer); clearTimeout(v.seekTimer); clearTimeout(v.endTimer);
   S.vod = null;
   $("playback").classList.add("hidden");
+  subsTick();                       // takes the subtitles off
 }
 async function playVod(id, start, back) {
   if (back === undefined) back = S.layer.includes("od");      // go back to On Demand afterwards
@@ -498,8 +500,10 @@ async function playVod(id, start, back) {
   vodLeave();
   recLeave(); S.mode = "vod"; hideBanner();
   S.vod = { it, dur: it.duration || 0, base: start, back, retries: 0, target: null, parked: false, paused: false, done: false };
+  avInit(S.vod);                    // the audio track and subtitles picked last time for this movie or show
   toast(start > 0 ? `Resuming from ${fmtDur(start)}` : it.catchup ? `↺ ${it.title}` : it.title, 2500);
   vodStart(start);
+  avLoad(S.vod);
 }
 function vodStart(at) {
   const v = S.vod; if (!v) return;
@@ -510,7 +514,7 @@ function vodStart(at) {
   destroyPlayer(); hideStatic();
   const key = `v:${v.it.id}`, mode = h264Keys.has(key) ? "h264" : "";
   const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`
-    + (mode && !hls ? `&mode=${mode}` : "");
+    + (mode && !hls ? `&mode=${mode}` : "") + (v.audio > 0 ? `&a=${v.audio}` : "");
   const fail = () => { if (S.vod === v) vodDropped(); };
   const started = (pr, mine) => { if (pr && pr.catch) pr.catch((e) => { if (e && e.name === "NotAllowedError" && mine()) showTapPlay(); }); };
   if (useHls()) {
@@ -542,8 +546,16 @@ function vodStart(at) {
   showVodBar();
 }
 function vodDropped() {
-  const v = S.vod; if (!v) return;
+  const v = S.vod; if (!v || v.checking) return;       // one check at a time: an error and the end can both fire
   const pos = vodPos();
+  v.checking = true;
+  stoppedFromSetup("", `${v.it.title} was stopped in Setup › Tuners. Press Back.`).then((stopped) => {
+    v.checking = false;
+    if (S.vod !== v) return;
+    if (stopped) { v.base = pos; v.parked = true; } else vodRetry(v, pos);
+  });
+}
+function vodRetry(v, pos) {
   if (v.retries < 3) {
     v.retries++; toast("Reconnecting…");
     v.base = pos; v.parked = true; destroyPlayer();
@@ -611,7 +623,8 @@ function drawVodBar() {
   $("pb-title").textContent = (v.it.catchup ? "↺ " : "") + v.it.title + (v.it.sub ? ` · ${v.it.sub}` : "");
   $("pb-progress").style.width = v.dur ? `${Math.min(100, pos / v.dur * 100)}%` : "0";
   $("pb-time").textContent = `${fmtDur(pos)}${v.dur ? ` / ${fmtDur(v.dur)}` : ""}${v.target !== null ? "   Skipping…" : v.paused ? "   ❚❚ Paused" : v.parked || video.readyState < 3 ? "   Loading…" : ""}`
-    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop");
+    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop")
+    + (avHas(v) ? "   M Audio & subtitles" : "");
 }
 function showVodBar() {
   hideBanner(); drawVodBar();
