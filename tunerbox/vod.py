@@ -757,13 +757,14 @@ def prepare(item_id):
     return it
 
 
-def stream_cmd(raw_url, start=0.0, mode=None, pace=None):
+def stream_cmd(raw_url, start=0.0, mode=None, pace=None, audio=0):
     """ffmpeg command for a title from `start` seconds in: read at playing speed (a file would
-    otherwise arrive all at once; `pace` = other reading options), MPEG-TS out like a live channel."""
+    otherwise arrive all at once; `pace` = other reading options), MPEG-TS out like a live channel.
+    `audio`: which of its audio tracks (0 = the first)."""
     inp, vid, aud = play_args(raw_url, mode)
     seek = ["-ss", f"{start:.2f}"] if start > 0 else []
     return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or ["-re"]), *seek, *inp,
-            "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn", *vid, *aud,
+            "-map", "0:v:0?", "-map", f"0:a:{max(0, int(audio))}?", "-sn", "-dn", *vid, *aud,
             "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
 
 

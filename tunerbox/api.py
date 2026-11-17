@@ -19,7 +19,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -1025,12 +1025,13 @@ def api_vod_play(item_id: str):
 
 
 @app.get("/api/vod/stream/{item_id}")
-async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client: str = "", mode: str = "", a: int = 0):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
-    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None)
+    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
+                         max(0, a))
     proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
     return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
@@ -1038,17 +1039,51 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
 
 
 @app.get("/api/vod/hls/{item_id}")
-async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = ""):
+async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str = "", a: int = 0):
     it = await anyio.to_thread.run_sync(_vod_item, item_id)
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
     sid = await _started(lambda: hls.start(url, client or None, mode or it["video_mode"] or None, 0,
                                            vod.hls_pre(ss, catchup.pace(ss) if it.get("catchup") else None),
-                                           _vod_label(it), it["source_id"]))
+                                           _vod_label(it), it["source_id"], max(0, a) if a > 0 else None))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
+
+
+def _lib_item(item_id):
+    """A title from your own libraries (audio tracks and subtitles are read only for those)."""
+    if catchup.is_item(item_id):
+        return None
+    it = vod.item(item_id)
+    if not it:
+        raise HTTPException(404, "That title is no longer in the library")
+    return it if library.is_library(it["source_id"]) else None
+
+
+@app.get("/api/vod/tracks/{item_id}")
+def api_vod_tracks(item_id: str):
+    """A title's audio tracks and subtitles, for the Menu while it plays. Empty for playlist titles."""
+    it = _lib_item(item_id)
+    if not it:
+        return {"audio": [], "subs": [], "library": False}
+    return {**tracks.public(tracks.info(item_id, it["url"])), "library": True}
+
+
+@app.get("/api/vod/subs/{item_id}/{sub_id}")
+def api_vod_subs(item_id: str, sub_id: str):
+    """One subtitle track as timed lines: {cues: [[start, end, text]]}. The first time, the file is read
+    for it (a long film over the network can take a minute); after that it comes from the cache."""
+    it = _lib_item(item_id)
+    if not it:
+        raise HTTPException(404, "No subtitles for this title")
+    try:
+        return {"cues": tracks.cues(item_id, it["url"], sub_id)}
+    except KeyError:
+        raise HTTPException(404, "No such subtitles") from None
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @app.post("/api/vod/progress")

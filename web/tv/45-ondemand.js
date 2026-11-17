@@ -485,6 +485,7 @@ function vodLeave() {
   clearTimeout(v.parkTimer); clearTimeout(v.seekTimer); clearTimeout(v.endTimer);
   S.vod = null;
   $("playback").classList.add("hidden");
+  subsTick();                       // takes the subtitles off
 }
 async function playVod(id, start, back) {
   if (back === undefined) back = S.layer.includes("od");      // go back to On Demand afterwards
@@ -498,8 +499,10 @@ async function playVod(id, start, back) {
   vodLeave();
   recLeave(); S.mode = "vod"; hideBanner();
   S.vod = { it, dur: it.duration || 0, base: start, back, retries: 0, target: null, parked: false, paused: false, done: false };
+  avInit(S.vod);                    // the audio track and subtitles picked last time for this movie or show
   toast(start > 0 ? `Resuming from ${fmtDur(start)}` : it.catchup ? `↺ ${it.title}` : it.title, 2500);
   vodStart(start);
+  avLoad(S.vod);
 }
 function vodStart(at) {
   const v = S.vod; if (!v) return;
@@ -510,7 +513,7 @@ function vodStart(at) {
   destroyPlayer(); hideStatic();
   const key = `v:${v.it.id}`, mode = h264Keys.has(key) ? "h264" : "";
   const url = (hls) => `${location.origin}/api/vod/${hls ? "hls" : "stream"}/${vodPath(v.it.id)}?ss=${at.toFixed(1)}&client=${CID}`
-    + (mode && !hls ? `&mode=${mode}` : "");
+    + (mode && !hls ? `&mode=${mode}` : "") + (v.audio > 0 ? `&a=${v.audio}` : "");
   const fail = () => { if (S.vod === v) vodDropped(); };
   const started = (pr, mine) => { if (pr && pr.catch) pr.catch((e) => { if (e && e.name === "NotAllowedError" && mine()) showTapPlay(); }); };
   if (useHls()) {
@@ -611,7 +614,8 @@ function drawVodBar() {
   $("pb-title").textContent = (v.it.catchup ? "↺ " : "") + v.it.title + (v.it.sub ? ` · ${v.it.sub}` : "");
   $("pb-progress").style.width = v.dur ? `${Math.min(100, pos / v.dur * 100)}%` : "0";
   $("pb-time").textContent = `${fmtDur(pos)}${v.dur ? ` / ${fmtDur(v.dur)}` : ""}${v.target !== null ? "   Skipping…" : v.paused ? "   ❚❚ Paused" : v.parked || video.readyState < 3 ? "   Loading…" : ""}`
-    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop");
+    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop")
+    + (avHas(v) ? "   M Audio & subtitles" : "");
 }
 function showVodBar() {
   hideBanner(); drawVodBar();
