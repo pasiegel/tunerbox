@@ -260,7 +260,6 @@ function handleKey(k, ev) {
       break;
     case "Back": if (!$("banner").classList.contains("hidden")) hideBanner(); else if (S.lastIdx >= 0) tune(S.lastIdx); break;
     case "l": if (S.lastIdx >= 0) tune(S.lastIdx); break;
-    case "s": startOver(); break;
     case "m": openMenu(); break;
     case "d": openDvr(); break;
     case "/": openSearch(); break;

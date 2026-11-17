@@ -116,7 +116,6 @@ Changing provider later replaces the lineup: press **Scan playlists now** again 
 | ▲ on the first channel, then ◀ ▶ (or C) | | filter by genre: All, Movies, Sports, News, Kids |
 | R | record current show | record options |
 | L / Backspace | last channel | back |
-| S | start the show over ([catch-up](#catch-up-tv) channels) | |
 | D | recordings | |
 | / | search | search |
 | T | Sports & Events | Sports & Events |
@@ -162,7 +161,8 @@ Some providers keep an archive of what their channels showed in the last few day
 
 On a channel with catch-up:
 
-* **Start over:** press **S** while watching (or Menu › **Start this show over**, or **Start over** under **More** on the on-screen controls) to watch the show on now from the beginning. The info banner shows **↺ START OVER: S**.
+* **You can tell:** the info banner shows **↺ CATCH-UP 3 DAYS** (or however long that channel's archive is), and the Menu's *This channel* heading says the same.
+* **Start over:** Menu › **↺ Start this show over** (or **Start over** under **More** on the on-screen controls) plays the show on now from the beginning. It's in the Menu rather than on a key, so it works with any remote.
 * **Watch shows that already aired:** in the guide, **◀** goes back as far as the archive does. Shows you can still watch have a **↺**. OK on one gives **Watch (catch-up)**; on the show on now, **Start over**.
 
 A catch-up show plays in the On Demand player: OK pauses, **◀ ▶** move a minute (the archive starts on the minute), PgUp/PgDn 5 minutes, and Back returns to live TV. It uses one of the provider's connections, like a live channel. Only the channels the provider keeps an archive for have it. With a big provider that is often a few hundred channels, mostly UK and European ones. The guide keeps past listings for those channels for as long as their archive.

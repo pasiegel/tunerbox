@@ -27,4 +27,6 @@ async function startOver() {
   if (!d.now) { toast("No guide information for this channel, so there's no show to start over"); return; }
   playCatchup(ch, d.now);
 }
+// "3 DAYS" / "1 DAY": how far back this channel's archive goes
+function cuDaysText(ch) { const d = ch.catchup || 0; return `${d} DAY${d === 1 ? "" : "S"}`; }
 function cuLive() { const ch = S.mode === "live" && curCh(); return !!(ch && !ch.feed && ch.catchup); }

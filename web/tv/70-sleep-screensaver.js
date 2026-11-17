@@ -180,6 +180,7 @@ $("remote").addEventListener("click", (e) => {
     $("rm-startover").classList.toggle("hidden", !cuLive());        // only on channels with catch-up
     $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return;
   }
+  if (b.id === "rm-startover") { clearTimeout(idleTimer); hideRemote(); startOver(); return; }
   if (!b.dataset.k) return;
   // CH up/down, favorite and mute keep the controls up (flipping through channels); others put them away
   const stay = ["ChannelUp", "ChannelDown", "*", "u"].includes(b.dataset.k);

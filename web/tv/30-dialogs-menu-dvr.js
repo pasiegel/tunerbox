@@ -144,14 +144,21 @@ const MENU = [
   { label: "Sports & Events", homeOff: true, act: () => { closeMenu(); openSports(); } },
   { label: "Search", homeOff: true, act: () => { closeMenu(); openSearch(); } },
   { label: "My Recordings (DVR)", homeOff: true, feat: "dvr", act: () => { closeMenu(); openDvr(); } },
-  { head: "This channel" },
+  { head: "This channel",
+    get headHtml() {
+      const ch = cuLive() && curCh();
+      return ch ? `This channel <span class="cu-head">· &#8634; Catch-up: ${cuDaysText(ch).toLowerCase()}</span>` : "";
+    } },
   { get label() {
       const ch = S.mode === "live" && curCh();
       if (!ch || ch.feed) return "Add to Favorites (tune to a channel first)";
       return S.favs.has(ch.number) ? `Remove ${ch.number} ${ch.name} from Favorites` : `★ Add ${ch.number} ${ch.name} to Favorites`;
     },
     act: () => { const ch = S.mode === "live" && curCh(); closeMenu(); if (ch) toggleFav(ch); else toast("Tune to a channel first"); } },
-  { label: "↺ Start this show over", catchup: true, act: () => { closeMenu(); startOver(); } },
+  { get label() {
+      const ch = cuLive() && curCh();
+      return `↺ Start this show over${ch ? ` (or a show from the last ${cuDaysText(ch).toLowerCase()} in the Guide)` : ""}`;
+    }, catchup: true, act: () => { closeMenu(); startOver(); } },
   { label: "Game stats & live scores (X)", act: () => { closeMenu(); openStats(); } },
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
@@ -194,7 +201,7 @@ if (window.TunerBoxApp) MENU.splice(MENU.findIndex((e) => e.id === "full"), 1, {
 let menuShown = MENU;
 function renderMenu(sel) {
   if (sel === undefined || sel < 0 || menuShown[sel].head !== undefined) sel = menuShown.findIndex((e) => e.head === undefined);
-  fillList($("menu-list"), menuShown.map((e) => (e.head !== undefined ? { cls: e.head ? "hdr" : "hdr line", html: esc(e.head) } : e)), sel);
+  fillList($("menu-list"), menuShown.map((e) => (e.head !== undefined ? { cls: e.head ? "hdr" : "hdr line", html: e.headHtml || esc(e.head) } : e)), sel);
 }
 function openMenu() {
   hideBanner();
