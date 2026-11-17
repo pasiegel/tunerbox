@@ -485,7 +485,7 @@ def title(title_id):
 # (sources.vod_tags: a JSON list, '' = all)
 _FROM = ("FROM vod_titles t JOIN vod_sources src ON src.id=t.source_id AND src.enabled=1 AND t.hidden=0 "
          "AND (src.vod_tags='' OR instr(src.vod_tags, '\"' || t.tag || '\"')>0) ")
-_COLS = "t.id, t.kind, t.name, t.year, t.rating, t.category, t.poster, t.added, t.duration, t.tag, t.country"
+_COLS = "t.id, t.kind, t.name, t.year, t.rating, t.category, t.poster, t.added, t.duration, t.tag, t.country, t.source_id"
 
 
 def _tile(r, now):
@@ -628,18 +628,27 @@ def _fuzzy(qf, limit):
     return [ids[i] for _, _, i in hits if len(names[i]) >= 0.6 * len(qf)][:limit]
 
 
+def _mine(r):
+    """1 for a copy in one of your own libraries (source -<id>), 0 for a playlist's: yours come first."""
+    try:
+        return 1 if int(r["source_id"]) < 0 else 0
+    except (KeyError, IndexError, TypeError, ValueError):
+        return 0
+
+
 def _by_preference(rows, first=None):
-    """The versions of one title, the most likely wanted first: a label from "List these languages first",
-    then the label most of the shown titles have (with only English picked, "EN" before "4K-EN"), then alphabetically."""
+    """The versions of one title, the most likely wanted first: your own copy (a library), then a label from
+    "List these languages first", then the label most of the shown titles have (with only English picked,
+    "EN" before "4K-EN"), then alphabetically."""
     if not _tag_rank:
         _tag_rank.update({r["tag"]: r["n"] for r in db.rows(f"SELECT t.tag, count(*) n {_FROM} GROUP BY t.tag")})
     first = _first_tags() if first is None else first
-    return sorted(rows, key=lambda r: (_tag_order(r, first), -_tag_rank.get(r["tag"], 0), r["tag"], r["id"]))
+    return sorted(rows, key=lambda r: (-_mine(r), _tag_order(r, first), -_tag_rank.get(r["tag"], 0), r["tag"], r["id"]))
 
 
 def versions(t):
     """The same film or show under the playlist's other labels ("EN", "4K-EN", "DE"…) that are shown."""
-    rows = db.rows(f"SELECT t.id, t.tag, t.country, src.name AS place {_FROM} WHERE t.kind=? AND t.search=? AND t.year=?",
+    rows = db.rows(f"SELECT t.id, t.tag, t.country, t.source_id, src.name AS place {_FROM} WHERE t.kind=? AND t.search=? AND t.year=?",
                    (t["kind"], t["search"], t["year"]))
     if len(rows) < 2:
         return []
@@ -677,7 +686,7 @@ def search(q, limit=12):
         add(db.rows(f"SELECT {_COLS}, t.search {_FROM} WHERE t.kind='movie' AND (t.actors LIKE ? OR t.director LIKE ?) "
                     "LIMIT ?", (like, like, limit)), 30)
     first = _first_tags()
-    found.sort(key=lambda sr: (-sr[0], _tag_order(sr[1], first),
+    found.sort(key=lambda sr: (-sr[0], -_mine(sr[1]), _tag_order(sr[1], first),
                                len(fold(NAME_TAG.sub("", sr[1]["name"] or ""))),
                                -(int(sr[1]["year"]) if str(sr[1]["year"]).isdigit() else 0)))
     # one result per film or show: its other languages / qualities ride along as versions

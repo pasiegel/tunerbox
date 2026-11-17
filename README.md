@@ -211,7 +211,7 @@ Setup › **My Library** adds your own movie and TV folders to On Demand, next t
   * The first time a film's built-in subtitles are turned on, TunerBox reads the whole file for them (about 30 seconds for a 2½-hour film over the network); after that they come straight from its cache (`cache/subs` in its data folder, nothing is written next to your files).
   * Picture subtitles (PGS from Blu-ray, VobSub from DVD) are listed but can't be shown yet.
   * Playlist titles (Xtream, M3U) play their first audio track without subtitles: reading them would take a second provider connection.
-* **Copies of the same film** in two libraries (or a library and a playlist) are one title with **Other versions**, named by their library or playlist when they have no language or quality label.
+* **Copies of the same film** in two libraries (or a library and a playlist) are one title with **Other versions**, named by their library or playlist when they have no language or quality label. **Your own copy comes first**: Search, the title's options and Play use it, ahead of the playlists' versions (and of *List these languages first*), and among equally good search matches films you own are listed first.
 
 ## HDHomeRun: as a source, and as a tuner for Plex
 TunerBox works with HDHomeRun both ways, at the same time.

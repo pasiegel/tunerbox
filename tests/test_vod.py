@@ -440,3 +440,23 @@ def test_preferred_language_leads_the_versions_and_hidden_categories_stay_out(la
     vod.set_hidden(labelled, ["DE - FILME"])                          # category unticked: its version goes too
     hit = [h for h in vod.search("film 2") if h["name"] == "Film 2"][0]
     assert hit["tag"] != "DE" and "DE" not in {v["tag"] for v in hit["versions"]}
+
+
+def test_your_own_copy_comes_first(labelled):
+    """A film that's also in one of your libraries: Search, the title and Other versions lead with your copy,
+    even ahead of a preferred language, and it's named by its library."""
+    from tunerbox import library
+    config.update({"vod_search_first": "DE"})
+    db.run("INSERT INTO lib_shares(name, kind, type, server, share, path) VALUES ('35mm', 'movie', 'smb', 'nas', 'media', '35mm')")
+    sid = db.one("SELECT max(id) n FROM lib_shares")["n"]
+    hit = [h for h in vod.search("film 2") if h["name"] == "Film 2"][0]
+    row = dict(db.one("SELECT * FROM vod_titles WHERE id=?", (hit["id"],)))
+    row.update(id=f"L{sid}:mfilm2", source_id=-sid, tag="", country="")
+    db.run(f"INSERT INTO vod_titles({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+    library.init()
+    vod._tag_rank.clear()
+    hit = [h for h in vod.search("film 2") if h["name"] == "Film 2"][0]
+    assert hit["id"] == f"L{sid}:mfilm2" and len(hit["versions"]) == 4
+    vs = vod.title(f"L{sid}:mfilm2")["versions"]
+    assert vs[0]["id"] == f"L{sid}:mfilm2" and vs[0]["where"] == "35mm" and vs[0]["current"]
+    assert vs[1]["tag"] == "DE"                                      # then the preferred language, as before
