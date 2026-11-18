@@ -39,6 +39,26 @@ function toggleFull() {
   }
   toast("Full screen isn't available in this browser");
 }
+// In full screen the browser takes Esc for itself (exit full screen) before the page sees it, so Esc
+// couldn't close the Menu or other screens. Chrome / Edge can hand Esc to the page with the Keyboard
+// Lock API. Esc stays locked for the whole time in full screen and the page does what the browser would:
+// Esc closes the Menu or whatever screen is open, and with nothing open it leaves full screen (holding
+// Esc always exits too). Locking per screen instead raced the key press: the lock could drop while Esc
+// was still down and the browser then left full screen as well. Safari / Firefox have no Keyboard Lock.
+let escLocked = false;
+document.addEventListener("fullscreenchange", () => {
+  const kb = navigator.keyboard;
+  if (!kb || !kb.lock) return;
+  escLocked = false;
+  if (document.fullscreenElement) kb.lock(["Escape"]).then(() => { escLocked = !!document.fullscreenElement; }, () => {});
+  else try { kb.unlock(); } catch (_) {}
+});
+// runs before the normal key handling: Esc with nothing open = leave full screen (not Back / last channel)
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape" || !escLocked || !document.fullscreenElement || top() || learning) return;
+  ev.preventDefault(); ev.stopImmediatePropagation();
+  document.exitFullscreen().catch(() => {});
+}, true);
 // leaving the iPhone player can pause the video: keep live TV going
 // The Done button pauses it while the player is still closing; resume as soon as that pause turns out to
 // be the exit (player gone a moment later) instead of waiting for the close animation to finish.
