@@ -78,7 +78,8 @@ def test_tv_script_is_joined_from_parts(client):
 
 
 def test_page_stamps_tv_script_with_parts_version(client):
-    from tunerbox import bundle
+    from tunerbox import bundle, config
+    config.update({"welcome_done": True})
     assert f'/static/tv.js?v={bundle.version()}"' in client.get("/").text
 
 
@@ -93,6 +94,7 @@ def test_network_name_is_for_tuner_apps_not_home_screen_apps():
     assert c.get("/discover.json").json()["FriendlyName"] == "TunerBox - Private"
     assert c.get("/static/manifest.webmanifest").json()["name"] == "TunerBox"          # home-screen apps keep the name
     assert c.get("/static/remote.webmanifest").json()["name"] == "TunerBox Remote"
+    config.update({"welcome_done": True})
     assert "<title>TunerBox</title>" in c.get("/").text
     assert "<small>Setup · TunerBox - Private</small>" in c.get("/setup").text
     config.update(config.clean_changes({"box_name": "   "}, from_pc=False))          # blank goes back to the default

@@ -9,7 +9,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from xml.sax.saxutils import escape
 
 import anyio
@@ -1609,8 +1609,19 @@ async def api_library_file(request: Request, item_id: str):
 
 # ------------------------------------------------------------------ web UI
 @app.get("/")
-def index():
+def index(request: Request):
+    # a new install: the first screen opened walks through setup first (each step can be skipped)
+    if not config.get("welcome_done"):
+        q = request.url.query
+        return RedirectResponse("/welcome" + (f"?next={quote('/?' + q, safe='')}" if q else ""), 303)
     return _page("index.html")
+
+
+@app.get("/welcome")
+def welcome_page(request: Request):
+    if config.get("require_pairing") and not remote.trusted(request):
+        return RedirectResponse("/pair?next=/welcome", 303)
+    return _page("welcome.html")
 
 
 @app.get("/setup")
