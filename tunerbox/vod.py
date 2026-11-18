@@ -92,6 +92,7 @@ EPISODE = re.compile(r"^(.*?)[\s._-]*\bS(\d{1,2})[\s._-]*E(\d{1,3})\b[\s._:-]*(.
 DUR = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
 NEW_DAYS = 14                     # "NEW" on a title added this recently
 RECENT = 60                       # titles in Recently Added
+LIB_NEW_DAYS = 30                 # New in My Library: your own titles added (or shows with a new episode) this recently
 RESUME_MIN = 30                   # seconds in before a title counts as started
 WATCHED_AT = 0.92                 # this far through = watched
 INFO_TTL = 30 * 86400
@@ -513,7 +514,23 @@ def categories(kind):
     rows = db.rows(f"SELECT t.category AS name, count(*) AS count, MIN(t.source_id) < 0 AS library {_FROM} WHERE t.kind=? "
                    "GROUP BY t.category ORDER BY MIN(t.source_id) >= 0, t.category COLLATE NOCASE", (kind,))
     recent = db.one(f"SELECT count(*) n {_FROM} WHERE t.kind=? AND t.added>0", (kind,))["n"]
-    return {"total": sum(r["count"] for r in rows), "recent": min(RECENT, recent), "cats": rows}
+    lib_new = db.one(f"SELECT count(*) n {_FROM} WHERE t.kind=? AND t.source_id<0 AND t.added>=?",
+                     (kind, int(time.time()) - LIB_NEW_DAYS * 86400))["n"]
+    return {"total": sum(r["count"] for r in rows), "recent": min(RECENT, recent), "lib_new": min(RECENT, lib_new), "cats": rows}
+
+
+def library_new(kind=None, limit=RECENT, unwatched=False):
+    """New in My Library: your own titles found in the last LIB_NEW_DAYS (and shows with a new episode), newest
+    first. `unwatched`: leave out movies you've watched (Home)."""
+    now = int(time.time())
+    w, a = (" AND t.kind=?", [kind]) if kind else ("", [])
+    if unwatched:
+        w += " AND COALESCE(p.watched, 0)=0"
+    rows = db.rows(f"""SELECT {_COLS}, p.position, p.duration AS pdur, p.watched {_FROM}
+                       LEFT JOIN vod_progress p ON p.item_id=t.id
+                       WHERE t.source_id<0 AND t.added>=?{w} ORDER BY t.added DESC, t.name LIMIT ?""",
+                   (now - LIB_NEW_DAYS * 86400, *a, limit))
+    return [_tile(r, now) for r in rows]
 
 
 def continue_watching(kind=None):
@@ -552,6 +569,9 @@ def titles(kind="movie", cat=None, tab="", offset=0, limit=120):
         total = db.one(f"SELECT count(*) n {_FROM} JOIN vod_list l ON l.title_id=t.id")["n"]
         rows = db.rows(f"SELECT {cols} {_FROM} JOIN vod_list l ON l.title_id=t.id {join}"
                        "ORDER BY l.added DESC LIMIT ? OFFSET ?", (limit, offset))
+    elif cat == "*libnew":
+        rows = library_new(kind)
+        return {"total": len(rows), "items": rows[offset:offset + limit]}
     elif cat == "*recent":
         rows = db.rows(f"SELECT {cols} {_FROM} {join} WHERE t.kind=? AND t.added>0 ORDER BY t.added DESC, t.name LIMIT ?",
                        (kind, RECENT))

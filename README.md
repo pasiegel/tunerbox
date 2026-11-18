@@ -195,18 +195,24 @@ Every file is converted to one common format while it plays (H.264 + AAC, with b
 ## My Library (your own movies and TV shows in On Demand)
 Setup › **My Library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
 
-1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **folder or network location** (`\\nas\Media\Movies`, `smb://192.168.1.20/Media/Movies`, `D:\Movies`, or in Docker `/media/Movies`) and, for a network share, the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
-2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand.
-3. For details and posters, get a free key at themoviedb.org (Settings › API), paste the *API Key* or *API Read Access Token* under **Details and posters (TMDB)** and **Save**.
+1. Press **+ Add library**, pick **Movies** or **TV shows**, enter the **folder or network location** (`\\nas\Media\Movies`, `smb://192.168.1.20/Media/Movies`, `D:\Movies`, or in Docker `/media/Movies`) and, for a network share, the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
+2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand. A library's **Edit** changes it, hides it from On Demand or removes it.
+3. For details and posters, get a free key at themoviedb.org (Settings › API), then on the **Details and posters** card press **Set up**, paste the *API Key* or *API Read Access Token* and **Save**.
 4. Check **Matches** › *Needs review*: **Fix** searches TMDB so you can pick the right title (kept through rescans), **Leave out** hides a file.
 
-* **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming files or folders is safe; a renamed folder is looked up again.
+* **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming or moving files and folders is safe: they're recognised and keep where you stopped, My List and their match (a file renamed to a different title is looked up again).
 * **Naming:** movies as `Dune Part Two (2024)/anything.mkv` or `Dune Part Two (2024).mkv` (scene names like `Dune.Part.Two.2024.2160p.WEB-DL.mkv` work too); shows as `Show/Season 01/Show - S01E02 - Title.mkv` (`1x02` and `Season 2/04 - Title.mkv` work too). Samples, trailers and `Extras` folders are skipped.
 * **Network shares** are read with a built-in SMB2/3 client, so Docker doesn't need the share mounted.
 * **Folders on the TunerBox computer** work too: `D:\Movies` on Windows, `/home/me/Movies` on Linux. A drive letter mapped to a NAS works as long as TunerBox runs as the same Windows user.
 * **In Docker**, TunerBox only sees its container. Mount the folder as a volume and enter the path inside the container: with `-v /srv/media:/media:ro`, the host's `/srv/media/Movies` is `/media/Movies` in Setup. Read-only is fine. A NAS share mounted on the host (CIFS/NFS) works the same way, and is the easy route for guest-only shares.
 * **Who can add folders:** the TunerBox PC and paired devices; on a Docker server, also any browser on your home network until **Lock setup** is on (see [Security notes](#security-notes)).
-* **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
+* **Automatic tasks** (the card on the page; **Edit** to change them, **Run all** to run them now) keep the libraries up to date. Each can run every 30 minutes up to every week, at a set time (and, weekly, on a set day):
+  * **Find new and changed videos** (every 30 minutes): adds new videos, follows renamed and moved ones, and hides ones that are gone. Folders that haven't changed are skipped, so it's light on the NAS; each folder is still read in full once a day.
+  * **Update details and posters** (daily at 4 am): titles TMDB didn't know are tried again after a week, and details are refreshed every 30 days.
+  * **Measure video lengths** (daily at 4 am): so On Demand shows a title's length before it's first played.
+  * **Remove missing videos** (daily at 4 am): a video whose file is gone is hidden at once and comes back as it was if the file does; after 30 days (*once missing for*) it's taken out. Its watch progress and My List entry are kept another 90 days in case it returns. Your files are never deleted.
+* **Scan now** does a quick scan of every library; a library's **Full rescan** reads every folder again (for a file replaced under the same name, which a quick scan doesn't notice).
+* **New in My Library:** titles found in the last 30 days (and shows with a new episode) have their own category in On Demand and a row on Home.
 * **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
 * **Audio tracks and subtitles:** while one of your own titles plays, Menu › **This title** has **Audio** (when the file has more than one track, e.g. a commentary or another language) and **Subtitles**. The choice is kept for that movie or show, so the next episode uses the same.
   * Subtitles can be text ones inside the file (SRT, ASS, WebVTT, MP4 text) or subtitle files next to the video: `Movie.srt`, `Movie.en.srt`, `Movie.en.forced.srt`, or any `.srt`/`.ass`/`.vtt` in a `Subs` folder beside it. They're drawn over the picture and stay in step when you skip.
