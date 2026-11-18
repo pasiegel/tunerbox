@@ -58,7 +58,9 @@ def test_home_screen_icon_at_the_addresses_ios_tries():
         assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
     assert c.get("/setup").status_code == 200 and c.get("/discover.json").status_code == 200
     config.update({"welcome_done": True})
-    assert 'rel="apple-touch-icon" sizes="180x180"' in c.get("/").text
+    # every page names it, so Add to Home Screen from any of them gets the icon, not a snapshot of the page
+    for page in ("/", "/setup", "/welcome", "/pair"):       # /remote has it too (it asks to pair first here)
+        assert 'rel="apple-touch-icon" sizes="180x180"' in c.get(page).text, page
 
 
 def test_an_address_pasted_into_another_is_refused():
