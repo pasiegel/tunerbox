@@ -1145,6 +1145,12 @@ def api_vod_watched(id: str = Body(...), watched: bool = Body(True)):
     return vod.set_watched(id, watched)
 
 
+@app.post("/api/vod/forget")
+def api_vod_forget(id: str = Body(..., embed=True)):
+    """Remove a movie or show from Continue Watching."""
+    return vod.forget(id)
+
+
 @app.post("/api/vod/list")
 def api_vod_list(id: str = Body(...), on: bool = Body(True)):
     r = vod.set_listed(id, on)

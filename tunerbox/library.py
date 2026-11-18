@@ -851,6 +851,7 @@ def _carry(c, kind, old, new, new_name):
                          WHERE id=?""", (o, n))
     c.execute("UPDATE vod_progress SET title_id=? WHERE title_id=?", (new, old))
     c.execute("UPDATE OR IGNORE vod_list SET title_id=? WHERE title_id=?", (new, old))
+    c.execute("UPDATE OR IGNORE vod_dismissed SET title_id=? WHERE title_id=?", (new, old))
     _drop(c, [old])
 
 

@@ -924,6 +924,87 @@ $("fav-teams").addEventListener("click", (e) => {
   const b = e.target.closest(".fav-team"); if (b) setFavs(favKeys().filter((k) => k !== b.dataset.k));
 });
 
+// ---- Settings › Screens › Home rows: which of Home's rows show, top to bottom.
+// Same ids and usual order as tunerbox/home.py ROWS.
+const HOME_ROWS = {
+  fav: ["★", "Favorites on now"], teams: ["⚑", "Your teams on now"], cont: ["▶", "Continue Watching: On Demand"],
+  contrec: ["●", "Continue Watching: Recordings"], libnew: ["✦", "New in My Library"], sports: ["◎", "Sports on now"],
+  recent: ["↺", "Recent channels"], recorded: ["▣", "Recently recorded"], coming: ["◷", "Coming up"],
+};
+// the saved order, with any row it doesn't name yet put back after the rows it usually follows (as home.rows())
+function homeOrder(saved) {
+  const all = Object.keys(HOME_ROWS), order = (saved || []).filter((r) => r in HOME_ROWS);
+  all.forEach((r, i) => {
+    if (order.includes(r)) return;
+    const before = all.slice(0, i).filter((x) => order.includes(x)).pop();
+    order.splice(before ? order.indexOf(before) + 1 : 0, 0, r);
+  });
+  return order;
+}
+const homeField = (name) => $("set-form").elements[name];
+const homeVal = (name) => { try { return JSON.parse(homeField(name).value || "[]"); } catch (_) { return []; } };
+function renderHomeRows() {
+  const order = homeOrder(homeVal("home_order")), hidden = new Set(homeVal("home_hidden"));
+  $("home-rows").innerHTML = order.map((id, i) => {
+    const [icon, name] = HOME_ROWS[id];
+    return `<li class="home-row${hidden.has(id) ? " off" : ""}" data-id="${id}" draggable="true">
+      <span class="home-grip" aria-hidden="true" title="Drag to move">⠿</span>
+      <span class="home-icon" aria-hidden="true">${icon}\uFE0E</span>
+      <span class="home-row-name">${esc(name)}</span>
+      <span class="home-move">
+        <button type="button" class="icon-btn" data-mv="-1" aria-label="Move ${esc(name)} up"${i ? "" : " disabled"}>↑</button>
+        <button type="button" class="icon-btn" data-mv="1" aria-label="Move ${esc(name)} down"${i < order.length - 1 ? "" : " disabled"}>↓</button>
+      </span>
+      <input type="checkbox" class="toggle" aria-label="Show ${esc(name)}"${hidden.has(id) ? "" : " checked"}></li>`;
+  }).join("");
+}
+function setHomeRows(order, hidden, focus) {
+  homeField("home_order").value = JSON.stringify(order);
+  homeField("home_hidden").value = JSON.stringify(order.filter((r) => hidden.has(r)));
+  renderHomeRows(); syncSettings();
+  if (focus) $("home-rows").querySelector(`[data-id="${focus[0]}"] [data-mv="${focus[1]}"]:not(:disabled)`)?.focus();
+}
+$("home-rows").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mv]"); if (!b) return;
+  e.preventDefault();
+  const id = b.closest(".home-row").dataset.id, order = homeOrder(homeVal("home_order"));
+  const i = order.indexOf(id), j = i + +b.dataset.mv;
+  if (j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  setHomeRows(order, new Set(homeVal("home_hidden")), [id, b.dataset.mv]);
+});
+$("home-rows").addEventListener("change", (e) => {
+  e.stopPropagation();
+  const t = e.target.closest(".toggle"); if (!t) return;
+  const id = t.closest(".home-row").dataset.id, hidden = new Set(homeVal("home_hidden"));
+  if (t.checked) hidden.delete(id); else hidden.add(id);
+  setHomeRows(homeOrder(homeVal("home_order")), hidden);
+});
+// drag a row to a new place (mouse; on touch screens the arrows do it)
+let homeDrag = null;
+$("home-rows").addEventListener("dragstart", (e) => {
+  const li = e.target.closest(".home-row"); if (!li) return;
+  homeDrag = li.dataset.id; li.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", homeDrag);
+});
+$("home-rows").addEventListener("dragover", (e) => {
+  const li = e.target.closest(".home-row"); if (!homeDrag || !li) return;
+  e.preventDefault();
+  const below = e.clientY > li.getBoundingClientRect().top + li.offsetHeight / 2;
+  $("home-rows").querySelectorAll(".drop-above, .drop-below").forEach((x) => x.classList.remove("drop-above", "drop-below"));
+  if (li.dataset.id !== homeDrag) li.classList.add(below ? "drop-below" : "drop-above");
+});
+$("home-rows").addEventListener("drop", (e) => {
+  const li = e.target.closest(".home-row"); if (!homeDrag || !li) return;
+  e.preventDefault();
+  const below = li.classList.contains("drop-below"), order = homeOrder(homeVal("home_order")).filter((r) => r !== homeDrag);
+  if (li.dataset.id !== homeDrag) order.splice(order.indexOf(li.dataset.id) + (below ? 1 : 0), 0, homeDrag);
+  else order.splice(homeOrder(homeVal("home_order")).indexOf(homeDrag), 0, homeDrag);
+  setHomeRows(order, new Set(homeVal("home_hidden")));
+});
+$("home-rows").addEventListener("dragend", () => { homeDrag = null; renderHomeRows(); });
+$("home-rows-reset").addEventListener("click", (e) => { e.preventDefault(); setHomeRows(Object.keys(HOME_ROWS), new Set()); });
+
 loaders.settings = async () => {
   settings = await api("/api/settings");
   const f = $("set-form");
@@ -931,12 +1012,14 @@ loaders.settings = async () => {
     if (!el.name || !(el.name in settings)) continue;
     const v = settings[el.name];
     if (el.type === "checkbox") { el.checked = !!v; continue; }
+    if (el.dataset.json) { el.value = JSON.stringify(el.name === "home_order" ? homeOrder(v) : v); continue; }
     if (el.dataset.list) { el.value = [...v].sort().join(","); continue; }
     const shown = el.dataset.scale ? v / +el.dataset.scale : v;
     // a value set in settings.json that the list doesn't offer: show it rather than silently saving another
     if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(shown))) el.add(new Option(String(shown), String(shown)));
     el.value = String(shown);
   }
+  renderHomeRows();
   try { await loadLeagues(); } catch (e) { $("league-grid").textContent = e.message; }
   loadTeams();
   rememberSaved(); syncSettings();
@@ -995,6 +1078,7 @@ $("set-form").onsubmit = async (e) => {
     out[el.name] = el.type === "checkbox" ? el.checked : el.type === "number" || el.dataset.num ? +el.value : el.value;
     if (el.dataset.scale) out[el.name] = Math.round(out[el.name] * +el.dataset.scale);
     if (el.dataset.list) out[el.name] = el.value.split(",").filter(Boolean);
+    if (el.dataset.json) out[el.name] = JSON.parse(el.value || "[]");
   }
   try { await api("/api/settings", { method: "POST", body: out }); }
   catch (err) { toast(err.message); return; }

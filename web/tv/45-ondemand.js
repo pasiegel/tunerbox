@@ -96,6 +96,7 @@ async function odLoadItems(keep, append) {
 async function odRefresh() {
   OD.details.clear();
   try { OD.counts = await api("/api/vod"); } catch (_) {}
+  if (S.layer.includes("home")) homeLoad();        // Home's Continue Watching row too
   if (!S.layer.includes("od")) return;
   if (OD.show) await odOpenShow(OD.show.id, true); else { odRenderHead(); await odLoadItems(true); }
 }
@@ -246,7 +247,8 @@ function odInfo() {
 function odFill(t, d) {
   const x = d || t, movie = t.kind === "movie";
   let seen = "";
-  if (t.sub) seen = `Stopped in ${t.sub}`;
+  if (t.upnext) seen = `Up next: ${t.ep}`;
+  else if (t.sub) seen = `Stopped in ${t.sub}`;
   else if (d && movie && d.watched) seen = "Watched";
   else if (d && movie && d.position > RESUME_MIN) seen = `Watched ${Math.round(d.position / 60)} min${d.duration ? ` of ${Math.round(d.duration / 60)}` : ""}`;
   odSetInfo(x.name,
@@ -268,6 +270,25 @@ async function odMark(id, watched) {
   toast(watched ? "Marked as watched" : "Marked as not watched");
   odRefresh();
 }
+// off Continue Watching without marking it watched (a show: every episode part-way through)
+async function odForget(id) {
+  closeDialog();
+  try { await api("/api/vod/forget", { method: "POST", body: { id } }); } catch (e) { toast(e.message); return; }
+  toast("Removed from Continue Watching");
+  odRefresh();
+}
+const odForgetEntry = (id) => ({ label: "Remove from Continue Watching", act: () => odForget(id) });
+// a show in Continue Watching (On Demand or Home): straight back into the episode
+function odResumeDialog(t, allEpisodes) {
+  // an Up next tile: you finished the episode before it, so this one plays from the start
+  const ep = t.ep || t.sub || "episode";
+  openDialog(t.name, t.sub || "", [
+    { label: `${t.upnext ? "Play" : "Resume"} ${ep}`, act: () => playVod(t.resume) },
+    { label: "All episodes", act: () => { closeDialog(); allEpisodes(); } },
+    { label: `Mark ${ep} as watched`, act: () => odMark(t.resume, true) },
+    odForgetEntry(t.id),
+    { label: "Close", act: closeDialog }]);
+}
 const odListEntry = (d) => ({ label: d.in_list ? "Remove from My List" : "★ Add to My List", act: () => { closeDialog(); odSetList(d, !d.in_list); } });
 function odMovieDialog(d) {
   const resume = !d.watched && d.position > RESUME_MIN;
@@ -277,6 +298,7 @@ function odMovieDialog(d) {
   entries.push({ label: resume ? "Play from the beginning" : "Play", act: () => playVod(d.id, 0) });
   entries.push(odListEntry(d));
   entries.push({ label: d.watched ? "Mark as not watched" : "Mark as watched", act: () => odMark(d.id, !d.watched) });
+  if (resume) entries.push(odForgetEntry(d.id));
   const others = (d.versions || []).filter((v) => !v.current);
   if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || v.where || "no label").join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
@@ -297,7 +319,9 @@ function odEpisodeDialog(show, e) {
 }
 // the same film or show under the playlist's other labels (languages, 4K…)
 function odVersions(d) {
-  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else odMovie(v.id); };
+  // a movie: straight into it, from where this version was stopped (else wherever that version was left)
+  const at = d.kind !== "series" && !d.watched && d.position > RESUME_MIN ? d.position : undefined;
+  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else playVod(v.id, v.current ? undefined : at); };
   openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
     ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
       const name = (x) => x.tag || x.where || "No label";
@@ -316,13 +340,7 @@ async function odMovie(id) {
 async function odPick(t) {
   if (!t) return;
   if (t.kind !== "series") { await odMovie(t.id); return; }
-  if (t.resume) {                           // Continue Watching: straight back into the episode
-    openDialog(t.name, t.sub || "", [
-      { label: `Resume ${t.sub || "episode"}`, act: () => playVod(t.resume) },
-      { label: "All episodes", act: () => { closeDialog(); odOpenShow(t.id); } },
-      { label: "Close", act: closeDialog }]);
-    return;
-  }
+  if (t.resume) { odResumeDialog(t, () => odOpenShow(t.id)); return; }     // Continue Watching
   await odOpenShow(t.id);
 }
 async function odGoCategory(name) {

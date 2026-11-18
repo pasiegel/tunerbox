@@ -130,6 +130,13 @@ DEFAULTS = {
     # the Home button opens the guide, and Home is left out of the menus. Each screen can still choose,
     # in its Menu, not to start on Home.
     "home_screen": True,
+    # Home's rows top to bottom (ids in home.ROWS; a row missing here goes at the end, in its usual place),
+    # and the ones switched off. Hidden rows come back from /api/home as empty lists.
+    "home_order": [],
+    "home_hidden": [],
+    # Continue Watching (Home and On Demand): every version you've started of a film or show (another
+    # language, 4K, another playlist) gets its own tile. Off: one tile, the version played last.
+    "vod_continue_versions": False,
     # colour theme for every screen (web/theme.js); each TV screen can pick its own in Menu › Theme
     "theme": "midnight",
     "sleep_hours": 4,
@@ -347,6 +354,9 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
             raise ValueError("https_port must be a port number (1-65535)")
         elif k == "box_name":
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
+        elif k in ("home_order", "home_hidden"):
+            from .home import ROWS          # home imports config; only needed here
+            v = list(dict.fromkeys(str(x) for x in v if str(x) in ROWS))
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
         if k in PC_ONLY and not from_pc and k not in allow:
