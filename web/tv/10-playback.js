@@ -345,6 +345,8 @@ function loadArt(img, key, url) {
 
 async function showBanner(full = false) {
   const ch = curCh(); if (!ch) return;
+  // the on-screen controls show this channel too: keep them in step when a key changes channel under them
+  if (!$("remote").classList.contains("hidden")) remoteSync();
   const b = $("banner");
   const art = $("b-art");
   if (art.dataset.ch !== String(ch.number) || ch.feed) showArt(art, null);   // another channel's picture
