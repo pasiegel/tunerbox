@@ -93,6 +93,55 @@ ALIASES = {
     "hbo2 east": ["hbo 2"],
 }
 
+# Gracenote lists cable channels by a short code, not a name ("HGTVD", "DSCHD", "NIK"), and a lineup that
+# comes straight from Gracenote has only that code as each channel's name. The network names they stand for,
+# so they match playlists that say "Home and Garden Television HD". Codes are looked up as they are, then
+# without an HD/HDP/SD/D ending ("ESPN2HD" -> "ESPN2", "HGTVD" -> "HGTV").
+CABLE_CODES = {
+    "AETV": "a and e", "AHC": "american heroes channel", "AMC": "amc", "APL": "animal planet",
+    "BBCA": "bbc america", "BET": "bet", "BETJ": "bet jams", "BETSOUL": "bet soul", "BHER": "bet her",
+    "BIGMI": "big ten network michigan", "BIGMICH": "big ten network michigan", "BLOOM": "bloomberg business television",
+    "BRAVO": "bravo", "CC": "comedy central", "CBSSN": "cbs sports network", "CMT": "cmt", "CMTV": "cmt",
+    "CMTMUS": "cmt music", "CNBC": "cnbc", "CNN": "cable news network", "CNNE": "cnn en espanol",
+    "COOK": "cooking channel", "CSPAN": "cspan", "CSPAN2": "cspan2", "CSPAN3": "cspan3",
+    "DEST": "destination america", "DFC": "discovery family channel", "DISN": "disney channel",
+    "DJCH": "disney junior", "DLC": "discovery life channel", "DSC": "discovery channel", "DXD": "disney xd",
+    "E": "e entertainment television", "ESPN": "espn", "ESPN2": "espn2", "ESPNU": "espnu", "ESPND": "espn deportes",
+    "ESPNEWS": "espnews", "EWTN": "ewtn", "FBN": "fox business", "FLIX": "flix", "FNC": "fox news channel",
+    "FOOD": "food network", "FREFM": "freeform", "FRFM": "freeform", "FS1": "fs1", "FS2": "fs2", "FX": "fx",
+    "FXM": "fx movie channel", "FXX": "fxx", "FYI": "fyi", "GALA": "galavision cable network",
+    "GOLF": "golf channel", "GSN": "game show network", "HALL": "hallmark channel", "HBO": "hbo east",
+    "HGTV": "home and garden television", "HIST": "history", "HSTRY": "history", "HLN": "hln",
+    "HMYS": "hallmark mystery", "HSN": "hsn", "ID": "investigation discovery", "IFC": "ifc",
+    "JTV": "jewelry television", "LIFE": "lifetime", "LMN": "lmn", "LOGO": "logo", "MAGN": "magnolia network",
+    "MAX": "cinemax", "MLB": "mlb network", "MLBN": "mlb network", "MSNOW": "ms now", "MT": "motor trend",
+    "MTV": "mtv music television", "MTV2": "mtv2 music television", "MTVCLAS": "mtv classic",
+    "NBATV": "nba tv", "NGC": "national geographic", "NGWI": "national geographic wild",
+    "NGWILD": "national geographic wild", "NFL": "nfl network", "NFLNET": "nfl network", "NFLNRZ": "nfl redzone",
+    "NHL": "nhl network", "NHLNET": "nhl network", "NICJR": "nick jr", "NIK": "nickelodeon", "NIKTON": "nicktoons",
+    "OUT": "outdoor channel", "OVATION": "ovation", "OWN": "oprah winfrey network", "OXYGEN": "oxygen true crime",
+    "OXYGN": "oxygen true crime", "PAR": "paramount network", "POP": "pop", "QVC": "qvc", "REELZ": "reelzchannel",
+    "SCI": "science channel", "SEC": "sec network", "SECH": "sec network", "SMITH": "smithsonian channel",
+    "SMTH": "smithsonian channel", "STZ": "starz", "STZEN": "starz encore", "SUNDANC": "sundance tv",
+    "SYFY": "syfy", "TBN": "tbn", "TBS": "tbs", "TCM": "turner classic movies", "TENIS": "tennis channel",
+    "TLC": "tlc", "TMC": "the movie channel", "TNCK": "teen nick", "TNT": "tnt", "TOON": "cartoon network",
+    "TRAV": "the travel channel", "TRUTV": "trutv", "TVLAND": "tv land", "TVONE": "tv one", "UP": "uptv",
+    "USA": "usa network", "VH1": "vh1", "VICE": "vice", "WE": "we tv", "WEATH": "the weather channel",
+}
+_CODE_END = re.compile(r"(HDP|HD|SD|D)$")
+
+
+def cable_name(name):
+    """The network a Gracenote cable code stands for ("HGTVD" -> "home and garden television"), else None."""
+    code = (name or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{1,10}", code):
+        return None
+    if code in CABLE_CODES:
+        return CABLE_CODES[code]
+    base = _CODE_END.sub("", code)
+    return CABLE_CODES.get(base) if base and base != code else None
+
+
 NETWORKS = [("NATIONAL BROADCASTING", "nbc"), ("CBS", "cbs"), ("AMERICAN BROADCASTING", "abc"),
             ("FOX", "fox"), ("PUBLIC BROADCASTING", "pbs"), ("ION", "ion"), ("CW", "cw"),
             ("MYNETWORK", "mynetworktv"), ("TELEMUNDO", "telemundo")]
@@ -155,7 +204,11 @@ def lineup_info(ch):
     strict = set()
     cs = (ch.get("callsign") or "").upper()
     aff = (ch.get("affiliate") or "").upper()
-    call = parse_callsign(cs) or (parse_callsign(ch["name"]) if re.fullmatch(r"[KW][A-Z]{2,3}(-?(DT|CD|CA|TV|LD)\d?)?", ch["name"].strip().upper()) else None)
+    cable = None if aff else cable_name(ch["name"])
+    if cable:                           # a Gracenote cable code: search for the network's name too
+        for n in {cable, *ALIASES.get(cable, [])}:
+            names.update({n, norm(n), core(norm(n))})       # "fs1" is "fs 1" once normalized, like the streams
+    call = None if cable else parse_callsign(cs) or (parse_callsign(ch["name"]) if re.fullmatch(r"[KW][A-Z]{2,3}(-?(DT|CD|CA|TV|LD)\d?)?", ch["name"].strip().upper()) else None)
     broadcast = bool(call) and (bool(aff) or ch["number"] < 300 or ch["name"].upper().startswith(call[0]))
     network = None
     if broadcast:
