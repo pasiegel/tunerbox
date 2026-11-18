@@ -219,9 +219,7 @@ def url_at(it, ss=0.0, now=None):
 def pace(rest=0.0):
     """ffmpeg reading options for a show from the archive: the first seconds (and any part skipped inside
     the minute) as fast as the provider sends them, then at playing speed. Older ffmpeg: -re."""
-    if streaming.has_option("readrate_initial_burst"):
-        return ["-readrate", "1", "-readrate_initial_burst", f"{int(rest) + 10}"]
-    return ["-re"]
+    return streaming.pace(int(rest) + 10)
 
 
 def keep_history():

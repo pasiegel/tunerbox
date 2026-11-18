@@ -36,6 +36,7 @@ def _startup():
     dvr.recover()
     hls.cleanup_stale()
     threading.Thread(target=jobs.housekeeping, daemon=True).start()
+    threading.Thread(target=streaming.has_option, args=("readrate_initial_burst",), daemon=True).start()  # warm the cache
 
 
 @asynccontextmanager
@@ -1072,8 +1073,9 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
-    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
-                         max(0, a))
+    cmd = await anyio.to_thread.run_sync(          # off the event loop: the first call asks ffmpeg what it supports
+        lambda: vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
+                               max(0, a)))
     proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
     return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},

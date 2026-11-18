@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 import httpx
 from rapidfuzz import fuzz, process
 
-from . import config, db, sources
+from . import config, db, sources, streaming
 from .streaming import NO_WINDOW, ffmpeg_bin, input_args, play_args
 
 log = logging.getLogger("tunerbox.vod")
@@ -820,14 +820,14 @@ def stream_cmd(raw_url, start=0.0, mode=None, pace=None, audio=0):
     `audio`: which of its audio tracks (0 = the first)."""
     inp, vid, aud = play_args(raw_url, mode)
     seek = ["-ss", f"{start:.2f}"] if start > 0 else []
-    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or ["-re"]), *seek, *inp,
+    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or streaming.pace()), *seek, *inp,
             "-map", "0:v:0?", "-map", f"0:a:{max(0, int(audio))}?", "-sn", "-dn", *vid, *aud,
             "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
 
 
 def hls_pre(start=0.0, pace=None):
     """Input options for the HLS output (iPad/iPhone): the same speed limit and start time."""
-    return (pace or ["-re"]) + (["-ss", f"{start:.2f}"] if start > 0 else [])
+    return (pace or streaming.pace()) + (["-ss", f"{start:.2f}"] if start > 0 else [])
 
 
 def _title_of(item_id):

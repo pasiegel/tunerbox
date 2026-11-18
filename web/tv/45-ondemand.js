@@ -549,7 +549,7 @@ function vodStart(at) {
         autoCleanupSourceBuffer: true, liveBufferLatencyChasing: false });
     S.player = p;
     p.attachMediaElement(video);
-    const codecErr = codecFallback(p, key, mode, () => S.vod === v && vodStart(at));
+    const codecErr = codecFallback(p, key, mode, () => S.vod === v && vodStart(vodPos()));   // where it is now, not where it began
     p.on(mpegts.Events.ERROR, (type, detail) => {
       if (S.player === p) { console.warn("player error", type, detail); if (!codecErr(type)) fail(); }
     });

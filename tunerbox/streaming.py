@@ -60,6 +60,14 @@ def has_option(name):
     return f"\n-{name} " in _options[exe]
 
 
+def pace(burst=10):
+    """ffmpeg reading options for a file or archive: the first `burst` seconds as fast as they come (so the
+    player has a cushion right away), then at playing speed. Older ffmpeg (before 6.1): plain -re."""
+    if has_option("readrate_initial_burst"):
+        return ["-readrate", "1", "-readrate_initial_burst", str(int(burst))]
+    return ["-re"]
+
+
 def _make_job():
     """Windows job object: every ffmpeg we start is killed when TunerBox exits,
     even if it crashes or is force-closed."""
