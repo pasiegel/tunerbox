@@ -244,6 +244,11 @@ class FS:
                 try:
                     st = e.stat()
                     is_dir = statmod.S_ISDIR(st.st_mode)
+                    if is_dir and os.name == "nt":
+                        # Windows answers scandir from the parent folder's own index, where a subfolder's time
+                        # isn't updated when a file inside it changes: ask the subfolder itself, so a quick
+                        # scan sees the new file
+                        st = os.stat(e.path)
                     out.append((e.name, is_dir, 0 if is_dir else st.st_size, int(st.st_mtime)))
                 except OSError:
                     continue
