@@ -176,18 +176,34 @@ function renderLineup() {
 // every feed on a channel: the main one, then the backups tried when it fails. Wrong ones can be removed.
 // (also once every feed is removed, so "Allow again" stays reachable)
 const hasFeedList = (c) => c.removed > 0 || (c.mode === "auto" && c.feeds.length > 1);
+// ▲ ▼ among the backups (moving Backup 1 up, or Main down, is what Make main does). With three feeds each
+// backup has one arrow, so they share one slot; with more, ▲ and ▼ keep their own slots, a missing one
+// hidden, so the buttons line up from row to row. Two feeds: Make main alone.
+const chev = (up) => `<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="${up ? "M2 6.5 5 3.5 8 6.5" : "M2 3.5 5 6.5 8 3.5"}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+function moveBtns(i, last) {
+  if (last < 2) return "";
+  const btn = (up, on) => on
+    ? `<button class="btn small mv" data-a="${up ? "fup" : "fdown"}" title="${up ? "Try this backup sooner" : "Try this backup later"}" aria-label="${up ? "Move up" : "Move down"}">${chev(up)}</button>`
+    : '<span class="mv-gap"></span>';
+  const up = i > 1, down = i < last;
+  return `<span class="fd-move">${last === 2 ? btn(up, true) : btn(true, up) + btn(false, down)}</span>`;
+}
 function feedRows(c) {
-  const canRemove = c.mode === "auto";
-  const items = c.feeds.map((s, i) => `<li data-k="${esc(s.key)}" data-nm="${esc(feedName(s))}">
+  const canRemove = c.mode === "auto", canOrder = canRemove && c.feeds.length > 1, last = c.feeds.length - 1;
+  const items = c.feeds.map((s, i) => `<li data-k="${esc(s.key)}" data-nm="${esc(feedName(s))}" data-i="${i}">
       <span class="fd-role">${i ? `Backup ${i}` : "Main"}</span><span class="dot ${s.status}" title="${s.status}"></span>
       <div class="nm"><div>${esc(feedName(s))}</div><div class="meta">${esc(s.source_name)}${s.grp ? " · " + esc(s.grp) : ""}${s.tvg_id ? " · " + esc(s.tvg_id) : ""}</div></div>
+      ${canOrder && i ? `${moveBtns(i, last)}
+        <button class="btn small" data-a="fmain" title="Play this feed first">Make main</button>` : ""}
       <button class="btn small" data-a="fprev" title="Preview">&#9654;</button>
       ${canRemove ? '<button class="btn small" data-a="fdel" title="Not this channel: never match it here again">Remove</button>' : ""}</li>`).join("");
   const foot = c.removed ? `<div class="fd-foot muted small">${c.removed} feed${c.removed > 1 ? "s" : ""} removed from this channel.
       <button class="btn small" data-a="frestore">Allow again</button></div>` : "";
+  const ord = c.ordered ? `<div class="fd-foot muted small">You chose this order; re-matching keeps it.
+      <button class="btn small" data-a="freset">Use best-match order</button></div>` : "";
   return `<tr class="fd-row" data-n="${c.number}"><td></td><td colspan="4">
     <div class="muted small">Feeds for this channel. The main one plays; if it fails, the backups are tried in order.</div>
-    <ul class="fd-list">${items || '<li class="muted">No feeds left.</li>'}</ul>${foot}</td></tr>`;
+    <ul class="fd-list">${items || '<li class="muted">No feeds left.</li>'}</ul>${ord}${foot}</td></tr>`;
 }
 $("ch-search").oninput = renderLineup;
 $("ch-filter").onchange = renderLineup;
@@ -205,6 +221,18 @@ $("ch-body").addEventListener("click", async (e) => {
   if (b.dataset.a === "fdel") {
     await api("/api/mapping/remove-feed", { method: "POST", body: { number: n, stream_key: li.dataset.k } });
     toast(`Removed ${li.dataset.nm} from channel ${n}`); loaders.channels();
+  }
+  if (["fup", "fdown", "fmain"].includes(b.dataset.a)) {
+    const keys = c.feeds.map((f) => f.key), i = +li.dataset.i;
+    const to = b.dataset.a === "fmain" ? 0 : b.dataset.a === "fup" ? i - 1 : i + 1;
+    keys.splice(to, 0, keys.splice(i, 1)[0]);
+    await api("/api/mapping/feed-order", { method: "POST", body: { number: n, keys } });
+    if (to === 0) toast(`${li.dataset.nm} is now the main feed for channel ${n}`);
+    loaders.channels();
+  }
+  if (b.dataset.a === "freset") {
+    await api("/api/mapping/feed-order", { method: "POST", body: { number: n, keys: [] } });
+    toast("Re-matching…"); pollJob();
   }
   if (b.dataset.a === "frestore") {
     await api("/api/mapping/restore-feeds", { method: "POST", body: { number: n } });

@@ -58,6 +58,12 @@ CREATE TABLE IF NOT EXISTS rejected_feeds (   -- feeds removed from a lineup cha
     stream_key TEXT NOT NULL,
     PRIMARY KEY (number, stream_key)
 );
+CREATE TABLE IF NOT EXISTS feed_order (       -- the main/backup order chosen in Setup: auto match keeps it
+    number INTEGER NOT NULL,
+    stream_key TEXT NOT NULL,
+    pos INTEGER NOT NULL,
+    PRIMARY KEY (number, stream_key)
+);
 CREATE TABLE IF NOT EXISTS extras (
     stream_key TEXT PRIMARY KEY,
     number INTEGER UNIQUE,

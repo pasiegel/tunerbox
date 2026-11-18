@@ -208,11 +208,20 @@ def rejected():
     return out
 
 
-def _fingerprint(streams, lineup, existing, removed):
+def feed_order():
+    """Lineup number -> the feed keys in the order chosen in Setup (main first)."""
+    out = defaultdict(list)
+    for r in db.rows("SELECT number, stream_key FROM feed_order ORDER BY number, pos"):
+        out[r["number"]].append(r["stream_key"])
+    return out
+
+
+def _fingerprint(streams, lineup, existing, removed, order=None):
     """Everything the matching pass reads. Same fingerprint = same result, so the pass can be skipped."""
     h = hashlib.sha1()
     h.update(repr((config.get("match_threshold", 86), config.get("network_fallback", True))).encode())
     h.update(repr(sorted((n, sorted(ks)) for n, ks in removed.items())).encode())
+    h.update(repr(sorted((order or {}).items())).encode())
     for ch in lineup:
         h.update(repr(sorted(ch.items())).encode())
     for num in sorted(existing):
@@ -233,7 +242,8 @@ def match_all(progress=None, force=True):
     lineup = db.rows("SELECT * FROM lineup ORDER BY number")
     existing = {m["number"]: m for m in db.rows("SELECT * FROM mappings")}
     removed = rejected()
-    fp = _fingerprint(streams, lineup, existing, removed)
+    order = feed_order()
+    fp = _fingerprint(streams, lineup, existing, removed, order)
     if not force and db.get_meta("match_fp") == fp:
         mapped = db.one("""SELECT count(*) n FROM mappings WHERE stream_key IS NOT NULL
                            AND number IN (SELECT number FROM lineup)""")["n"]
@@ -333,6 +343,9 @@ def match_all(progress=None, force=True):
             picked.append((sc, si))
             if len(picked) >= 5:
                 break
+        if order.get(num):        # the order chosen in Setup first, then any other feeds by score
+            rank = {k: i for i, k in enumerate(order[num])}
+            picked.sort(key=lambda p: rank.get(streams[p[1]]["key"], len(rank)))
         results[num] = (picked, reason)
 
     with db.conn() as c:

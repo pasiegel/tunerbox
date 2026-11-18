@@ -65,3 +65,78 @@ def test_only_auto_matched_feeds_can_be_removed(monkeypatch):
     c.post("/api/mapping", json={"number": 202, "stream_key": key, "mode": "manual"})
     assert c.post("/api/mapping/remove-feed", json={"number": 202, "stream_key": key}).status_code == 400
     assert c.post("/api/mapping/remove-feed", json={"number": 999, "stream_key": key}).status_code == 400
+
+
+def test_feed_order_sets_main_and_survives_rematch(monkeypatch):
+    c = _setup(monkeypatch)
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    want = [keys[2], keys[0], keys[1]]
+    assert c.post("/api/mapping/feed-order", json={"number": 202, "keys": want}).json()["ok"]
+    ch = _ch(c)
+    assert [f["key"] for f in ch["feeds"]] == want and ch["stream"]["key"] == keys[2] and ch["ordered"]
+    matcher.match_all()                                  # a full re-match keeps the chosen order
+    assert [f["key"] for f in _ch(c)["feeds"]] == want
+    matcher.match_all(force=False)
+    assert [f["key"] for f in _ch(c)["feeds"]] == want
+
+
+def test_feed_order_reset_goes_back_to_best_match(monkeypatch):
+    c = _setup(monkeypatch)
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    c.post("/api/mapping/feed-order", json={"number": 202, "keys": keys[::-1]})
+    monkeypatch.setattr(api.jobs, "rematch", lambda: matcher.match_all())
+    c.post("/api/mapping/feed-order", json={"number": 202, "keys": []})
+    ch = _ch(c)
+    assert [f["key"] for f in ch["feeds"]] == keys and not ch["ordered"]
+
+
+def test_feed_order_rejects_a_list_that_isnt_the_channels_feeds(monkeypatch):
+    c = _setup(monkeypatch)
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    for bad in (keys[:2], keys + ["nope"], [keys[0], keys[0], keys[1]]):
+        assert c.post("/api/mapping/feed-order", json={"number": 202, "keys": bad}).status_code == 400
+    c.post("/api/mapping", json={"number": 202, "stream_key": keys[0], "mode": "manual"})
+    assert c.post("/api/mapping/feed-order", json={"number": 202, "keys": [keys[0]]}).status_code == 400
+
+
+def test_removing_an_ordered_feed_keeps_the_rest_in_order(monkeypatch):
+    c = _setup(monkeypatch)
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    want = keys[::-1]
+    c.post("/api/mapping/feed-order", json={"number": 202, "keys": want})
+    c.post("/api/mapping/remove-feed", json={"number": 202, "stream_key": want[0]})
+    assert [f["key"] for f in _ch(c)["feeds"]] == want[1:]
+    matcher.match_all()
+    assert [f["key"] for f in _ch(c)["feeds"]] == want[1:]
+
+
+def test_channel_feeds_lists_them_in_play_order_without_addresses(monkeypatch):
+    c = _setup(monkeypatch)
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    c.post("/api/mapping/feed-order", json={"number": 202, "keys": keys[::-1]})
+    feeds = c.get("/api/channels/202/feeds").json()
+    names = {f["key"]: f["name"] for f in _ch(c)["feeds"]}
+    assert [f["alt"] for f in feeds] == [0, 1, 2]
+    assert [f["name"] for f in feeds] == [names[k] for k in keys[::-1]]
+    assert all(f["source"] == "p" and "url" not in f for f in feeds)
+    assert c.get("/api/channels/99999/feeds").status_code == 404
+
+
+def test_feeds_on_a_switched_off_playlist_are_left_out(monkeypatch):
+    c = _setup(monkeypatch)
+    sid = sources.add_source("q", "m3u", "http://y/list.m3u")
+    monkeypatch.setattr(sources, "fetch_m3u", lambda src: ([{"name": "CNN East", "url": "http://t/9", "tvg_id": "",
+                                                              "logo": "", "grp": "News"}], ""))
+    sources.refresh_source(db.one("SELECT * FROM sources WHERE id=?", (sid,)))
+    matcher.match_all()
+    keys = [f["key"] for f in _ch(c)["feeds"]]
+    off = next(k for k in keys if k.startswith(f"{sid}:"))
+    db.run("UPDATE sources SET enabled=0 WHERE id=?", (sid,))
+    api.guide.invalidate()
+    shown = [f["key"] for f in _ch(c)["feeds"]]
+    assert off not in shown and len(shown) == len(keys) - 1
+    assert off not in [f["name"] for f in c.get("/api/channels/202/feeds").json()]
+    assert c.post("/api/mapping/feed-order", json={"number": 202, "keys": shown[::-1]}).json()["ok"]
+    assert [f["key"] for f in _ch(c)["feeds"]] == shown[::-1]
+    db.run("UPDATE sources SET enabled=1 WHERE id=?", (sid,))     # switched back on: it's still there, last
+    assert [f["key"] for f in _ch(c)["feeds"]] == shown[::-1] + [off]

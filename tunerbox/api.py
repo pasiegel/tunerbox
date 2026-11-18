@@ -77,6 +77,19 @@ def api_channels(all: int = 0):
             for c in guide.channels(bool(all) or None)]
 
 
+@app.get("/api/channels/{number}/feeds")
+def api_channel_feeds(number: int):
+    """A channel's feeds in the order they're tried (main first): for switching feed from the TV's menu.
+    The index is the `alt` to play it with. Names and playlists only, never the stream address."""
+    c = guide.channel(number)
+    if not c:
+        raise HTTPException(404)
+    rows = guide.stream_rows(c["streams"])
+    srcs = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM sources")}
+    return [{"alt": i, "name": r.get("name") or "", "source": srcs.get(r.get("source_id"), ""),
+             "status": r.get("status") or ""} for i, r in enumerate(rows)]
+
+
 @app.get("/api/catchup")
 def api_catchup():
     """{channel number: days of catch-up} for the channels whose playlist keeps an archive. The Roku reads
@@ -384,8 +397,9 @@ def api_lineup():
     maps = {m["number"]: m for m in db.rows("SELECT * FROM mappings")}
     streams = {s["key"]: s for s in db.rows(
         """SELECT s.key, s.name, s.grp, s.status, s.tvg_id, s.logo, src.name AS source_name
-           FROM streams s JOIN sources src ON src.id=s.source_id""")}
+           FROM streams s JOIN sources src ON src.id=s.source_id WHERE src.enabled=1""")}   # as the TV sees them
     removed = matcher.rejected()
+    ordered = matcher.feed_order()
     out = []
     for ch in lineup.all_channels():
         m = maps.get(ch["number"]) or {}
@@ -393,7 +407,8 @@ def api_lineup():
         alts = json.loads(m.get("alt_keys") or "[]")
         feeds = [streams[k] for k in [m.get("stream_key")] + alts if k in streams]   # main first, then backups
         out.append({**ch, "mode": m.get("mode", ""), "score": m.get("score", 0), "reason": m.get("reason", ""),
-                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ()))})
+                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ())),
+                    "ordered": bool(ordered.get(ch["number"]))})
     return out
 
 
@@ -404,6 +419,7 @@ def api_suggest(number: int | None = None, q: str = "", limit: int = 60, source_
 
 @app.post("/api/mapping")
 def api_mapping(number: int = Body(...), stream_key: str | None = Body(None), mode: str = Body("manual")):
+    db.run("DELETE FROM feed_order WHERE number=?", (number,))     # a new choice starts from the match's own order
     if mode == "auto":
         db.run("DELETE FROM mappings WHERE number=?", (number,))
         jobs.rematch()
@@ -432,6 +448,7 @@ def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)
     if stream_key not in keys:
         raise HTTPException(404, "That feed isn't on this channel")
     db.run("INSERT OR IGNORE INTO rejected_feeds(number, stream_key) VALUES (?,?)", (number, stream_key))
+    db.run("DELETE FROM feed_order WHERE number=? AND stream_key=?", (number, stream_key))
     keys.remove(stream_key)
     if not keys:
         db.run("DELETE FROM mappings WHERE number=?", (number,))
@@ -441,6 +458,35 @@ def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)
     else:
         db.run("UPDATE mappings SET alt_keys=? WHERE number=?", (json.dumps(keys[1:]), number))
     matcher.rebuild_extras()
+    guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/feed-order")
+def api_mapping_feed_order(number: int = Body(...), keys: list[str] = Body(...)):
+    """Choose the main feed and the order the backups are tried in, on an auto-matched channel. Re-matching
+    keeps it (feeds found later go after these). An empty list goes back to the best-match order."""
+    m = db.one("SELECT * FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] != "auto":
+        raise HTTPException(400, "Only automatically matched channels have feeds to order")
+    if not keys:
+        db.run("DELETE FROM feed_order WHERE number=?", (number,))
+        jobs.rematch()
+        return {"ok": True}
+    current = [m["stream_key"]] + json.loads(m["alt_keys"] or "[]")
+    # feeds on a switched-off playlist aren't listed in Setup or played: they keep their place after these
+    on = {r["key"] for r in db.rows(
+        f"""SELECT s.key FROM streams s JOIN sources src ON src.id=s.source_id
+            WHERE src.enabled=1 AND s.key IN ({",".join("?" * len(current))})""", tuple(current))}
+    shown = [k for k in current if k in on]
+    if len(keys) != len(set(keys)) or set(keys) != set(shown):
+        raise HTTPException(400, "The list must hold each of this channel's feeds once")
+    keys = keys + [k for k in current if k not in on]
+    with db.conn() as c:
+        c.execute("DELETE FROM feed_order WHERE number=?", (number,))
+        c.executemany("INSERT INTO feed_order(number, stream_key, pos) VALUES (?,?,?)",
+                      [(number, k, i) for i, k in enumerate(keys)])
+        c.execute("UPDATE mappings SET stream_key=?, alt_keys=? WHERE number=?", (keys[0], json.dumps(keys[1:]), number))
     guide.invalidate()
     return {"ok": True}
 
@@ -1359,7 +1405,8 @@ def _roku_json(request, obj):
 @app.get("/channels.json")
 def out_channels_json(request: Request, unmapped: int = 1):
     """The channel list for the Roku, as playlist.m3u has it but as rows it reads with its built-in JSON parser:
-    {"channels": [[number, name, logo, group, stream address, tvg-id, tvg-name]]}, by number. unmapped=0 leaves
+    {"channels": [[number, name, logo, group, stream address, tvg-id, tvg-name, backups]]}, by number (backups:
+    how many more feeds after the main one, played with ?alt=1.., in Setup's order). unmapped=0 leaves
     out the extra channels (the Roku's "Hide unmapped channels", on by default), which with a big playlist is
     most of them."""
     base = _base(request)
@@ -1367,7 +1414,8 @@ def out_channels_json(request: Request, unmapped: int = 1):
     chans.sort(key=lambda c: c["number"])
     rows = [[str(c["number"]), c["name"], c["logo"] or "",
              "Local Lineup" if c["kind"] == "lineup" else (c.get("group") or "Extra"),
-             f"{base}/api/stream/{c['number']}", f"ch{c['number']}", c["name"]] for c in chans]
+             f"{base}/api/stream/{c['number']}", f"ch{c['number']}", c["name"],
+             max(0, len(c.get("streams") or []) - 1)] for c in chans]
     return _roku_json(request, {"channels": rows})
 
 

@@ -15,6 +15,7 @@ ROKU_ROUTES = [
     ("GET", "/guide.json"),
     ("GET", "/channels.json"),
     ("GET", "/api/stream/{number}"),
+    ("GET", "/api/channels/{number}/feeds"),
     ("GET", "/api/feed/stream"),
     ("GET", "/api/favorites"),
     ("POST", "/api/favorites"),
@@ -87,17 +88,18 @@ def test_guide_json_rows(client, monkeypatch):
 
 
 def test_channels_json_rows(client, monkeypatch):
-    # LoadTask.brs loadBoot / rowsToChannels: {"channels": [[number, name, logo, group, url, tvg-id, tvg-name]]},
+    # LoadTask.brs loadBoot / rowsToChannels: {"channels": [[number, name, logo, group, url, tvg-id, tvg-name,
+    # backups]]} (backups: feeds after the main one, for failover and Switch feed),
     # by number; unmapped=0 leaves out the extra channels (Roku: Hide unmapped channels)
     from tunerbox import guide
     monkeypatch.setattr(guide, "channels", lambda *a: [
         {"number": 20001, "name": "Extra", "logo": "", "kind": "extra", "group": "Sports"},
-        {"number": 7, "name": "Seven", "logo": "l.png", "kind": "lineup"},
+        {"number": 7, "name": "Seven", "logo": "l.png", "kind": "lineup", "streams": ["a", "b", "c"]},
         {"number": 3, "name": "Three", "logo": None, "kind": "media", "group": "My Channels"}])
     rows = client.get("/channels.json?unmapped=0").json()["channels"]
     assert [r[0] for r in rows] == ["3", "7"]
     assert rows[1][:4] == ["7", "Seven", "l.png", "Local Lineup"] and rows[1][4].endswith("/api/stream/7")
-    assert rows[1][5:] == ["ch7", "Seven"]
+    assert rows[1][5:] == ["ch7", "Seven", 2] and rows[0][7] == 0
     assert [r[0] for r in client.get("/channels.json?unmapped=1").json()["channels"]] == ["3", "7", "20001"]
 
 
