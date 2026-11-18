@@ -57,3 +57,18 @@ def test_split_url_kodi_headers():
     assert headers["User-Agent"] == "foo" and headers["Referer"] == "http://r/"
     url, headers = split_url("http://x/plain.ts")
     assert url == "http://x/plain.ts" and "Mozilla" in headers["User-Agent"]
+
+
+def test_gracenote_cable_codes_name_their_network():
+    from tunerbox import matcher
+    assert matcher.cable_name("HGTVD") == "home and garden television"
+    assert matcher.cable_name("ESPN2HD") == "espn2"
+    assert matcher.cable_name("DSCHD") == "discovery channel"
+    assert matcher.cable_name("NIK") == "nickelodeon"
+    assert matcher.cable_name("Home & Garden Television") is None     # already a name
+    assert matcher.cable_name("WOOD") is None and matcher.cable_name("ZZZHD") is None
+    info = matcher.lineup_info({"number": 223, "name": "FS1HD", "callsign": "FS1HD", "affiliate": ""})
+    assert "fs 1" in info["names"] and info["call"] is None          # normalized like the streams' names
+    # a broadcast station keeps matching by callsign, even when its letters look like a cable code
+    info = matcher.lineup_info({"number": 8, "name": "WOOD", "callsign": "WOOD", "affiliate": "NATIONAL BROADCASTING COMPANY"})
+    assert info["call"] and info["network"] == "nbc"

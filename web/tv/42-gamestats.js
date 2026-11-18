@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------- game stats
-// X while watching a game: a side panel over the picture with the box score, team stats and the
-// latest plays, for the game the scoreboard matched to this channel or event feed. The picture
-// keeps playing, shrunk into the space beside the panel (on a phone the panel covers it); channel and volume keys still work, and the panel follows the new channel.
+// X while watching a game: a card in the top right corner over the picture with the box score, team
+// stats and the latest plays, for the game the scoreboard matched to this channel or event feed. On the
+// Live scores tab it becomes a slim panel down the right with a tile per game, like Home's. The picture
+// keeps playing full size behind it (on a phone the panel is a sheet under it); channel and volume keys
+// still work, and the panel follows the new channel.
 const GS = { tab: 0, data: null, others: [], sel: 0, key: "", t: 0, timer: null };
 const GS_REFRESH = 20000;
 
@@ -62,9 +64,26 @@ function gsTable(cols, rows, cls = "") {
     + `<tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
+// one other game on now, drawn like Home's tiles (hmMatchup: the two logos on their colours, split down
+// the middle, the score and clock between them), with the matchup, league and where to watch underneath
+function gsGame(o, i) {
+  const n = (o.ch ? 1 + o.also.length : 0) + o.feeds.length;
+  const where = !n ? "Not on your channels" : n > 1 ? `${n} places to watch` : o.ch ? `Ch ${o.ch.number}` : (o.feeds[0].group || "Event feed");
+  // soccer lists the home side first, so "vs" rather than "at"
+  const name = o.name || o.teams.map((x) => x.name || x.abbr).join(o.sport === "Soccer" ? " vs " : " at ");
+  return `<div class="gs-game${i === GS.sel ? " sel" : ""}" data-i="${i}">${hmMatchup(o, null, true)}`
+    + `<div class="gs-gx"><b>${esc(name)}</b><span><em>${esc(o.league)}</em> · ${esc(where)}</span></div></div>`;
+}
+
 function gsRender(msg) {
   const d = GS.data, body = $("gs-body"), scroll = body.scrollTop;
   const scoresOnly = !d && GS.others.length && msg === undefined;
+  const tabs = gsTabs(), tab = tabs[GS.tab];
+  // the Live scores tab (or nothing but live scores) uses the tall side panel, everything else the corner card
+  const onScores = msg === undefined && !!(tab && tab.scores);
+  $("gstats").classList.toggle("scores", onScores);
+  $("gs-keys").innerHTML = onScores ? "<b>&#9664; &#9654;</b> Tabs &nbsp; <b>&#9650; &#9660;</b> Pick &nbsp; <b>OK</b> Watch &nbsp; <b>Esc</b> Close"
+    : "<b>&#9664; &#9654;</b> Tabs &nbsp; <b>&#9650; &#9660;</b> Scroll &nbsp; <b>Esc</b> Close";
   $("gs-league").textContent = d ? (d.state === "in" ? `${d.league} · LIVE` : d.league) : "";
   $("gs-clock").textContent = d ? d.detail : "";
   $("gs-upd").textContent = "";
@@ -74,14 +93,14 @@ function gsRender(msg) {
     return;
   }
   const hi = d ? Math.max(...d.teams.map((t) => +t.score || 0)) : 0;
-  // no game on this channel: no header, just the Live scores tab
-  $("gs-teams").innerHTML = !d ? "" : d.teams.map((t) => `<div class="gs-team${t.score !== "" && +t.score === hi ? " lead" : ""}">`
-    + (t.logo ? `<img src="${esc(safePic(t.logo))}" alt="" onerror="this.remove()">` : "")
+  // no game on this channel: no header, just the Live scores tab. Otherwise one line: logo, short
+  // name and score for each side, mirrored either side of the dash (the leader brighter)
+  // the record goes under the name; a logo that won't load is dropped (the name is beside it)
+  $("gs-teams").innerHTML = !d ? "" : d.teams.map((t, i) => `<div class="gs-team ${i ? "r" : "l"}${t.score !== "" && +t.score === hi ? " lead" : ""}" title="${esc(t.name)}">`
     + `<i style="${/^[0-9a-f]{6}$/i.test(t.color || "") ? `background:#${t.color}` : ""}"></i>`
-    + `<div><b>${esc(t.name)}</b><small>${esc(t.record)}</small></div><em>${esc(t.score)}</em></div>`).join("");
-  const tabs = gsTabs();
+    + (t.logo ? `<img src="${esc(safePic(t.logo))}" alt="" onerror="this.remove()">` : "")
+    + `<div><b>${esc(t.short || t.abbr || t.name)}</b>${t.record ? `<small>${esc(t.record)}</small>` : ""}</div><em>${esc(t.score)}</em></div>`).join(`<span class="gs-dash">–</span>`);
   $("gs-tabs").innerHTML = tabs.map((t, i) => `<div class="tab${i === GS.tab ? " sel" : ""}" data-i="${i}">${esc(t.label)}</div>`).join("");
-  const tab = tabs[GS.tab];
   let html = "";
   if (!tab) html = `<div class="gs-empty">${d && d.state === "pre" ? "Stats start when the game does." : "No stats for this game yet."}</div>`;
   else if (tab.team) {
@@ -90,15 +109,7 @@ function gsRender(msg) {
       html += gsTable(head, t.rows.map((r) => [`${r.num ? `<small>#${esc(r.num)}</small>` : ""}${esc(r.name)}`, ...r.stats.map(esc)]));
     }
   } else if (tab.scores) {
-    html = GS.others.map((o, i) => {
-      const hi = Math.max(...o.teams.map((t) => +t.score || 0));
-      const n = (o.ch ? 1 + o.also.length : 0) + o.feeds.length;
-      const where = !n ? "Not on your channels" : n > 1 ? `${n} places to watch` : o.ch ? `Ch ${o.ch.number}` : (o.feeds[0].group || "Event feed");
-      return `<div class="gs-game${i === GS.sel ? " sel" : ""}" data-i="${i}"><div>`
-        + o.teams.map((t) => `<div class="gs-gt${t.score !== "" && +t.score < hi ? " trail" : ""}">`
-          + `<i style="${/^[0-9a-f]{6}$/i.test(t.color || "") ? `background:#${t.color}` : ""}"></i><b>${esc(t.abbr)}</b><em>${esc(t.score)}</em></div>`).join("")
-        + `</div><div class="gs-gw"><span>${esc(o.league)}</span><b>${esc(o.detail)}</b><small>${esc(where)}</small></div></div>`;
-    }).join("");
+    html = GS.others.map(gsGame).join("");
   } else if (tab.label === "Team stats") {
     html = gsTable(["", ...d.teams.map((t) => t.abbr)], d.team_stats.map((s) => [esc(s.label), ...s.values.map(esc)]), "team");
   } else {

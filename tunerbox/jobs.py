@@ -5,7 +5,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from . import config, db, dvr, epg, guide, library, lineup, matcher, media, probe, scoreboard, sources, sports, vod
+from . import config, db, dvr, epg, guide, library, libtasks, lineup, matcher, media, probe, scoreboard, sources, sports, vod
 
 log = logging.getLogger("tunerbox.jobs")
 _lock = threading.Lock()
@@ -17,15 +17,24 @@ def _progress(stage, done=0, total=0):
     state.update(stage=stage, done=done, total=total)
 
 
+_WHAT = {"scan": "the channel scan", "vod": "reading On Demand", "library": "another My Library job", "epg": "the guide update",
+         "refresh": "the playlist refresh", "match": "channel matching", "media": "reading My Channels"}
+
+
+def running_what():
+    """What the job that's running is, in words: "the guide update"."""
+    return _WHAT.get(state["name"].split(":")[0], "another job") if state["running"] else ""
+
+
 def _run(name, fn, queue=False):
     """Start a job in the background. If one is running: False, or with `queue` it runs after that one
-    (a setting changed in Setup isn't lost because a guide refresh happened to be running)."""
+    (a setting changed in Setup isn't lost because a guide refresh happened to be running) and "queued"."""
     with _lock:
         if state["running"]:
             if queue:
                 if name not in [n for n, _ in _queue]:      # already waiting: once is enough
                     _queue.append((name, fn))
-                return True
+                return "queued"
             return False
         state.update(running=True, name=name, stage="Starting", done=0, total=0, message="")
 
@@ -93,8 +102,25 @@ def vod_scan(source_id=None, kinds=vod.KINDS):
 
 def library_scan(share_id=None, full_refresh=False):
     """Read your own movie and TV folders (Setup › My Library) and download details from TMDB.
-    Queued if another job is running."""
-    return _run(f"library:{share_id or ''}", lambda: library.scan_all(_progress, share_id, full_refresh), queue=True)
+    Queued if another job is running. All of them (Scan now): a quick scan, which counts as the "scan" task's
+    run. One library (its Full rescan button, or just added or moved): every folder is read again."""
+    if share_id:
+        return _run(f"library:{share_id}", lambda: library.scan_all(_progress, share_id, full_refresh), queue=True)
+    return _run("library:", lambda: libtasks.run("scan", _progress,
+                                                  lambda p: library.scan_all(p, None, full_refresh, quick=True)),
+                queue=True)
+
+
+def library_task(key):
+    """One of My Library's automatic tasks (libtasks.py), now. Queued if another job is running."""
+    if key not in libtasks.KEYS:
+        raise KeyError(key)
+    return _run(f"library:task:{key}", lambda: libtasks.run(key, _progress), queue=True)
+
+
+def library_tasks_all():
+    """Every automatic task that's on, one after another (Setup › My Library › Run all now)."""
+    return _run("library:task:all", lambda: libtasks.run_all(_progress), queue=True)
 
 
 def library_details():
@@ -202,8 +228,8 @@ def housekeeping():
                     refresh_epg()
                 elif has_sources and quick_due(now):
                     quick_refresh()
-                elif library.scan_due(now):
-                    library_scan()
+                elif (task := libtasks.due(now)):
+                    library_task(task)
             scoreboard.tick(now)       # games and scores, in its own thread
             sports.warm(now)           # the Sports screen's game matching, ready before it's opened
             # local channels: keep two days of listings ahead

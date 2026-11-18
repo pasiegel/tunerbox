@@ -8,7 +8,7 @@
 <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
 <link rel="manifest" href="/static/manifest.webmanifest">
 <!-- iPad / iPhone: Share > Add to Home Screen opens it full screen like an app -->
-<link rel="apple-touch-icon" href="/static/icons/apple-180.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -136,7 +136,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
     <div id="gs-teams"></div>
     <div class="tabs" id="gs-tabs"></div>
     <div id="gs-body"></div>
-    <div class="p-foot gs-foot"><b>&#9664; &#9654;</b> Tabs &nbsp; <b>&#9650; &#9660;</b> Scroll &nbsp; <b>Esc</b> Close <span id="gs-upd"></span></div>
+    <div class="p-foot gs-foot"><span id="gs-keys"><b>&#9664; &#9654;</b> Tabs &nbsp; <b>&#9650; &#9660;</b> Scroll &nbsp; <b>Esc</b> Close</span> <span id="gs-upd"></span></div>
   </div>
 
   <!-- on demand: movies and shows from the playlists -->
@@ -268,7 +268,7 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
   <div id="vsubs" class="hidden" aria-live="off"></div>
   <div id="playback" class="hidden">
     <div id="pb-title"></div>
-    <div class="pb-bar"><div id="pb-progress"></div></div>
+    <div id="pb-seek"><div class="pb-bar"><div id="pb-progress"></div></div><div id="pb-tip" class="hidden"></div></div>
     <div id="pb-time"></div>
   </div>
 </div>

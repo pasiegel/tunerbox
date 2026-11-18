@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------- Home
 // One screen with what you'd want first. Live TV keeps playing in the corner with the highlighted tile's
 // details beside it, then rows: shortcuts, favorites on now, your teams' games on now, Continue Watching (On Demand and recordings),
+// what's new in My Library,
 // sports on now, recent channels, new recordings and what's coming up. Everything comes from one request
 // (/api/home). It opens when the TV turns on (Menu turns that off for this screen) and with the Home button.
 const HM = { rows: [], r: 1, cols: {}, seq: 0, timer: null, state: "loading" };   // state: loading | ok | error
@@ -31,18 +32,28 @@ const HM_NAV = [
   { label: "Menu", info: "Favorites, settings, sleep timer and more", act: () => openMenu() },
 ];
 
+// every row Home can show, in its usual order. Which are shown, and in what order, is set in
+// Setup › Settings › Screens › Home rows; /api/home sends that as `rows` (ids as in tunerbox/home.py ROWS).
+const HM_ROWS = {
+  fav: ["★ Favorites on now", (d) => d.favorites.map((c) => ({ t: "chan", ...c }))],
+  teams: ["⭐ Your teams on now", (d) => (d.teams || []).map((p) => ({ t: "game", p }))],
+  // posters and wide recording tiles in separate rows, so each row has one shape
+  cont: ["Continue Watching: On Demand", (d) => d.continue.filter((x) => x.type === "vod").map((x) => ({ ...x, t: x.type }))],
+  contrec: ["Continue Watching: Recordings", (d) => d.continue.filter((x) => x.type !== "vod").map((x) => ({ ...x, t: x.type }))],
+  libnew: ["New in My Library", (d) => (d.library_new || []).map((x) => ({ ...x, t: x.type }))],
+  sports: ["Sports on now", (d) => d.sports.map((p) => ({ t: "game", p }))],
+  recent: ["Recent channels", (d) => d.recent.map((c) => ({ t: "chan", ...c }))],
+  recorded: ["Recently recorded", (d) => d.recorded.map((r) => ({ t: "rec", ...r }))],
+  coming: ["Coming up", (d) => d.coming.map((x) => ({ ...x, t: x.type === "rec" ? "sched" : "remind" }))],
+};
+
 function homeRows(d) {
   const rows = [{ id: "nav", items: HM_NAV.filter(featOn).map((n) => ({ t: "nav", ...n })) }];
-  const add = (id, label, items) => { if (items && items.length) rows.push({ id, label, items }); };
-  add("fav", "★ Favorites on now", d.favorites.map((c) => ({ t: "chan", ...c })));
-  add("teams", "⭐ Your teams on now", (d.teams || []).map((p) => ({ t: "game", p })));
-  // posters and wide recording tiles in separate rows, so each row has one shape
-  add("cont", "Continue Watching: On Demand", d.continue.filter((x) => x.type === "vod").map((x) => ({ ...x, t: x.type })));
-  add("contrec", "Continue Watching: Recordings", d.continue.filter((x) => x.type !== "vod").map((x) => ({ ...x, t: x.type })));
-  add("sports", "Sports on now", d.sports.map((p) => ({ t: "game", p })));
-  add("recent", "Recent channels", d.recent.map((c) => ({ t: "chan", ...c })));
-  add("recorded", "Recently recorded", d.recorded.map((r) => ({ t: "rec", ...r })));
-  add("coming", "Coming up", d.coming.map((x) => ({ ...x, t: x.type === "rec" ? "sched" : "remind" })));
+  for (const id of d.rows || Object.keys(HM_ROWS)) {
+    if (!HM_ROWS[id]) continue;
+    const [label, make] = HM_ROWS[id], items = make(d);
+    if (items && items.length) rows.push({ id, label, items });
+  }
   return rows;
 }
 const hmKey = (it) => it && ({ nav: `n${it.label}`, chan: `c${it.number}`, vod: `v${it.id}`, rec: `r${it.id}`, sched: `r${it.id}`, fail: `r${it.id}`,
@@ -59,7 +70,7 @@ async function openHome() {
   if (top() !== "home") S.layer.push("home");
   $("home").classList.remove("hidden"); video.classList.add("pip");
   HM.cols = {};
-  if (!HM.rows.length) HM.rows = homeRows({ favorites: [], teams: [], continue: [], sports: [], recent: [], recorded: [], coming: [] });
+  if (!HM.rows.length) HM.rows = homeRows({ favorites: [], teams: [], continue: [], library_new: [], sports: [], recent: [], recorded: [], coming: [] });
   if (HM.state !== "ok") HM.state = "loading";
   HM.r = Math.min(1, HM.rows.length - 1);
   homeRender();
@@ -152,12 +163,16 @@ function hmTile(it, r, i) {
 }
 // a game the scoreboard knows: both teams' logos on their colours, split down the middle, and the
 // score between them once it has started (the leader brighter) with the clock under it. "" if it has
-// no logos, so the tile falls back to the guide's picture.
-function hmMatchup(e, p) {
+// no logos, so the tile falls back to the guide's picture; with `noLogo`, a team without one (or whose
+// logo won't load) shows its abbreviation instead (the game stats' Live scores tiles).
+function hmMatchup(e, p, noLogo = false) {
   const t = e && e.teams;
-  if (!t || t.length !== 2 || !t[0].logo || !t[1].logo) return "";
+  if (!t || t.length !== 2 || (!noLogo && (!t[0].logo || !t[1].logo))) return "";
   const col = (x, dflt) => (/^[0-9a-f]{6}$/i.test(x.color || "") ? `#${x.color}` : dflt);
-  const img = (x, side) => `<img class="mu-${side}" loading="lazy" alt="" src="${esc(safePic(x.logo))}">`;
+  const word = (x) => x.abbr || x.name || "";
+  const img = (x, side) => (!x.logo ? `<b class="mu-${side}">${esc(word(x))}</b>`
+    : `<img class="mu-${side}" loading="lazy" alt="${esc(word(x))}" src="${esc(safePic(x.logo))}"`
+      + (noLogo ? ` onerror="this.replaceWith(Object.assign(document.createElement('b'),{className:this.className,textContent:this.alt}))">` : ">"));
   const a = parseFloat(t[0].score), b = parseFloat(t[1].score), scored = t[0].score !== "" && t[1].score !== "";
   const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
   const mid = scored
@@ -255,10 +270,7 @@ function homeAct(it) {
   if (it.t === "vod") {
     if (it.kind !== "series") { odMovie(it.id); return; }
     if (!it.resume) { openOD("series", it.id); return; }
-    openDialog(it.name, it.sub || "", [
-      { label: `Resume ${it.sub || "episode"}`, act: () => playVod(it.resume) },
-      { label: "All episodes", act: () => { closeDialog(); openOD("series", it.id); } },
-      { label: "Close", act: closeDialog }]);
+    odResumeDialog(it, () => openOD("series", it.id));
     return;
   }
   if (it.t === "rec") { recDialog(it, () => homeLoad()); return; }

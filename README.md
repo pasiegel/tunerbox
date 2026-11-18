@@ -2,6 +2,7 @@
 
 A personal IPTV "cable box": your local cable channel numbers and guide (pick your provider by ZIP or postal code in Setup), filled with feeds from your IPTV playlists. Inspired by MythTV's front end, Tunarr's channel mapping and IPTVnator's playlist handling.
 
+* **Setup wizard.** A new install walks you through it once: your area for the guide, a tuner or playlist, a My Library folder, recordings on or off and a phone remote. Every step can be skipped.
 * **Real channel numbers.** Your provider's lineup is the backbone: any US or Canadian cable, satellite or antenna lineup picked by ZIP/postal code (a sample cable lineup ships in `channels.csv`). Playlist channels are fuzzy-matched onto it.
 * **Local guide.** Listings come from Gracenote (the data behind zap2it and TV Guide) for your provider, so the guide matches your numbers. US and Canada.
 * **Everything else gets a number too.** Every working playlist channel that isn't on the lineup is numbered from 20000 up, with online XMLTV guides.
@@ -36,8 +37,11 @@ Guide listings come from Gracenote for your lineup, plus the playlists' own guid
 | M3U playlist | `http://<tunerbox>:8642/playlist.m3u` | VLC, TiviMate and other IPTV players |
 | XMLTV guide | `http://<tunerbox>:8642/epg.xml` | The same players, and as the guide in Plex, Emby or Jellyfin |
 | HDHomeRun tuner (emulated) | `http://<tunerbox>:8642` | Plex (Live TV & DVR), Emby, Jellyfin, Channels DVR: add it as an HDHomeRun tuner |
+| Channels and guide as JSON | `/channels.json`, `/guide.json`, `/api/catchup` | The Roku app (compact and gzipped; `/guide.json` covers 3 hours back to 12 ahead, `?hours=` up to 72; `/channels.json?unmapped=0` leaves out the extra channels) |
 
 ## Getting started
+New to TunerBox? The **[Getting started guide](docs/getting-started.md)** walks through the first setup with screenshots.
+
 1. **Install.** Download the latest build for your computer from the **Releases** page: the Windows `TunerBox-Setup-….exe`, the Mac `.dmg` or the Linux `.tar.gz`. ffmpeg is included, nothing else to install. (Or run from source, below.)
 2. **Open TunerBox.** It shows **No channels yet**; press Enter or click to open **Setup**.
 3. **Pick your area.** It starts with a sample cable lineup. To use yours: Setup › **Guide**, enter your ZIP or postal code, press **Find providers**, choose your cable, satellite or antenna lineup and press **Save**.
@@ -81,20 +85,22 @@ The PC running TunerBox does the tuning, guide and DVR, and must be on for the o
 
 iPhone/iPad Safari plays the server's HLS output (`/api/hls/<number>`); other browsers use MPEG-TS over Media Source Extensions.
 
-On a phone the TV screen switches to a touch layout: bigger buttons, panels that fit the screen and a **Close** button to leave the guide or a menu. Tap the picture to show or hide the controls (see [On-screen controls](#on-screen-controls)) and swipe up or down to change channel. Held upright, the top buttons show a small label under each icon so they all fit. On an iPhone, the full-screen button opens the video in Safari's own player.
+On a phone the TV screen switches to a touch layout: bigger buttons and panels that fit the screen. A **Close** button (bottom right) leaves the guide or a menu on phones, tablets and iPads, and in any browser once the mouse is used. Tap the picture to show or hide the controls (see [On-screen controls](#on-screen-controls)) and swipe up or down to change channel. Held upright, the top buttons show a small label under each icon so they all fit. On an iPhone, the full-screen button opens the video in Safari's own player.
 
 Roku and other slow devices: set a playlist's **Video** to *Re-encode to 720p*, or add `?mode=roku720` to a stream URL (`http://<pc-ip>:8642/api/stream/<number>?mode=roku720`). It deinterlaces, caps the picture at 720p and the bitrate at 8 Mbps.
 
 Building it yourself: `python packaging/build.py` on Windows (PyInstaller + Inno Setup 6), macOS (`.app`) or Linux. GitHub Actions does this for every release; see `RELEASING.md`.
 
 ## First-time setup
+**Setup wizard.** A new install opens on a short wizard the first time: your ZIP or postal code for the guide (pick your provider, or *No local guide*), an antenna tuner, M3U playlist or Xtream login (it scans and says how many channels each one gave, or why it couldn't be read), a My Library folder, recordings on or off, and pairing a phone. Every step has **Skip**, and **Skip setup** leaves it altogether; it works with a mouse, a touch screen or a TV remote. It only runs once: installs that were set up before it existed never see it, and **Setup › Overview › Setup wizard** runs it again. Everything it does can also be done by hand:
+
 1. With no channels, the screen says **No channels yet**. Press Enter or click it to open **Setup** (also Menu › Channel Setup).
 2. To use your own provider's channel numbers, go to **Guide**, enter your ZIP or postal code and press **Find providers**. Choose your provider (for example *Xfinity - Digital*, *DIRECTV* or *Local Over the Air Broadcast* for an antenna) and press **Save**. Its channel numbers become your lineup.
-3. Go to **Playlists** and add your M3U URL or file, your Xtream server, username and password, or an HDHomeRun antenna tuner (see [Sources and outputs](#sources-and-outputs) for everything TunerBox can use).
+3. Go to **Playlists** and add your M3U URL or file, your Xtream server, username and password, or an HDHomeRun antenna tuner (see [Sources and outputs](#sources-and-outputs) for everything TunerBox can use). An address with a second address inside it (one pasted after text already in the box) is refused: clear the box and paste it again.
 4. Optional: press **Groups…** on the playlist to untick groups you don't want, such as other countries, adult or radio. **Check all** / **Uncheck all** apply to the groups listed, so after picking a country or typing a search they only change those groups (the buttons then show the count, e.g. *Uncheck 93 listed*). **Only keep listed** keeps the listed groups and hides every other one.
    * Hidden groups are removed straight away. Ticking one again rescans the playlist to bring it back.
 5. Press **Scan playlists now**. The scan loads the playlist, checks which streams work, matches channels to your lineup, numbers the leftovers, and downloads the guides. The first scan takes a few minutes.
-6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans.
+6. Go to **Channel Lineup** and set the filter to *Weak matches* to review guesses. Press **Change** to search and preview feeds, then **Use** to pin one. Manual picks survive rescans. **Feeds** shows a channel's main feed and backups, and **Remove** drops a wrong one.
 7. Press **Watch TV**.
 
 **Backing up your playlists, or moving them to another PC:** in **Setup › Playlists**, **Export playlists** saves every playlist (with its login, hidden groups, skip pattern and video setting) as a `tunerbox-playlists-<date>.json` file. **Import playlists…** on this or another TunerBox adds them back and scans; a playlist that's already there (same address and login) is updated instead of added twice. The file holds your passwords in plain text, so keep it private. Exporting only works on the TunerBox PC itself or a paired phone.
@@ -142,9 +148,11 @@ When the TV turns on it opens on **Home**, with the last channel playing in the 
 
 Home has shortcuts (Guide, On Demand, Sports, Recordings, Search, Menu) and then rows, each shown only when it has something in it:
 * **★ Favorites on now** and **Recent channels** (the ones this screen tuned to): what's on, with the show's picture and how far in it is. OK tunes; * adds or removes a favorite.
-* **Continue Watching:** movies and episodes you stopped part-way through, then recordings in a row of their own, the latest first. OK resumes.
+* **Continue Watching:** movies and episodes you stopped part-way through, then recordings in a row of their own, the latest first. OK resumes. When you finish an episode, the show stays with the next one as **Up next**. A film or show you started in more than one version (another language, 4K, another playlist) shows once, as the version you played last; **Setup › Settings › Screens › Continue Watching: show every version** gives each its own tile. **Remove from Continue Watching** in a title's options takes it off without marking it watched.
 * **Sports on now:** games one of your channels or event feeds carries, with the score.
 * **Recently recorded** and **Coming up** (scheduled recordings and reminders).
+
+**Setup › Settings › Screens › Home rows** puts the rows in the order you want (drag them, or use the arrows) and switches off the ones you don't want; **Reset to default** puts them back.
 
 Arrows move, OK opens, number keys tune. To start one screen on live TV instead, turn off **Menu › Settings › Start on Home** there; opening TunerBox with `?ch=<number>` always starts on that channel. To turn Home off for every screen, untick **Setup › Settings › Screens › Home screen**: screens then start on live TV and the Home button opens the guide (each screen picks this up the next time it's turned on).
 
@@ -193,18 +201,24 @@ Every file is converted to one common format while it plays (H.264 + AAC, with b
 ## My Library (your own movies and TV shows in On Demand)
 Setup › **My Library** adds your own movie and TV folders to On Demand, next to your playlists' titles: same posters, resume, Continue Watching, My List and search.
 
-1. Under **Add a library folder**, pick **Movies** or **TV shows**, enter the **folder or network location** (`\\nas\Media\Movies`, `smb://192.168.1.20/Media/Movies`, `D:\Movies`, or in Docker `/media/Movies`) and, for a network share, the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
-2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand.
-3. For details and posters, get a free key at themoviedb.org (Settings › API), paste the *API Key* or *API Read Access Token* under **Details and posters (TMDB)** and **Save**.
+1. Press **+ Add library**, pick **Movies** or **TV shows**, enter the **folder or network location** (`\\nas\Media\Movies`, `smb://192.168.1.20/Media/Movies`, `D:\Movies`, or in Docker `/media/Movies`) and, for a network share, the NAS username and password. **Connect & browse** checks the login and lets you click into folders and **Use this folder**.
+2. **Add library**. The folder is scanned in the background; each library becomes a category in On Demand. A library's **Edit** changes it, hides it from On Demand or removes it.
+3. For details and posters, get a free key at themoviedb.org (Settings › API), then on the **Details and posters** card press **Set up**, paste the *API Key* or *API Read Access Token* and **Save**.
 4. Check **Matches** › *Needs review*: **Fix** searches TMDB so you can pick the right title (kept through rescans), **Leave out** hides a file.
 
-* **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming files or folders is safe; a renamed folder is looked up again.
+* **Nothing is written to your shares.** Text goes in TunerBox's database and posters in its data folder (`posters/`). Renaming or moving files and folders is safe: they're recognised and keep where you stopped, My List and their match (a file renamed to a different title is looked up again).
 * **Naming:** movies as `Dune Part Two (2024)/anything.mkv` or `Dune Part Two (2024).mkv` (scene names like `Dune.Part.Two.2024.2160p.WEB-DL.mkv` work too); shows as `Show/Season 01/Show - S01E02 - Title.mkv` (`1x02` and `Season 2/04 - Title.mkv` work too). Samples, trailers and `Extras` folders are skipped.
 * **Network shares** are read with a built-in SMB2/3 client, so Docker doesn't need the share mounted.
 * **Folders on the TunerBox computer** work too: `D:\Movies` on Windows, `/home/me/Movies` on Linux. A drive letter mapped to a NAS works as long as TunerBox runs as the same Windows user.
 * **In Docker**, TunerBox only sees its container. Mount the folder as a volume and enter the path inside the container: with `-v /srv/media:/media:ro`, the host's `/srv/media/Movies` is `/media/Movies` in Setup. Read-only is fine. A NAS share mounted on the host (CIFS/NFS) works the same way, and is the easy route for guest-only shares.
 * **Who can add folders:** the TunerBox PC and paired devices; on a Docker server, also any browser on your home network until **Lock setup** is on (see [Security notes](#security-notes)).
-* **New files** are picked up by **Scan libraries now** or automatically (Look for new files: once a day by default). Details are refreshed every 30 days; titles TMDB didn't know are tried again after a week.
+* **Automatic tasks** (the card on the page; **Edit** to change them, **Run all** to run them now) keep the libraries up to date. Each can run every 30 minutes up to every week, at a set time (and, weekly, on a set day):
+  * **Find new and changed videos** (every 30 minutes): adds new videos, follows renamed and moved ones, and hides ones that are gone. Folders that haven't changed are skipped, so it's light on the NAS; each folder is still read in full once a day.
+  * **Update details and posters** (daily at 4 am): titles TMDB didn't know are tried again after a week, and details are refreshed every 30 days.
+  * **Measure video lengths** (daily at 4 am): so On Demand shows a title's length before it's first played.
+  * **Remove missing videos** (daily at 4 am): a video whose file is gone is hidden at once and comes back as it was if the file does; after 30 days (*once missing for*) it's taken out. Its watch progress and My List entry are kept another 90 days in case it returns. Your files are never deleted.
+* **Scan now** does a quick scan of every library; a library's **Full rescan** reads every folder again (for a file replaced under the same name, which a quick scan doesn't notice).
+* **New in My Library:** titles found in the last 30 days (and shows with a new episode) have their own category in On Demand and a row on Home.
 * **Playing** uses the same player as playlist titles. Files are converted while they play only as far as needed (sound to AAC); set **Video** to re-encode for players that can't handle the original.
 * **Audio tracks and subtitles:** while one of your own titles plays, Menu › **This title** has **Audio** (when the file has more than one track, e.g. a commentary or another language) and **Subtitles**. The choice is kept for that movie or show, so the next episode uses the same.
   * Subtitles can be text ones inside the file (SRT, ASS, WebVTT, MP4 text) or subtitle files next to the video: `Movie.srt`, `Movie.en.srt`, `Movie.en.forced.srt`, or any `.srt`/`.ass`/`.vtt` in a `Subs` folder beside it. They're drawn over the picture and stay in step when you skip.
@@ -244,7 +258,8 @@ Xtream accounts usually allow only 1 or 2 streams at once, and an HDHomeRun has 
 * **When a playlist is full:** a channel with a backup feed on another playlist plays from there. Otherwise the screen shows **All connections in use**, lists what's using them (for example *Recording: The News* on 8) and offers **Watch 8 instead**: a channel that's already on can be watched on more screens for free.
 * **Recordings come first:** a recording that's starting takes a connection from live TV or On Demand when the playlist is full. That screen then gets the same message, with the recording's channel to switch to. Turn this off in **Setup › Settings › DVR › Recordings come first**: the recording then waits for a connection to free up. A recording never takes over from another recording.
 * **Conflicts:** recordings on different channels that overlap by more than a playlist allows are marked **⚠ CONFLICT** under Coming up in Recordings, with the reason, and you're warned when you schedule one. A channel whose backup feed is on another playlist with room doesn't count as a conflict.
-* **Setup › Tuners** shows each playlist's connections in use against its limit, and who is using each one.
+* **Setup › Tuners** shows each playlist's connections in use against its limit, what each one is playing (with the show on now), and who is using it: a TV screen, a recording, a Roku by its name, or Plex, VLC, Kodi, Jellyfin, Emby or Channels DVR.
+* **Stop** (Setup › Tuners, on each stream) ends a stuck or unwanted stream for everyone on it and frees its connection, after asking. A recording on it is stopped too. TV screens show *Stopped from Setup* instead of reconnecting, until a channel is picked; apps like Roku and Plex can't reopen it for 30 seconds.
 
 ## Phone remote
 Pair a phone once and use it as the remote for any TunerBox screen (the PC window, a browser on the TV, the iPad), or to manage playlists from the sofa.
@@ -302,7 +317,7 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
   * Only US groups (and groups with no country label) are shown. To change that, set `sports_regions` in `settings.json`, e.g. `"US,CA,UK"`, or `"*"` for everything.
 
 ### Game stats
-While a game is on, press **X** (or Menu › **Game stats & live scores**) for its box score in a panel down the right. The picture keeps playing, shrunk into the space beside it; on a phone held upright the panel is a sheet along the bottom with the picture above it.
+While a game is on, press **X** (or Menu › **Game stats & live scores**) for its box score in a card in the top right corner, over the picture, which keeps playing full size. The card's top line has each team's logo, short name and score, the leader brighter. On the **Live scores** tab it becomes a slim panel down the right with a tile per game, like Home's (a team without a logo shows its abbreviation). On a phone held upright the panel is a sheet along the bottom with the picture above it.
 
 * **Tabs** (◀ ▶): each team's players, **Team stats**, **Plays** (the latest 10, newest first) and **Live scores**. ▲ ▼ scroll.
   * Basketball shows points, rebounds, assists and field goals; football passing, rushing and receiving; hockey skaters and goalies; baseball batting and pitching. Soccer has team stats only.
@@ -325,7 +340,7 @@ Press `O` (or Menu › **On Demand**, or **On Demand** on the on-screen controls
 
 **Search** (`/` in On Demand) looks through the movies and shows. Accents and punctuation don't matter (*amelie* finds *Amélie*), the words can be in any order, a year narrows it (*dune 2021*), small typos still find it, and movies are found by actor or director too. A film the playlist has under several labels (*Dune* in EN, 4K-EN, DE…) is listed once; its options have **Other versions** to pick another language or quality. The main **Search** (`/` while watching) finds movies, shows and episodes alongside channels and guide listings.
 
-While a title plays: OK or Space pauses, ← goes back 10 seconds, → skips 30, PgUp/PgDn jump 5 minutes, Back stops and returns to where you were. Where you stopped is remembered on the server, so any screen can resume it. A title uses one of your provider's connections while it plays, like a live channel, and follows the playlist's **Video** setting (pick a re-encode there if a movie has picture but won't play in the browser).
+While a title plays: OK or Space pauses, ← goes back 10 seconds, → skips 30, PgUp/PgDn jump 5 minutes, Back stops and returns to where you were. With a mouse or touch, click or drag the **seek bar** to go to any point (a time tip follows the pointer, and the bar stays up while you use it); it works for catch-up and recordings too. Titles start quickly: the first seconds are sent as fast as they arrive, then at playing speed. Where you stopped is remembered on the server, so any screen can resume it. A title uses one of your provider's connections while it plays, like a live channel, and follows the playlist's **Video** setting (pick a re-encode there if a movie has picture but won't play in the browser).
 
 ## Docker
 Server-only image with ffmpeg included. Data (settings, database, recordings, logs, lineup CSV) lives in the `/data` volume.
@@ -373,7 +388,50 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
 * For My Channels and My Library, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup. The path is the one inside the container, not the host's.
 * The image sets `TUNERBOX_TRUST_LAN=1`: with no screen of its own, any browser on your home network counts as the TunerBox PC (settings, folders, pairing) until **Setup › Phones › Lock setup** is on. Pair your browser before turning the lock on; afterwards only paired devices can change setup.
+* **Unraid:** see [Unraid](#unraid) below.
 * **Two TunerBoxes on one host** (say one for the family and one private): give the second its own data volume and port, e.g. `-v tunerbox-private-data:/data` and `-p 8644:8644` with the command `python -m tunerbox --server --port 8644` (with host networking, just the `--port`). Then set **Setup › Settings › Other apps › Network name** on each (before adding them as tuners), so Plex, Jellyfin, Emby and Channels DVR list them under different names. Home-screen icons stay "TunerBox". Each one gets its own HDHomeRun device ID for Plex automatically.
+
+### Unraid
+
+TunerBox isn't in Community Applications, so add it by hand. It takes a few minutes and updates like any other container.
+
+1. Open the **Docker** tab and press **Add Container** at the bottom. (If it's missing, turn Docker on under **Settings › Docker**.)
+2. Turn on **Advanced View** (top right) and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Name | `TunerBox` |
+   | Repository | `ghcr.io/pasiegel/tunerbox:latest` |
+   | Icon URL | `https://raw.githubusercontent.com/pasiegel/tunerbox/main/web/icons/icon-192.png` |
+   | WebUI | `http://[IP]:[PORT:8642]/` |
+   | Extra Parameters | `--user 99:100` |
+   | Network Type | `Bridge` (or `Host`, see below) |
+
+   **Don't skip `--user 99:100`.** Unraid's shares belong to `nobody:users` (99:100), and without it TunerBox can't write its appdata folder: the container stops at once with `Permission denied: '/data/settings.json.tmp'` in its log.
+3. Press **Add another Path, Port, Variable, Label or Device** once for each of these:
+
+   | Config Type | Name | Container | Host / Value | Access mode |
+   |---|---|---|---|---|
+   | Port | Web UI | `8642` (TCP) | `8642` | |
+   | Path | Data | `/data` | `/mnt/user/appdata/tunerbox` | Read/Write |
+   | Variable | Time zone | `TZ` | your time zone, e.g. `America/Chicago` | |
+   | Path | Videos (optional) | `/media` | your media share, e.g. `/mnt/user/Media` | Read Only |
+
+   * **Data** holds the settings, the database, logs and recordings. Keep it on appdata (the cache drive if you have one), and include it in your appdata backup.
+   * **Time zone** sets the guide times and when recordings start.
+   * **Videos** is only for My Channels and My Library from a folder: in Setup, use the path inside the container (`/media/Movies` for `/mnt/user/Media/Movies`). My Library can also read an SMB share over the network with no path at all (`\\tower\Media\Movies`, with a user that can read it).
+   * **HTTPS** (optional, for installing TunerBox as an app): add a Port `8643` → `8643` as well, switch HTTPS on in **Setup › Settings › HTTPS**, and add your Unraid server's address under **Extra addresses for the certificate**.
+4. Press **Apply**. Unraid pulls the image and starts it. Click the TunerBox icon › **WebUI** (or open `http://<unraid-ip>:8642/`): a new install opens the setup wizard.
+
+**Network type.** `Bridge` works for everything except finding an HDHomeRun on its own: add the tuner by its IP address instead. With `Host`, HDHomeRun discovery works and the port fields are ignored (TunerBox is at port 8642 on the Unraid server; make sure nothing else uses it). With `Custom: br0` TunerBox gets an address of its own on your network.
+
+**Recordings** go in `/data/recordings`, which is `/mnt/user/appdata/tunerbox/recordings` on the server. To keep them on the array instead, add a Path `/recordings` → `/mnt/user/Recordings` (Read/Write), then set **Setup › Settings › Recordings folder** to `/recordings`.
+
+**Updates.** On the Docker tab, **Check for Updates**, then **apply update** on TunerBox (or let the CA Auto Update Applications plugin do it). Your settings stay in appdata. To stay on one release, use its tag in Repository, e.g. `ghcr.io/pasiegel/tunerbox:1.9.0`.
+
+**Plex, Jellyfin or Emby on the same Unraid server:** add TunerBox as an HDHomeRun tuner at `http://<unraid-ip>:8642`, not `localhost`: each container has its own `localhost`.
+
+**Already started it without `--user 99:100`?** Add it under Extra Parameters and, if the container still won't start, reset the folder's owner in the Unraid terminal: `chown -R nobody:users /mnt/user/appdata/tunerbox`.
 
 ## Security notes
 * TunerBox has no logins on your home network: anyone on the Wi-Fi can watch, and change setup until **Setup › Phones › lock** is on. On a Docker server that includes PC-only settings (ffmpeg, recordings folder, ports) and folders on the server. Pair your phone (and on a NAS, your PC's browser) and turn the lock on if others share your network.
@@ -385,8 +443,12 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 ## How matching works
 * **Locals** (WNBC, KABC, WGN…) match by callsign, including subchannels: a station's DT2 is matched to its second channel on the lineup, and so on. If no local stream exists, the national network feed (NBC, FOX…) is used. You can turn that off in Settings.
 * **Cable networks** match by normalized name plus aliases (CNN = Cable News Network, HGTV, A&E…). The tvg-id only supports a name match, since many playlists set tvg-ids loosely.
+* **Gracenote codes.** A lineup straight from Gracenote often names cable channels by code (`HGTVD`, `DSCHD`, `ESPN2HD`, `NIK`). About 130 of these also look for the network's full name (Home and Garden Television, Discovery Channel, Nickelodeon…), so playlists that spell names out still match.
 * **Penalties** push down UK/Canada feeds, West/Pacific feeds, and Spanish feeds on English channels.
 * **Backups.** Up to 4 more matching feeds are kept per channel. If the main one dies, the box tries them in order.
+* **Feeds list.** In **Setup › Channel lineup**, an automatically matched channel with backups has a **Feeds** button: it lists the main feed and its backups in the order they're tried, each with a preview. **Remove** takes a wrong feed off that channel for good (rescans and re-matching skip it); removing the main feed makes the first backup the main one. **Allow again** brings the removed feeds back and re-matches.
+* **Feed order.** In the same list, **Make main** plays a backup first, and the ▲ ▼ arrows change the order the backups are tried in. Re-matching keeps your order (feeds found later go after it); **Use best-match order** goes back to TunerBox's own.
+* **Switch feed while watching.** On a channel with backups, **Menu › Switch feed** lists its feeds (with the playlist, and any that weren't working at the last scan) and plays the one you pick straight away. It doesn't change the order; Setup does that.
 * **Skipped** on purpose: public-access, government-access and PPV slots.
 
 ## Files

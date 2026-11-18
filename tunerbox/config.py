@@ -52,14 +52,14 @@ DEFAULTS = {
     "lineup_csv": "channels.csv",
     # The provider lineup that channels.csv was made for. If you pick a different provider in
     # Setup > Guide the CSV is ignored, so the two don't mix. "" = always use the CSV.
-    "lineup_csv_lineup": "USA-MI21490-X",
+    "lineup_csv_lineup": "USA-CA00053-DEFAULT",
     # Local guide from Gracenote (same data zap2it/TV Guide sites use)
     "gracenote": {
         "enabled": True,
-        "postal_code": "49503",
+        "postal_code": "90210",
         "country": "USA",
-        "lineup_id": "USA-MI21490-X",      # Xfinity - Digital, Grand Rapids
-        "headend_id": "MI21490",
+        "lineup_id": "USA-CA00053-DEFAULT",   # Charter Spectrum - Digital, Beverly Hills
+        "headend_id": "CA00053",
         "device": "X",
         "hours": 48,
     },
@@ -130,6 +130,13 @@ DEFAULTS = {
     # the Home button opens the guide, and Home is left out of the menus. Each screen can still choose,
     # in its Menu, not to start on Home.
     "home_screen": True,
+    # Home's rows top to bottom (ids in home.ROWS; a row missing here goes at the end, in its usual place),
+    # and the ones switched off. Hidden rows come back from /api/home as empty lists.
+    "home_order": [],
+    "home_hidden": [],
+    # Continue Watching (Home and On Demand): every version you've started of a film or show (another
+    # language, 4K, another playlist) gets its own tile. Off: one tile, the version played last.
+    "vod_continue_versions": False,
     # colour theme for every screen (web/theme.js); each TV screen can pick its own in Menu › Theme
     "theme": "midnight",
     "sleep_hours": 4,
@@ -155,6 +162,9 @@ DEFAULTS = {
     # tuner_count 0 = automatic (your Xtream accounts' connection limits, else 4).
     "hdhr_device_id": "",
     "tuner_count": 0,
+    # The first-time wizard (/welcome) has been finished or skipped. A new install starts at False, so the
+    # first screen opened goes to the wizard; installs from before the wizard count as done (see load()).
+    "welcome_done": False,
 }
 
 _lock = threading.Lock()
@@ -246,6 +256,8 @@ def load():
                 # installs from before this setting already told Plex "12345678": changing it would
                 # make Plex see a new tuner and lose its DVR setup
                 _cache["hdhr_device_id"] = LEGACY_DEVICE_ID if user else new_device_id()
+            if user and "welcome_done" not in user:
+                _cache["welcome_done"] = True       # set up before the wizard existed: never show it
             _write(_cache)
         return _cache
 
@@ -342,6 +354,9 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
             raise ValueError("https_port must be a port number (1-65535)")
         elif k == "box_name":
             v = re.sub(r"\s+", " ", v).strip()[:40] or "TunerBox"
+        elif k in ("home_order", "home_hidden"):
+            from .home import ROWS          # home imports config; only needed here
+            v = list(dict.fromkeys(str(x) for x in v if str(x) in ROWS))
         elif k == "favorites":
             v = sorted({int(n) for n in v if _is_num(n) or str(n).lstrip("-").isdigit()})
         if k in PC_ONLY and not from_pc and k not in allow:

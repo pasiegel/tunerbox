@@ -41,14 +41,15 @@ def _recording(r):
 
 
 def _continue(now):
-    """On Demand titles and recordings you're part-way through, the latest first."""
-    items = [{"type": "vod", **t} for t in (vod.continue_watching() if vod.enabled() else [])]
+    """On Demand titles and recordings you're part-way through, the latest first (up to ROW of each, as
+    they're shown in two rows)."""
+    items = [{"type": "vod", **t} for t in (vod.continue_watching() if vod.enabled() else [])][:ROW]
     recs = db.rows("""SELECT * FROM recordings WHERE status IN ('done','cancelled') AND file != '' AND watched=0
                       AND position > ? ORDER BY watched_at DESC LIMIT ?""", (RESUME_MIN, ROW)) if dvr.enabled() else []
     for r in recs:
         items.append({"type": "rec", "at": r["watched_at"], **_recording(r)})
     items.sort(key=lambda x: -(x.get("at") or 0))
-    return items[:ROW]
+    return items
 
 
 def _sports_now():
@@ -94,21 +95,56 @@ def _coming_up(now):
     return items[:ROW]
 
 
+# Home's rows in their usual order: {id: name in Setup}. The TV screen (web/tv/48-home.js homeRows) uses the same ids.
+ROWS = {
+    "fav": "Favorites on now",
+    "teams": "Your teams on now",
+    "cont": "Continue Watching: On Demand",
+    "contrec": "Continue Watching: Recordings",
+    "libnew": "New in My Library",
+    "sports": "Sports on now",
+    "recent": "Recent channels",
+    "recorded": "Recently recorded",
+    "coming": "Coming up",
+}
+
+
+def rows():
+    """The rows to show, top to bottom (Setup › Settings › Screens › Home rows). A row the saved order
+    doesn't name yet (one added in a later version) keeps its usual place after the rows it follows."""
+    saved = [r for r in config.get("home_order") or [] if r in ROWS]
+    order = list(saved)
+    for i, r in enumerate(ROWS):
+        if r not in order:
+            before = [x for x in list(ROWS)[:i] if x in order]
+            order.insert(order.index(before[-1]) + 1 if before else 0, r)
+    hidden = set(config.get("home_hidden") or [])
+    return [r for r in order if r not in hidden]
+
+
 def overview(recent=()):
     now = int(time.time())
+    shown = rows()
+    on = set(shown)
     favs = [int(n) for n in config.get("favorites") or []]
     recent = [n for n in recent if n not in favs]
-    on_now = _sports_now()
+    # games also put scores on favorite and recent channel tiles
+    on_now = _sports_now() if on & {"fav", "recent", "teams", "sports"} else []
     by_ch = _by_channel(on_now)
     team_games, games = _games(on_now)
     rec_done = db.rows("""SELECT * FROM recordings WHERE status='done' AND file != '' ORDER BY start DESC LIMIT ?""",
-                       (ROW,)) if dvr.enabled() else []
+                       (ROW,)) if dvr.enabled() and "recorded" in on else []
+    cont = _continue(now) if on & {"cont", "contrec"} else []
+    cont = [x for x in cont if ("cont" if x["type"] == "vod" else "contrec") in on]
     return {
-        "favorites": _on_now(_channels(favs)[:ROW], now, by_ch),
-        "recent": _on_now(_channels(recent)[:ROW], now, by_ch),
-        "continue": _continue(now),
-        "teams": team_games,
-        "sports": games,
+        "rows": shown,
+        "favorites": _on_now(_channels(favs)[:ROW], now, by_ch) if "fav" in on else [],
+        "recent": _on_now(_channels(recent)[:ROW], now, by_ch) if "recent" in on else [],
+        "continue": cont,
+        "library_new": [{"type": "vod", **t} for t in vod.library_new(limit=ROW, unwatched=True)]
+                       if vod.enabled() and "libnew" in on else [],
+        "teams": team_games if "teams" in on else [],
+        "sports": games if "sports" in on else [],
         "recorded": [_recording(r) for r in rec_done],
-        "coming": _coming_up(now),
+        "coming": _coming_up(now) if "coming" in on else [],
     }

@@ -1,4 +1,5 @@
 """HTTP API + web UI + M3U/XMLTV/HDHomeRun outputs."""
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -9,7 +10,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from xml.sax.saxutils import escape
 
 import anyio
@@ -19,7 +20,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -36,6 +37,7 @@ def _startup():
     dvr.recover()
     hls.cleanup_stale()
     threading.Thread(target=jobs.housekeeping, daemon=True).start()
+    threading.Thread(target=streaming.has_option, args=("readrate_initial_burst",), daemon=True).start()  # warm the cache
 
 
 @asynccontextmanager
@@ -73,6 +75,26 @@ class LiveResponse(StreamingResponse):
 def api_channels(all: int = 0):
     return [{k: v for k, v in c.items() if k != "streams"} | {"alts": max(0, len(c["streams"]) - 1)}
             for c in guide.channels(bool(all) or None)]
+
+
+@app.get("/api/channels/{number}/feeds")
+def api_channel_feeds(number: int):
+    """A channel's feeds in the order they're tried (main first): for switching feed from the TV's menu.
+    The index is the `alt` to play it with. Names and playlists only, never the stream address."""
+    c = guide.channel(number)
+    if not c:
+        raise HTTPException(404)
+    rows = guide.stream_rows(c["streams"])
+    srcs = {r["id"]: r["name"] for r in db.rows("SELECT id, name FROM sources")}
+    return [{"alt": i, "name": r.get("name") or "", "source": srcs.get(r.get("source_id"), ""),
+             "status": r.get("status") or ""} for i, r in enumerate(rows)]
+
+
+@app.get("/api/catchup")
+def api_catchup():
+    """{channel number: days of catch-up} for the channels whose playlist keeps an archive. The Roku reads
+    this rather than /api/channels, which runs to megabytes with a big playlist."""
+    return {str(c["number"]): c["catchup"] for c in guide.channels() if c.get("catchup")}
 
 
 @app.get("/api/favorites")
@@ -375,8 +397,9 @@ def api_lineup():
     maps = {m["number"]: m for m in db.rows("SELECT * FROM mappings")}
     streams = {s["key"]: s for s in db.rows(
         """SELECT s.key, s.name, s.grp, s.status, s.tvg_id, s.logo, src.name AS source_name
-           FROM streams s JOIN sources src ON src.id=s.source_id""")}
+           FROM streams s JOIN sources src ON src.id=s.source_id WHERE src.enabled=1""")}   # as the TV sees them
     removed = matcher.rejected()
+    ordered = matcher.feed_order()
     out = []
     for ch in lineup.all_channels():
         m = maps.get(ch["number"]) or {}
@@ -384,7 +407,8 @@ def api_lineup():
         alts = json.loads(m.get("alt_keys") or "[]")
         feeds = [streams[k] for k in [m.get("stream_key")] + alts if k in streams]   # main first, then backups
         out.append({**ch, "mode": m.get("mode", ""), "score": m.get("score", 0), "reason": m.get("reason", ""),
-                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ()))})
+                    "stream": s, "alts": len(alts), "feeds": feeds, "removed": len(removed.get(ch["number"], ())),
+                    "ordered": bool(ordered.get(ch["number"]))})
     return out
 
 
@@ -395,6 +419,7 @@ def api_suggest(number: int | None = None, q: str = "", limit: int = 60, source_
 
 @app.post("/api/mapping")
 def api_mapping(number: int = Body(...), stream_key: str | None = Body(None), mode: str = Body("manual")):
+    db.run("DELETE FROM feed_order WHERE number=?", (number,))     # a new choice starts from the match's own order
     if mode == "auto":
         db.run("DELETE FROM mappings WHERE number=?", (number,))
         jobs.rematch()
@@ -423,6 +448,7 @@ def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)
     if stream_key not in keys:
         raise HTTPException(404, "That feed isn't on this channel")
     db.run("INSERT OR IGNORE INTO rejected_feeds(number, stream_key) VALUES (?,?)", (number, stream_key))
+    db.run("DELETE FROM feed_order WHERE number=? AND stream_key=?", (number, stream_key))
     keys.remove(stream_key)
     if not keys:
         db.run("DELETE FROM mappings WHERE number=?", (number,))
@@ -432,6 +458,35 @@ def api_mapping_remove_feed(number: int = Body(...), stream_key: str = Body(...)
     else:
         db.run("UPDATE mappings SET alt_keys=? WHERE number=?", (json.dumps(keys[1:]), number))
     matcher.rebuild_extras()
+    guide.invalidate()
+    return {"ok": True}
+
+
+@app.post("/api/mapping/feed-order")
+def api_mapping_feed_order(number: int = Body(...), keys: list[str] = Body(...)):
+    """Choose the main feed and the order the backups are tried in, on an auto-matched channel. Re-matching
+    keeps it (feeds found later go after these). An empty list goes back to the best-match order."""
+    m = db.one("SELECT * FROM mappings WHERE number=?", (number,))
+    if not m or m["mode"] != "auto":
+        raise HTTPException(400, "Only automatically matched channels have feeds to order")
+    if not keys:
+        db.run("DELETE FROM feed_order WHERE number=?", (number,))
+        jobs.rematch()
+        return {"ok": True}
+    current = [m["stream_key"]] + json.loads(m["alt_keys"] or "[]")
+    # feeds on a switched-off playlist aren't listed in Setup or played: they keep their place after these
+    on = {r["key"] for r in db.rows(
+        f"""SELECT s.key FROM streams s JOIN sources src ON src.id=s.source_id
+            WHERE src.enabled=1 AND s.key IN ({",".join("?" * len(current))})""", tuple(current))}
+    shown = [k for k in current if k in on]
+    if len(keys) != len(set(keys)) or set(keys) != set(shown):
+        raise HTTPException(400, "The list must hold each of this channel's feeds once")
+    keys = keys + [k for k in current if k not in on]
+    with db.conn() as c:
+        c.execute("DELETE FROM feed_order WHERE number=?", (number,))
+        c.executemany("INSERT INTO feed_order(number, stream_key, pos) VALUES (?,?,?)",
+                      [(number, k, i) for i, k in enumerate(keys)])
+        c.execute("UPDATE mappings SET stream_key=?, alt_keys=? WHERE number=?", (keys[0], json.dumps(keys[1:]), number))
     guide.invalidate()
     return {"ok": True}
 
@@ -504,10 +559,20 @@ def _disk_path_ok(request, type_, url):
                                  "while Setup is locked. Use a web address (http://…), or pair this device in Setup › Phones.")
 
 
+def _address_ok(type_, url):
+    """Catch an address pasted into one that was already there ("example.com/https://example.com/list.m3u"):
+    it would be saved, read as a file that isn't there, and give no channels."""
+    url = (url or "").strip()
+    if type_ in ("m3u", "xtream") and "://" in url and not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.I):
+        raise HTTPException(400, "That address doesn't look right: it has a second address inside it "
+                                 f"({url[:60]}). Clear the box and paste the address again.")
+
+
 @app.post("/api/sources")
 def api_add_source(request: Request, data: dict = Body(...)):
     if not data.get("url"):
         raise HTTPException(400, "URL / server is required")
+    _address_ok(data.get("type", "m3u"), data["url"])
     _disk_path_ok(request, data.get("type", "m3u"), data["url"])
     try:
         sid = sources.add_source(data.get("name", ""), data.get("type", "m3u"), data["url"].strip(),
@@ -559,6 +624,7 @@ def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     if not before:
         raise HTTPException(404)
     if isinstance(data.get("url"), str) and data["url"].strip() != before["url"]:
+        _address_ok(before["type"], data["url"])
         _disk_path_ok(request, before["type"], data["url"])
     for k in ("name", "url", "username", "password"):
         if isinstance(data.get(k), str):
@@ -1072,8 +1138,9 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
     url, ss = await anyio.to_thread.run_sync(_vod_source, it, max(0.0, ss))
     if not url:
         raise HTTPException(404, "Can't play this")
-    cmd = vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
-                         max(0, a))
+    cmd = await anyio.to_thread.run_sync(          # off the event loop: the first call asks ffmpeg what it supports
+        lambda: vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
+                               max(0, a)))
     proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
     return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
@@ -1143,6 +1210,12 @@ def api_vod_watched(id: str = Body(...), watched: bool = Body(True)):
     if catchup.is_item(id):
         return {}
     return vod.set_watched(id, watched)
+
+
+@app.post("/api/vod/forget")
+def api_vod_forget(id: str = Body(..., embed=True)):
+    """Remove a movie or show from Continue Watching."""
+    return vod.forget(id)
 
 
 @app.post("/api/vod/list")
@@ -1329,6 +1402,34 @@ def out_m3u(request: Request):
     return PlainTextResponse("\n".join(lines) + "\n", media_type="audio/x-mpegurl")
 
 
+def _roku_json(request, obj):
+    """A big JSON reply for the Roku, compact and gzipped when the caller accepts it."""
+    body = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
+    headers = {"Cache-Control": "no-store"}
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        body = gzip.compress(body, compresslevel=5)
+        headers["Content-Encoding"] = "gzip"
+        headers["Vary"] = "Accept-Encoding"
+    return Response(body, media_type="application/json", headers=headers)
+
+
+@app.get("/channels.json")
+def out_channels_json(request: Request, unmapped: int = 1):
+    """The channel list for the Roku, as playlist.m3u has it but as rows it reads with its built-in JSON parser:
+    {"channels": [[number, name, logo, group, stream address, tvg-id, tvg-name, backups]]}, by number (backups:
+    how many more feeds after the main one, played with ?alt=1.., in Setup's order). unmapped=0 leaves
+    out the extra channels (the Roku's "Hide unmapped channels", on by default), which with a big playlist is
+    most of them."""
+    base = _base(request)
+    chans = [c for c in guide.channels() if unmapped or c["kind"] != "extra"]
+    chans.sort(key=lambda c: c["number"])
+    rows = [[str(c["number"]), c["name"], c["logo"] or "",
+             "Local Lineup" if c["kind"] == "lineup" else (c.get("group") or "Extra"),
+             f"{base}/api/stream/{c['number']}", f"ch{c['number']}", c["name"],
+             max(0, len(c.get("streams") or []) - 1)] for c in chans]
+    return _roku_json(request, {"channels": rows})
+
+
 @app.get("/epg.xml")
 def out_xmltv():
     def fmt(t):
@@ -1353,6 +1454,25 @@ def out_xmltv():
                        + ("<new/>" if p["is_new"] else "") + "</programme>")
     out.append("</tv>")
     return Response("\n".join(out), media_type="application/xml")
+
+
+@app.get("/guide.json")
+def out_guide_json(request: Request, hours: int = 12):
+    """The guide for the Roku: from 3 hours ago to `hours` ahead, only channels that have listings, as
+    {"programs": {"<number>": [[start, stop, title, subtitle, descr, category, episode, rating]]}}. A fraction
+    of epg.xml (three days of every channel) and read with the Roku's built-in JSON parser instead of picking
+    the XML apart in BrightScript. Gzipped when the caller accepts it."""
+    hours = max(1, min(72, hours))
+    now = int(time.time())
+    chans = guide.channels()
+    progs = epg.programs({c["epg"] for c in chans if c["epg"]}, now - 3 * 3600, now + hours * 3600)
+    out = {}
+    for c in chans:
+        rows = progs.get(c["epg"]) if c["epg"] else None
+        if rows:
+            out[str(c["number"])] = [[p["start"], p["stop"], p["title"] or "", p["subtitle"] or "", p["descr"] or "",
+                                       p["category"] or "", p["episode"] or "", p["rating"] or ""] for p in rows]
+    return _roku_json(request, {"programs": out})
 
 
 # HDHomeRun emulation so Plex / Emby / Jellyfin can add TunerBox as a tuner
@@ -1488,7 +1608,8 @@ def _lib_err(fn, *a):
 
 @app.get("/api/library")
 def api_library():
-    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts()}
+    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts(),
+            "tasks": libtasks.listing()}
 
 
 @app.post("/api/library/settings")
@@ -1553,9 +1674,43 @@ def api_library_delete(sid: int):
     return {"ok": True}
 
 
+def _queued(job):
+    """{"job": …}, and when it waits for another job, what that one is ("after": "the guide update")."""
+    return {"job": bool(job), **({"queued": True, "after": jobs.running_what()} if job == "queued" else {})}
+
+
 @app.post("/api/library/scan")
 def api_library_scan(share_id: int = Body(0, embed=True), refresh: bool = Body(False, embed=True)):
-    return {"job": jobs.library_scan(share_id or None, refresh)}
+    return _queued(jobs.library_scan(share_id or None, refresh))
+
+
+@app.put("/api/library/tasks/{key}")
+def api_library_task_update(key: str, data: dict = Body(...)):
+    """Turn one of My Library's automatic tasks on or off, or change how often it runs."""
+    try:
+        return libtasks.update(key, data)
+    except KeyError:
+        raise HTTPException(404, "No such task")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/library/tasks/reset")
+def api_library_tasks_reset():
+    """My Library's automatic tasks back to their defaults."""
+    return libtasks.reset()
+
+
+@app.post("/api/library/tasks/run-all")
+def api_library_tasks_run_all():
+    return _queued(jobs.library_tasks_all())
+
+
+@app.post("/api/library/tasks/{key}/run")
+def api_library_task_run(key: str):
+    if key not in libtasks.KEYS:
+        raise HTTPException(404, "No such task")
+    return _queued(jobs.library_task(key))
 
 
 @app.get("/api/library/titles")
@@ -1609,8 +1764,36 @@ async def api_library_file(request: Request, item_id: str):
 
 # ------------------------------------------------------------------ web UI
 @app.get("/")
-def index():
+def index(request: Request):
+    # a new install: the first screen opened walks through setup first (each step can be skipped)
+    if not config.get("welcome_done"):
+        q = request.url.query
+        return RedirectResponse("/welcome" + (f"?next={quote('/?' + q, safe='')}" if q else ""), 303)
     return _page("index.html")
+
+
+# iPhone and iPad also look for the home-screen icon at these fixed addresses (when adding to the home screen
+# and when the icon named on the page doesn't load); without them they draw a plain letter instead
+_ROOT_ICONS = {"apple-touch-icon.png": "apple-180.png", "apple-touch-icon-precomposed.png": "apple-180.png",
+               "apple-touch-icon-180x180.png": "apple-180.png", "favicon.ico": "icon-192.png"}
+
+
+def _root_icon(file):
+    def serve():
+        return FileResponse(config.WEB / "icons" / file, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    return serve
+
+
+for _name, _file in _ROOT_ICONS.items():
+    app.add_api_route(f"/{_name}", _root_icon(_file), methods=["GET", "HEAD"], include_in_schema=False)
+
+
+@app.get("/welcome")
+def welcome_page(request: Request):
+    if config.get("require_pairing") and not remote.trusted(request):
+        return RedirectResponse("/pair?next=/welcome", 303)
+    return _page("welcome.html")
 
 
 @app.get("/setup")
@@ -1655,12 +1838,14 @@ def _named(html):
     return html.replace("<small>Setup</small>", f"<small>Setup · {escape(name)}</small>")
 
 
-_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
+_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css|png|webmanifest)))"')
 
 
 def _page(name):
-    """Serve a page with ?v=<file time> on its scripts/styles, so an updated TunerBox never runs
-    with a script the browser or app window cached from the old version."""
+    """Serve a page with ?v=<file time> on its scripts, styles, icons and manifest, so an updated TunerBox
+    never runs with a script the browser or app window cached from the old version. For the icons: Safari
+    keeps the home-screen icon it once got for an address (even a failed one, e.g. while a proxy said
+    502) and Add to Home Screen reuses it without asking again; a new address makes it fetch the icon."""
     html = _named((config.WEB / name).read_text(encoding="utf-8"))
 
     def stamp(m):

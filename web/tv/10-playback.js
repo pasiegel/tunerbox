@@ -62,12 +62,47 @@ function codecFallback(p, key, mode, redo) {
     setTimeout(redo, 0);
     return true;
   };
+  let watching = false;             // MEDIA_INFO can come again (resent headers): one watcher per player
   p.on(mpegts.Events.MEDIA_INFO, (mi) => {
     const c = mi && mi.videoCodec;
-    if (c && /^(hvc1|hev1)/i.test(c) && window.MediaSource && MediaSource.isTypeSupported
+    if (!c || !/^(hvc1|hev1)/i.test(c)) return;
+    if (window.MediaSource && MediaSource.isTypeSupported
         && !MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)) go();
+    else if (slowHevc()[hevcKind(c)]) go();     // this screen choked on this kind lately: no need to watch
+    else if (!watching) { watching = true; watchDecode(p, () => { rememberSlowHevc(hevcKind(c)); return go(); }); }
   });
   return (type) => type === mpegts.ErrorTypes.MEDIA_ERROR && go();
+}
+// HEVC the browser says it supports can still be decoded too slowly (Chrome/Edge on a Mac with 10-bit x265):
+// it plays, but drops frames. Watch the dropped-frame count while it plays and convert if it can't keep up.
+const DECODE_DROP = 0.08, DECODE_BAD = 2;   // two seconds in a row with 8%+ of frames dropped
+function watchDecode(p, go) {
+  if (!video.getVideoPlaybackQuality) return;
+  let last = null, bad = 0;
+  const t = setInterval(() => {
+    if (S.player !== p) { clearInterval(t); return; }
+    const q = video.getVideoPlaybackQuality(), cur = { total: q.totalVideoFrames, dropped: q.droppedVideoFrames };
+    const prev = last; last = cur;
+    // paused, buffering, hidden, just started or nearly out of data (the network, not the decoder): nothing to judge
+    if (!prev || video.paused || video.readyState < 3 || document.hidden || bufferedAhead() < 1) { bad = 0; return; }
+    const total = cur.total - prev.total, dropped = cur.dropped - prev.dropped;
+    if (total < 12) { bad = 0; return; }
+    bad = dropped / total >= DECODE_DROP ? bad + 1 : 0;
+    if (bad >= DECODE_BAD) { clearInterval(t); console.warn(`dropping ${dropped}/${total} HEVC frames: converting`); go(); }
+  }, 1000);
+}
+// Which HEVC kinds this screen couldn't keep up with, remembered in this browser for SLOW_HEVC_DAYS (then it gets
+// another chance, e.g. after a browser update): {"hvc1.2": when} where hvc1.2 = Main 10, hvc1.1 = Main.
+const SLOW_HEVC_DAYS = 30;
+const hevcKind = (c) => c.split(".").slice(0, 2).join(".").replace(/^hev1/i, "hvc1").toLowerCase();
+function slowHevc() {
+  try {
+    const s = JSON.parse(localStorage.getItem("tb.slowHevc") || "{}"), cut = Date.now() - SLOW_HEVC_DAYS * 864e5;
+    return Object.fromEntries(Object.entries(s && typeof s === "object" ? s : {}).filter(([, at]) => at > cut));
+  } catch (e) { return {}; }
+}
+function rememberSlowHevc(kind) {
+  try { localStorage.setItem("tb.slowHevc", JSON.stringify({ ...slowHevc(), [kind]: Date.now() })); } catch (e) { /* private window */ }
 }
 const bufferedAhead = () => {
   const b = video.buffered;
@@ -310,6 +345,8 @@ function loadArt(img, key, url) {
 
 async function showBanner(full = false) {
   const ch = curCh(); if (!ch) return;
+  // the on-screen controls show this channel too: keep them in step when a key changes channel under them
+  if (!$("remote").classList.contains("hidden")) remoteSync();
   const b = $("banner");
   const art = $("b-art");
   if (art.dataset.ch !== String(ch.number) || ch.feed) showArt(art, null);   // another channel's picture

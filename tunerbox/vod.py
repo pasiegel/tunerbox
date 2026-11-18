@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 import httpx
 from rapidfuzz import fuzz, process
 
-from . import config, db, sources
+from . import config, db, sources, streaming
 from .streaming import NO_WINDOW, ffmpeg_bin, input_args, play_args
 
 log = logging.getLogger("tunerbox.vod")
@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS vod_progress (
     updated INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS vod_list (title_id TEXT PRIMARY KEY, added INTEGER DEFAULT 0);
+-- shows taken off Continue Watching while their next episode was waiting (Forget); watching any
+-- episode after `at` puts them back
+CREATE TABLE IF NOT EXISTS vod_dismissed (title_id TEXT PRIMARY KEY, at INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS vod_cats (     -- every category of a playlist, shown or not
     source_id INTEGER NOT NULL,
     kind TEXT NOT NULL,
@@ -92,6 +95,7 @@ EPISODE = re.compile(r"^(.*?)[\s._-]*\bS(\d{1,2})[\s._-]*E(\d{1,3})\b[\s._:-]*(.
 DUR = re.compile(r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)")
 NEW_DAYS = 14                     # "NEW" on a title added this recently
 RECENT = 60                       # titles in Recently Added
+LIB_NEW_DAYS = 30                 # New in My Library: your own titles added (or shows with a new episode) this recently
 RESUME_MIN = 30                   # seconds in before a title counts as started
 WATCHED_AT = 0.92                 # this far through = watched
 INFO_TTL = 30 * 86400
@@ -513,28 +517,67 @@ def categories(kind):
     rows = db.rows(f"SELECT t.category AS name, count(*) AS count, MIN(t.source_id) < 0 AS library {_FROM} WHERE t.kind=? "
                    "GROUP BY t.category ORDER BY MIN(t.source_id) >= 0, t.category COLLATE NOCASE", (kind,))
     recent = db.one(f"SELECT count(*) n {_FROM} WHERE t.kind=? AND t.added>0", (kind,))["n"]
-    return {"total": sum(r["count"] for r in rows), "recent": min(RECENT, recent), "cats": rows}
+    lib_new = db.one(f"SELECT count(*) n {_FROM} WHERE t.kind=? AND t.source_id<0 AND t.added>=?",
+                     (kind, int(time.time()) - LIB_NEW_DAYS * 86400))["n"]
+    return {"total": sum(r["count"] for r in rows), "recent": min(RECENT, recent), "lib_new": min(RECENT, lib_new), "cats": rows}
+
+
+def library_new(kind=None, limit=RECENT, unwatched=False):
+    """New in My Library: your own titles found in the last LIB_NEW_DAYS (and shows with a new episode), newest
+    first. `unwatched`: leave out movies you've watched (Home)."""
+    now = int(time.time())
+    w, a = (" AND t.kind=?", [kind]) if kind else ("", [])
+    if unwatched:
+        w += " AND COALESCE(p.watched, 0)=0"
+    rows = db.rows(f"""SELECT {_COLS}, p.position, p.duration AS pdur, p.watched {_FROM}
+                       LEFT JOIN vod_progress p ON p.item_id=t.id
+                       WHERE t.source_id<0 AND t.added>=?{w} ORDER BY t.added DESC, t.name LIMIT ?""",
+                   (now - LIB_NEW_DAYS * 86400, *a, limit))
+    return [_tile(r, now) for r in rows]
 
 
 def continue_watching(kind=None):
-    """Titles you're part-way through, the latest first. A show appears once, at its latest episode."""
+    """Titles you're part-way through, the latest first. A show appears once, at its latest episode, and a film
+    or show with several versions (languages, 4K…) appears once, as the version played last, unless
+    Settings › Screens › Show every version is on: then each version you've started has its own tile.
+    A show whose last-played episode you finished stays, as Up next: the episode after it (`upnext`)."""
     w, a = (" AND t.kind=?", [kind]) if kind else ("", [])
-    rows = db.rows(f"""SELECT {_COLS}, p.item_id, p.position, p.duration AS pdur, p.updated, e.season, e.episode, e.name AS ep_name,
-                              e.duration AS ep_duration
+    versions = bool(config.get("vod_continue_versions"))
+    # ties (a whole show marked watched at once) go to the latest episode, so Up next follows the last one
+    rows = db.rows(f"""SELECT {_COLS}, t.search, p.item_id, p.position, p.duration AS pdur, p.updated, p.watched,
+                              e.season, e.episode, e.name AS ep_name, e.duration AS ep_duration, d.at AS dismissed
                        {_FROM} JOIN vod_progress p ON p.title_id=t.id LEFT JOIN vod_episodes e ON e.id=p.item_id
-                       WHERE p.watched=0 AND p.position>?{w} ORDER BY p.updated DESC""", (RESUME_MIN, *a))
+                       LEFT JOIN vod_dismissed d ON d.title_id=t.id
+                       WHERE ((p.watched=0 AND p.position>?) OR (p.watched=1 AND t.kind='series')){w}
+                       ORDER BY p.updated DESC, e.season DESC, e.episode DESC""", (RESUME_MIN, *a))
     out, seen, now = [], set(), int(time.time())
     for r in rows:
-        if r["id"] in seen or (r["kind"] == "series" and r["season"] is None):
+        # its other versions count as the same title (or, showing every version, only this one does)
+        same = r["id"] if versions else (r["kind"], r["search"], r["year"])
+        if same in seen or (r["kind"] == "series" and r["season"] is None):
             continue
-        seen.add(r["id"])
+        seen.add(same)
+        upnext = None
+        if r["watched"]:                    # the last episode played was finished: the one after it, if any
+            if (r["dismissed"] or 0) >= (r["updated"] or 0):
+                continue
+            upnext = db.one("""SELECT id, season, episode, name, duration FROM vod_episodes WHERE title_id=?
+                               AND (season>? OR (season=? AND episode>?)) ORDER BY season, episode LIMIT 1""",
+                            (r["id"], r["season"], r["season"], r["episode"]))
+            if not upnext:
+                continue                    # caught up with the show
+            r = {**r, "item_id": upnext["id"], "season": upnext["season"], "episode": upnext["episode"],
+                 "ep_name": upnext["name"], "ep_duration": upnext["duration"], "position": 0, "watched": 0}
         if r["kind"] == "series":
             r["duration"] = r["ep_duration"]
         tile = _tile(r, now)
         tile["resume"] = r["item_id"]
         tile["at"] = r["updated"] or 0
+        tile["upnext"] = bool(upnext)
         if r["kind"] == "series":
-            tile["sub"] = ep_label({"season": r["season"], "episode": r["episode"], "name": r["ep_name"]})
+            label = ep_label({"season": r["season"], "episode": r["episode"], "name": r["ep_name"]})
+            tile["sub"] = f"Up next · {label}" if upnext else label
+            tile["ep"] = label
         out.append(tile)
     return out
 
@@ -552,6 +595,9 @@ def titles(kind="movie", cat=None, tab="", offset=0, limit=120):
         total = db.one(f"SELECT count(*) n {_FROM} JOIN vod_list l ON l.title_id=t.id")["n"]
         rows = db.rows(f"SELECT {cols} {_FROM} JOIN vod_list l ON l.title_id=t.id {join}"
                        "ORDER BY l.added DESC LIMIT ? OFFSET ?", (limit, offset))
+    elif cat == "*libnew":
+        rows = library_new(kind)
+        return {"total": len(rows), "items": rows[offset:offset + limit]}
     elif cat == "*recent":
         rows = db.rows(f"SELECT {cols} {_FROM} {join} WHERE t.kind=? AND t.added>0 ORDER BY t.added DESC, t.name LIMIT ?",
                        (kind, RECENT))
@@ -774,14 +820,14 @@ def stream_cmd(raw_url, start=0.0, mode=None, pace=None, audio=0):
     `audio`: which of its audio tracks (0 = the first)."""
     inp, vid, aud = play_args(raw_url, mode)
     seek = ["-ss", f"{start:.2f}"] if start > 0 else []
-    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or ["-re"]), *seek, *inp,
+    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or streaming.pace()), *seek, *inp,
             "-map", "0:v:0?", "-map", f"0:a:{max(0, int(audio))}?", "-sn", "-dn", *vid, *aud,
             "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
 
 
 def hls_pre(start=0.0, pace=None):
     """Input options for the HLS output (iPad/iPhone): the same speed limit and start time."""
-    return (pace or ["-re"]) + (["-ss", f"{start:.2f}"] if start > 0 else [])
+    return (pace or streaming.pace()) + (["-ss", f"{start:.2f}"] if start > 0 else [])
 
 
 def _title_of(item_id):
@@ -818,6 +864,14 @@ def set_watched(item_id, watched=True):
                       ON CONFLICT(item_id) DO UPDATE SET position=0, watched=1, updated=excluded.updated""", (i, tid, now))
         else:
             db.run("DELETE FROM vod_progress WHERE item_id=?", (i,))
+    return {"ok": True}
+
+
+def forget(title_id):
+    """Take a movie or show off Continue Watching: drop where it was stopped, keep what was watched. A show's
+    Up next tile stays away until you watch another of its episodes."""
+    db.run("DELETE FROM vod_progress WHERE title_id=? AND watched=0", (title_id,))
+    db.run("INSERT OR REPLACE INTO vod_dismissed(title_id, at) VALUES (?,?)", (title_id, int(time.time())))
     return {"ok": True}
 
 

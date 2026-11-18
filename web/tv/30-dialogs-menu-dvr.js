@@ -49,6 +49,30 @@ function themeDialog() {
       .map(([id, name]) => ({ label: `${name}${own === id ? "  ✓" : ""}`, act: () => set(id) })),
   ]);
 }
+// a lineup channel with backup feeds is on (not an event feed): the menu offers to switch between them
+const liveAlts = () => { const ch = S.mode === "live" && !S.feedCh && curCh(); return !!(ch && ch.alts > 0); };
+async function feedDialog() {
+  const idx = S.idx, ch = S.channels[idx]; if (!ch) return;
+  let feeds;
+  try { feeds = await api(`/api/channels/${ch.number}/feeds`); } catch (e) { toast(`Can't list the feeds: ${e.message}`); return; }
+  if (S.idx !== idx || S.mode !== "live" || S.feedCh) return;           // changed channel meanwhile
+  ch.alts = Math.max(0, feeds.length - 1);         // Setup may have changed them since the channel list loaded
+  if (feeds.length < 2) { toast("This channel has only one feed now"); return; }
+  const pick = (f) => () => {
+    closeDialog();
+    if (f.alt === S.alt) return;
+    toast(`${ch.number} ${ch.name}: ${f.alt ? `backup ${f.alt}` : "main feed"}${f.source ? ` · ${f.source}` : ""}`);
+    tune(idx, f.alt);
+  };
+  openDialog(`Switch feed · ${ch.number} ${ch.name}`,
+    "This channel has more than one feed. Pick one to watch it now; Setup › Channels sets which one plays first.",
+    feeds.map((f) => ({
+      label: `${f.alt ? `Backup ${f.alt}` : "Main"}: ${f.name}${f.source ? `  ·  ${f.source}` : ""}${f.status === "dead" ? "  (not working at the last scan)" : ""}${f.alt === S.alt ? "  ✓ watching" : ""}`,
+      act: pick(f),
+    })));
+  const cur = feeds.findIndex((f) => f.alt === S.alt);
+  if (cur > 0) fillList($("dlg-list"), dlg.entries, cur);
+}
 function bufferDialog() {
   const cur = localStorage.getItem("tb.buffer");
   const set = (v) => {
@@ -163,6 +187,10 @@ const MENU = [
       const ch = cuLive() && curCh();
       return `↺ Start this show over${ch ? ` (or a show from the last ${cuDaysText(ch).toLowerCase()} in the Guide)` : ""}`;
     }, catchup: true, act: () => { closeMenu(); startOver(); } },
+  { liveAlts: true, get label() {
+      const ch = curCh();
+      return `Switch feed (watching ${S.alt ? `backup ${S.alt}` : "the main feed"} of ${ch ? (ch.alts || 0) + 1 : 1})`;
+    }, act: () => { closeMenu(); feedDialog(); } },
   { label: "Game stats & live scores (X)", act: () => { closeMenu(); openStats(); } },
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
@@ -211,7 +239,7 @@ function openMenu() {
   hideBanner();
   const t = S.mode === "vod" && S.vod && S.vod.tracks;
   const avOn = (e) => !e.av || (t && (e.av === true || (e.av === "audio" ? t.audio.length > 1 : t.subs.length > 0)));
-  const items = MENU.filter((e) => avOn(e) && !(e.catchup && !cuLive()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
+  const items = MENU.filter((e) => avOn(e) && !(e.catchup && !cuLive()) && !(e.liveAlts && !liveAlts()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
   menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
   renderMenu();
   S.layer.push("menu"); $("menu").classList.remove("hidden", "two");
@@ -316,11 +344,15 @@ let pbTimer;
 function showPlaybackBar() {
   hideBanner();                 // the bar and the info banner share the bottom of the screen
   $("playback").classList.remove("hidden");
-  clearTimeout(pbTimer); pbTimer = setTimeout(() => $("playback").classList.add("hidden"), 4000);
+  clearTimeout(pbTimer);
+  pbTimer = setTimeout(function hide() {               // not while it's dragged or pointed at
+    if (S.mode === "playback" && pbHeld()) { pbTimer = setTimeout(hide, 1500); return; }
+    $("playback").classList.add("hidden");
+  }, 4000);
 }
 const fmtDur = (s) => { s = Math.max(0, s | 0); const h = s / 3600 | 0, m = (s % 3600) / 60 | 0, x = s % 60; return (h ? h + ":" : "") + String(m).padStart(h ? 2 : 1, "0") + ":" + String(x).padStart(2, "0"); };
 video.addEventListener("timeupdate", () => {
-  if (S.mode !== "playback") return;
+  if (S.mode !== "playback" || pbScrub) return;      // not while the bar is being dragged
   const d = video.duration || 0;
   $("pb-progress").style.width = d ? `${video.currentTime / d * 100}%` : "0";
   $("pb-time").textContent = `${fmtDur(video.currentTime)} / ${fmtDur(d)}${video.paused ? "   ❚❚ Paused" : ""}`;

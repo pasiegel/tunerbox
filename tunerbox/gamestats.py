@@ -192,7 +192,8 @@ def parse(league, d):
         c = sides.get(k) or {}
         t = c.get("team") or {}
         rec = (c.get("record") or [{}])[0].get("summary", "") if c.get("record") else ""
-        teams.append({"name": t.get("displayName") or "", "abbr": t.get("abbreviation") or "",
+        teams.append({"name": t.get("displayName") or "", "short": t.get("shortDisplayName") or t.get("name") or "",
+                      "abbr": t.get("abbreviation") or "",
                       "color": scoreboard._color(t.get("color")), "logo": ((t.get("logos") or [{}])[0].get("href") or t.get("logo") or ""),
                       "score": str(c.get("score") or "") if state != "pre" else "", "record": rec,
                       "winner": bool(c.get("winner"))})
@@ -257,7 +258,7 @@ def _live_scores(league, now):
 
 def others(game_id=None, now=None):
     """Every other game being played right now in the leagues picked in Settings, for the panel's
-    Live scores tab: [{id, league, teams: [{abbr, color, score}], detail, fav, ch, also, feeds, ...}]. Your
+    Live scores tab: [{id, league, teams: [{abbr, name, logo, color, score}], detail, fav, ch, also, feeds, ...}]. Your
     teams' games first, then this game's league, then this sport, then ones you can watch. With no
     game_id (nothing the scoreboard knows is on), every live game, your teams' first.
     `ch` is the channel showing it (None if none does) and `also` the others; `feeds` the event feeds
@@ -282,7 +283,8 @@ def others(game_id=None, now=None):
         if e["state"] != "in":
             continue
         out.append({"id": e["id"], "league": e["league"], "detail": e["detail"], "fav": bool(e.get("fav")),
-                    "teams": [{"abbr": t["abbr"], "color": t["color"], "score": t["score"]} for t in e["teams"]],
+                    "teams": [{"abbr": t["abbr"], "name": t.get("name") or "", "logo": t.get("logo") or "",
+                               "color": t["color"], "score": t["score"]} for t in e["teams"]],
                     "sport": e["sport"], "name": e["name"], "title": g.get("title") or e["name"],
                     "start": g.get("start"), "stop": g.get("stop"),
                     "ch": g.get("ch"), "also": g.get("also") or [], "feeds": g.get("feeds") or []})
