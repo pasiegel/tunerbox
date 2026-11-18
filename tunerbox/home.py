@@ -107,6 +107,7 @@ def overview(recent=()):
         "favorites": _on_now(_channels(favs)[:ROW], now, by_ch),
         "recent": _on_now(_channels(recent)[:ROW], now, by_ch),
         "continue": _continue(now),
+        "library_new": [{"type": "vod", **t} for t in vod.library_new(limit=ROW, unwatched=True)] if vod.enabled() else [],
         "teams": team_games,
         "sports": games,
         "recorded": [_recording(r) for r in rec_done],

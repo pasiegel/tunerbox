@@ -1113,34 +1113,242 @@ const libStatus = (s) => {
 };
 const LIB_STATE = { ok: ["ok", "Matched"], weak: ["weak", "Check this"], none: ["none", "Not found"], pinned: ["pinned", "Picked by you"],
                     ignored: ["none", "Left out"], "": ["pending", "Not looked up"] };
+const LIB_REMOVE = [[0, "the next scan"], [1, "1 day"], [7, "7 days"], [30, "30 days"], [90, "90 days"]];
+const LIB_EVERY = [[0.5, "30 minutes"], [1, "hour"], [3, "3 hours"], [6, "6 hours"], [12, "12 hours"], [24, "day"], [168, "week"]];
+const libEvery = (h) => (LIB_EVERY.find(([x]) => x === h) || [h, `${h} hours`])[1];
+const libOpts = (list, cur) => (list.some(([v]) => v === cur) ? list : [...list, [cur, `${cur}`]])
+  .map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`).join("");
+const libIn = (t) => { const s = t - Date.now() / 1000; return s < 60 ? "soon" : s < 3600 ? `in ${Math.round(s / 60)} min` : s < 86400 ? `in ${Math.round(s / 3600)} h` : `in ${Math.round(s / 86400)} d`; };
+const LIB_VIDEO = { "": "Default", copy: "Original", h264: "H.264", roku720: "720p" };
+const libOn = () => libData.shares.some((x) => x.enabled);
+// how long a task's last run took, roughly: "1 s", "12 s", "3 min", "1 h 5 min"
+const libTook = (t) => {
+  if (t < 59.5) return `${Math.max(1, Math.round(t))} s`;
+  const m = Math.round(t / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+};
+const libHour = (h) => (h === 0 ? "midnight" : h === 12 ? "noon" : h < 12 ? `${h} am` : `${h - 12} pm`);
+// weekdays as the server counts them (0 Monday … 6 Sunday), listed from Sunday
+const LIB_DAYS = [[6, "Sunday"], [0, "Monday"], [1, "Tuesday"], [2, "Wednesday"], [3, "Thursday"], [4, "Friday"], [5, "Saturday"]];
+const libDayName = (d) => (LIB_DAYS.find(([x]) => x === d) || [0, ""])[1];
+// "on Sunday at 4 am", "from 4 am": what's set beside Every
+const libAt = (t) => [t.every_hours === 168 && t.on_day >= 0 ? `on ${libDayName(t.on_day)}` : "",
+                      t.at_hour >= 0 && t.every_hours > 1 ? `${t.every_hours >= 24 ? "at" : "from"} ${libHour(t.at_hour)}` : ""].filter(Boolean).join(" ");
+// the "on" (weekly) and "at" / "from" pickers beside Every: none for every hour
+const libAtPick = (every, at, day) => (every <= 1 ? "" : (every === 168 ? `<span>on</span>
+  <select data-a="day" aria-label="On what day">${libOpts([[-1, "any day"], ...LIB_DAYS], day >= 0 ? day : -1)}</select>` : "")
+  + `<span>${every >= 24 ? "at" : "from"}</span>
+  <select data-a="at" aria-label="At what time">${libOpts([[-1, "any time"], ...[...Array(24).keys()].map((h) => [h, libHour(h)])], at >= 0 ? at : -1)}</select>`);
+const libPicked = (row) => { const at = row.querySelector("[data-a=at]"), day = row.querySelector("[data-a=day]");
+                             return { at_hour: at ? +at.value : -1, on_day: day ? +day.value : -1 }; };
 loaders.library = async () => {
   libData = await api("/api/library");
-  const c = libData.counts, s = libData.settings;
-  $("lib-summary").innerHTML = libData.shares.length ? `
-    <div class="st"><b>${c.movies.toLocaleString()}</b>movie${c.movies === 1 ? "" : "s"}</div>
-    <div class="st"><b>${c.shows.toLocaleString()}</b>show${c.shows === 1 ? "" : "s"} · ${c.episodes.toLocaleString()} episode${c.episodes === 1 ? "" : "s"}</div>
-    <div class="st ${c.review ? "warn" : ""}"><b>${c.review}</b>need review</div>
-    <div class="st"><b>${s.tmdb_key_set ? "On" : "Off"}</b>TMDB details</div>` : "";
-  $("lib-list").innerHTML = libData.shares.length ? libData.shares.map((sh) => `<div class="card" data-id="${sh.id}">
-      <div class="t">${esc(sh.name)} <span class="tag">${libKind(sh.kind)}</span> ${sh.enabled ? "" : '<span class="tag none">off</span>'}
-        ${sh.review ? `<span class="tag weak">${sh.review} to review</span>` : ""}</div>
-      <div class="u">${esc(sh.location)}${sh.username ? ` · as ${esc(sh.username)}` : ""}</div>
-      <div class="muted small">${libStatus(sh)}${sh.scanned_at ? " · scanned " + fmt(sh.scanned_at) : ""}</div>
-      <div class="row"><button class="btn small primary" data-a="scan">Scan now</button><span class="grow"></span>
-        <button class="btn small" data-a="review">Review</button><button class="btn small" data-a="edit">Edit</button>
-        <button class="btn small" data-a="toggle">${sh.enabled ? "Turn off" : "Turn on"}</button>
-        <button class="btn small danger" data-a="del">Remove</button></div></div>`).join("")
-    : '<p class="muted">No library folders yet. Add your Movies folder and your TV folder below.</p>';
-  $("lib-lang").value = s.language || "";
-  $("lib-auto").value = String(s.auto_scan_hours);
-  if (![...$("lib-auto").options].some((o) => o.selected)) $("lib-auto").value = "24";
-  $("lib-video").value = s.video_mode || "";
-  $("lib-key").value = "";
-  $("lib-key").placeholder = s.tmdb_key_set ? `saved (${s.tmdb_key_hint || "hidden"}): paste a new one to replace it` : "paste your key";
-  $("lib-key-state").textContent = s.tmdb_key_set ? "" : "No key yet: titles use the names from your files.";
+  const c = libData.counts, s = libData.settings, tasks = libData.tasks || [];
+  const plural = (n, w) => `${w}${n === 1 ? "" : "s"}`;
+  const stat = (n, label, extra = "", act = "") => `<div class="st ${extra}"${act ? ` data-a="${act}" role="button" tabindex="0"` : ""}><b>${n.toLocaleString()}</b><span>${label}</span></div>`;
+  $("lib-summary").innerHTML = libData.shares.length ? [
+    stat(c.movies, plural(c.movies, "movie")),
+    stat(c.shows, plural(c.shows, "show")),
+    stat(c.episodes, plural(c.episodes, "episode")),
+    stat(c.review, "need review", c.review ? "warn link" : "", c.review ? "review" : ""),
+    c.missing ? stat(c.missing, "missing files", "link", "missing") : "",
+  ].join("") : "";
+  $("lib-list").innerHTML = libData.shares.length ? libData.shares.map((sh) => `<div class="card lib-card${sh.enabled ? "" : " off"}" data-id="${sh.id}">
+      <div class="lib-card-top"><span class="lib-ico" aria-hidden="true">${sh.kind === "movie" ? "🎬" : "📺"}</span>
+        <div class="lib-card-name"><div class="t">${esc(sh.name)}</div>
+          <div class="u" title="${esc(sh.location)}">${esc(sh.location)}${sh.username ? ` · as ${esc(sh.username)}` : ""}</div></div>
+        <button class="btn small" data-a="edit">Edit</button></div>
+      <div class="lib-card-tags"><span class="tag">${libKind(sh.kind)}</span>${sh.enabled ? "" : '<span class="tag none">Hidden from On Demand</span>'}
+        ${sh.review ? `<a class="tag weak" data-a="review" href="#library">${sh.review} to review</a>` : ""}</div>
+      <div class="row"><span class="muted small grow">${libStatus(sh)}${sh.scanned_at ? ` · ${ago(sh.scanned_at)}` : ""}</span>
+        <button class="btn small" data-a="scan" ${sh.enabled ? "" : "disabled"} title="Read every folder of this library again, including ones that look unchanged (a file replaced under the same name)">Full rescan</button></div></div>`).join("")
+    : `<div class="lib-empty"><b>No libraries yet</b><span class="muted">Add your Movies folder and your TV folder, on your NAS or this PC.</span>
+        <button type="button" class="btn primary" data-a="add">+ Add library</button></div>`;
+  $("lib-scan").disabled = !libOn();
   $("lib-review-count").textContent = c.review ? `${c.review} need review` : "";
+  $("lib-review-count").classList.toggle("hidden", !c.review);
+  // details panel
+  $("lib-tmdb-card").innerHTML = `<div class="lib-panel-head"><b>Details and posters</b>
+      <span class="tag ${s.tmdb_key_set ? "ok" : "weak"}">${s.tmdb_key_set ? "TMDB on" : "No TMDB key"}</span>
+      <span class="grow"></span><button class="btn small" data-a="tmdb">${s.tmdb_key_set ? "Edit" : "Set up"}</button></div>
+    <div class="muted small">${s.tmdb_key_set ? "Titles get posters, plots and cast from TMDB."
+      : "Without a key, titles show the names from your folders and files. A free TMDB key adds posters, plots and cast."}</div>
+    <dl class="lib-facts"><dt>Language</dt><dd>${esc(s.language || "en-US")}</dd>
+      <dt>Video</dt><dd>${LIB_VIDEO[s.video_mode || ""] || esc(s.video_mode)}</dd></dl>`;
+  // tasks panel
+  const on = tasks.filter((t) => t.enabled), nxt = on.length && libOn() ? on.reduce((a, b) => (b.next_run < a.next_run ? b : a)) : null;
+  const last = tasks.filter((t) => t.last_run).sort((a, b) => b.last_run - a.last_run)[0];
+  const failed = tasks.filter((t) => (t.status || "").startsWith("error"));
+  $("lib-tasks-card").innerHTML = `<div class="lib-panel-head"><b>Automatic tasks</b>
+      <span class="tag ${on.length ? "ok" : "none"}">${on.length} of ${tasks.length} on</span>
+      ${failed.length ? `<span class="tag none">${failed.length} failed</span>` : ""}
+      <span class="grow"></span>
+      <button class="btn small" data-a="run-all" ${on.length && libOn() ? "" : "disabled"} title="Run every task that's on now, one after another">Run all</button>
+      <button class="btn small" data-a="tasks">Edit</button></div>
+    <ul class="lib-task-list">${tasks.map((t) => {
+      const bad = (t.status || "").startsWith("error");
+      const bits = t.enabled ? [`Every ${libEvery(t.every_hours)}${libAt(t) ? ` ${libAt(t)}` : ""}`] : ["Off"];
+      if (t.last_run) bits.push(`took ${libTook(t.took)}`);
+      return `<li class="${bad ? "bad" : t.enabled ? "on" : ""}" title="${esc(t.about)}"><span class="nm">${esc(t.name)}</span>
+        <span class="sub">${bits.join(" · ")}${bad ? ' · <span class="bad-text">failed</span>' : ""}</span></li>`;
+    }).join("")}</ul>
+    <div class="muted small">${nxt ? `Next: ${esc(nxt.name.toLowerCase())}, ${libIn(nxt.next_run)}` : libOn() ? "Nothing scheduled" : "Waits until a library is added"}${last ? ` · Last ran ${ago(last.last_run)}` : ""}</div>`;
+  if (!$("tasks-dlg").classList.contains("hidden")) libTasks(true);  // a task finished while the dialog is open
   libTitles();
 };
+$("lib-summary").addEventListener("click", (e) => {
+  const a = (e.target.closest("[data-a]") || {}).dataset?.a;
+  if (a === "review" || a === "missing") libShow(a);
+});
+$("lib-summary").addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.click(); });
+$("lib-tmdb-card").addEventListener("click", (e) => { if (e.target.closest("[data-a=tmdb]")) openTmdbDlg(); });
+$("lib-tasks-card").addEventListener("click", (e) => {
+  if (e.target.closest("[data-a=tasks]")) openTasksDlg();
+  else if (e.target.closest("[data-a=run-all]")) libRunAll();
+});
+// a job started, or waiting for another one (the guide update…) to finish first
+function libStarted(r, msg) {
+  toast(r.queued ? `Queued: starts after ${r.after || "the job that's running"}` : msg);
+  pollJob();
+}
+async function libRunAll() {
+  try { libStarted(await api("/api/library/tasks/run-all", { method: "POST" }), "Running all tasks…"); } catch (e) { toast(e.message); }
+}
+function libShow(filter, q = "") {
+  $("lib-filter").value = filter; $("lib-q").value = q; libTitles();
+  $("lib-body").scrollIntoView({ behavior: "smooth" });
+}
+$("lib-scan").onclick = async () => {
+  try { libStarted(await api("/api/library/scan", { method: "POST", body: {} }), "Scanning…"); } catch (e) { toast(e.message); }
+};
+function libModal(id, close) {
+  $(id).addEventListener("mousedown", (e) => { if (e.target === $(id)) close(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$(id).classList.contains("hidden")) close(); });
+}
+
+// ---- Details dialog: TMDB key and language, and how library videos play
+function openTmdbDlg() {
+  const s = libData.settings;
+  $("tmdb-form").reset();
+  $("lib-lang").value = s.language || "en-US";
+  $("lib-key").placeholder = s.tmdb_key_set ? `saved (${s.tmdb_key_hint || "hidden"}): leave empty to keep it` : "paste your key";
+  $("lib-key-state").textContent = "";
+  $("tmdb-remove").classList.toggle("hidden", !s.tmdb_key_set);
+  $("lib-refresh").classList.toggle("hidden", !s.tmdb_key_set);
+  $("lib-video").value = s.video_mode || "";
+  $("tmdb-dlg").classList.remove("hidden");
+  $("lib-key").focus();
+}
+function closeTmdbDlg() { $("tmdb-dlg").classList.add("hidden"); }
+$("tmdb-close").onclick = closeTmdbDlg;
+$("tmdb-cancel").onclick = closeTmdbDlg;
+libModal("tmdb-dlg", closeTmdbDlg);
+$("tmdb-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const hadKey = libData.settings.tmdb_key_set, key = $("lib-key").value.trim();
+  const body = { language: $("lib-lang").value.trim() || "en-US", video_mode: $("lib-video").value };
+  if (key) body.tmdb_key = key;
+  try {
+    await api("/api/library/settings", { method: "POST", body });
+    toast(key && !hadKey ? "Saved. Downloading details…" : "Saved");
+    if (key && !hadKey) pollJob();
+    closeTmdbDlg(); loaders.library();
+  } catch (err) { toast(err.message); }
+};
+$("lib-test-key").onclick = async () => {
+  $("lib-key-state").textContent = "Testing…";
+  const r = await api("/api/library/test-key", { method: "POST", body: { key: $("lib-key").value.trim() } }).catch((e) => ({ ok: false, message: e.message }));
+  $("lib-key-state").innerHTML = r.ok ? `<span style="color:var(--ok)">✓</span> ${esc(r.message)}` : `<span class="bad-text">${esc(r.message)}</span>`;
+};
+$("tmdb-remove").onclick = async () => {
+  if (!confirm("Remove the TMDB key? Details already downloaded are kept; new titles show the names from your files.")) return;
+  try {
+    libData.settings = await api("/api/library/settings", { method: "POST", body: { tmdb_key: "", clear_key: true } });
+    toast("Key removed"); openTmdbDlg(); loaders.library();
+  } catch (err) { toast(err.message); }
+};
+$("lib-refresh").onclick = async () => {
+  if (!confirm("Download every title's details and posters from TMDB again? Titles you picked by hand stay as they are.")) return;
+  try { await api("/api/library/scan", { method: "POST", body: { refresh: true } }); toast("Downloading…"); pollJob(); } catch (e) { toast(e.message); }
+};
+
+// ---- Automatic tasks dialog
+function libTasks(keepEdits = false) {
+  // redrawn while the dialog is open (a task finished): keep what was changed but not saved yet
+  const edits = {};
+  if (keepEdits) {
+    for (const row of $("lib-tasks").querySelectorAll(".lib-task")) {
+      edits[row.dataset.key] = { enabled: row.querySelector("[data-a=on]").checked, every_hours: +row.querySelector("[data-a=every]").value,
+                                 ...libPicked(row) };
+    }
+  }
+  const removeAfter = $("lib-remove") && keepEdits ? +$("lib-remove").value : +libData.settings.remove_after_days;
+  const can = libOn();
+  $("lib-tasks").innerHTML = (libData.tasks || []).map((t0) => {
+    const t = { ...t0, ...(edits[t0.key] || {}) };
+    const st = t.status || "", bad = st.startsWith("error");
+    const last = t.last_run ? `<span class="${bad ? "bad-text" : ""}">${bad ? "✕" : "✓"} ${ago(t.last_run)}, took ${libTook(t.took)}: ${esc(st.replace(/^(ok|error): /, "") || "done")}</span>` : "Not run yet";
+    return `<div class="lib-task${t.enabled ? "" : " off"}" data-key="${esc(t.key)}">
+      <input type="checkbox" class="toggle" data-a="on" aria-label="${esc(t.name)}" ${t.enabled ? "checked" : ""}>
+      <div class="lib-task-main"><b>${esc(t.name)}</b>
+        <div class="muted small">${esc(t.about)}</div>
+        <div class="lib-task-opts">Every <select data-a="every" aria-label="${esc(t.name)}: how often">${libOpts(LIB_EVERY, t.every_hours)}</select>
+          <span class="lib-at">${libAtPick(t.every_hours, t.at_hour, t.on_day)}</span>
+          ${t.key === "remove" ? `<span>once missing for</span> <select id="lib-remove" aria-label="Remove missing videos after">${libOpts(LIB_REMOVE, removeAfter)}</select>` : ""}</div>
+        <div class="lib-task-last small muted">${last}</div></div>
+      <button type="button" class="btn small" data-a="run" ${can ? "" : 'disabled title="Add a library first"'}>Run now</button></div>`;
+  }).join("");
+}
+function openTasksDlg() {
+  libTasks();
+  $("tasks-dlg").classList.remove("hidden");
+  $("tasks-dlg").querySelector(".lib-tasks").scrollTop = 0;
+}
+function closeTasksDlg() { $("tasks-dlg").classList.add("hidden"); }
+$("tasks-close").onclick = closeTasksDlg;
+$("tasks-cancel").onclick = closeTasksDlg;
+libModal("tasks-dlg", closeTasksDlg);
+$("tasks-run-all").onclick = libRunAll;
+$("tasks-reset").onclick = async () => {
+  if (!confirm("Put every task back to its default: on, at its usual schedule, starting at 4 am, and missing videos removed after 30 days? This is saved straight away.")) return;
+  try {
+    await api("/api/library/tasks/reset", { method: "POST" });
+    await loaders.library(); libTasks(); toast("Back to the defaults");
+  } catch (e) { toast(e.message); }
+};
+$("lib-tasks").addEventListener("change", (e) => {
+  if (e.target.dataset.a === "every") {
+    // the time picker appears (it isn't there for every hour): 4 am, like the defaults
+    const row = e.target.closest(".lib-task"), p = libPicked(row), had = row.querySelector("[data-a=at]");
+    row.querySelector(".lib-at").innerHTML = libAtPick(+e.target.value, had ? p.at_hour : 4, p.on_day);
+  }
+  if (e.target.dataset.a === "on") e.target.closest(".lib-task").classList.toggle("off", !e.target.checked);
+});
+$("tasks-form").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const days = +$("lib-remove").value;
+    if (days !== +libData.settings.remove_after_days) {
+      await api("/api/library/settings", { method: "POST", body: { remove_after_days: days } });
+    }
+    for (const row of $("lib-tasks").querySelectorAll(".lib-task")) {
+      const t = libData.tasks.find((x) => x.key === row.dataset.key);
+      const on = row.querySelector("[data-a=on]").checked, every = +row.querySelector("[data-a=every]").value;
+      const { at_hour: at, on_day: day } = libPicked(row);
+      if (on !== !!t.enabled || every !== t.every_hours || at !== (t.at_hour ?? -1) || day !== (every === 168 ? t.on_day ?? -1 : -1)) {
+        await api(`/api/library/tasks/${t.key}`, { method: "PUT", body: { enabled: on, every_hours: every, at_hour: at, on_day: day } });
+      }
+    }
+    toast("Saved"); closeTasksDlg(); loaders.library();
+  } catch (err) { toast(err.message); }
+};
+$("lib-tasks").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-a=run]");
+  if (!b) return;
+  const t = libData.tasks.find((x) => x.key === b.closest(".lib-task").dataset.key);
+  try { libStarted(await api(`/api/library/tasks/${t.key}/run`, { method: "POST" }), `${t.name}…`); }
+  catch (err) { toast(err.message); }
+});
 async function libTitles() {
   const q = $("lib-q").value.trim(), f = $("lib-filter").value;
   let rows;
@@ -1154,7 +1362,7 @@ async function libTitles() {
       <td><b>${esc(t.name)}</b>${t.year ? ` <span class="muted">(${esc(t.year)})</span>` : ""}
         <div class="muted small">${t.kind === "movie" ? "Movie" : `TV · ${t.eps} episode${t.eps === 1 ? "" : "s"}`} · ${esc(t.category)}</div></td>
       <td class="file">${esc(t.file)}</td>
-      <td><span class="tag ${cls}">${label}${pct}</span></td>
+      <td><span class="tag ${cls}">${label}${pct}</span>${t.missing_since ? `<div class="small bad-text">File missing since ${fmt(t.missing_since)}</div>` : ""}</td>
       <td class="acts"><button class="btn small" data-a="fix">Fix</button>
         <button class="btn small" data-a="${t.state === "ignored" ? "unignore" : "ignore"}">${t.state === "ignored" ? "Bring back" : "Leave out"}</button></td></tr>`;
   }).join("") : `<tr><td colspan="5" class="muted">${f === "review" ? "Nothing to review." : "No titles."}</td></tr>`;
@@ -1166,49 +1374,61 @@ $("lib-q").oninput = () => { clearTimeout(libQT); libQT = setTimeout(libTitles, 
 function libForm() {
   const f = $("lib-form");
   return { kind: f.kind.value, name: f.elements.name.value.trim(), location: f.location.value.trim(),
-           username: f.username.value.trim(), password: f.password.value, id: libEditing || undefined };
+           username: f.username.value.trim(), password: f.password.value, id: libEditing || undefined,
+           ...(libEditing ? { enabled: f.elements.enabled.checked } : {}) };
 }
-function libReset() {
-  libEditing = null; libBrowse = null; $("lib-form").reset();
+// + Add library and Edit open the same dialog; nothing changes until Add library / Save changes
+function openLibDlg(sh) {
+  libEditing = sh ? sh.id : null; libBrowse = null;
+  const f = $("lib-form"); f.reset();
   $("lib-tested").textContent = ""; $("lib-browse").classList.add("hidden");
-  $("lib-form-title").textContent = "Add a library folder"; $("lib-save").textContent = "Add library";
-  $("lib-cancel").classList.add("hidden"); $("lib-form").password.placeholder = "";
+  if (sh) {
+    f.kind.value = sh.kind; f.elements.name.value = sh.name; f.location.value = sh.location; f.username.value = sh.username || "";
+  }
+  f.password.placeholder = sh && sh.has_password ? "saved (leave empty to keep it)" : "";
+  f.elements.enabled.checked = !sh || !!sh.enabled;
+  f.querySelectorAll(".lib-only-edit").forEach((x) => x.classList.toggle("hidden", !sh));
+  f.querySelector(".lib-where").open = false;
+  $("lib-dlg-title").textContent = sh ? `Edit ${sh.name}` : "Add a library";
+  $("lib-dlg-sub").textContent = sh ? `${libKind(sh.kind)} · nothing changes until you press Save changes` : "A folder of movies or a folder of TV shows";
+  $("lib-dlg-tip").textContent = sh ? "Changing the folder or what it holds scans it again." : "It's scanned as soon as it's added.";
+  $("lib-save").textContent = sh ? "Save changes" : "Add library";
+  $("lib-dlg").classList.remove("hidden");
+  $("lib-dlg").querySelector(".modal-box").scrollTop = 0;
+  (sh ? f.elements.name : f.location).focus();
 }
-$("lib-cancel").onclick = libReset;
+function closeLibDlg() { $("lib-dlg").classList.add("hidden"); libEditing = null; libBrowse = null; }
+$("lib-add").onclick = () => openLibDlg(null);
+$("lib-dlg-close").onclick = closeLibDlg;
+$("lib-cancel").onclick = closeLibDlg;
+$("lib-dlg").addEventListener("mousedown", (e) => { if (e.target === $("lib-dlg")) closeLibDlg(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("lib-dlg").classList.contains("hidden")) closeLibDlg(); });
 $("lib-list").addEventListener("click", async (e) => {
-  const b = e.target.closest("button"); if (!b) return;
-  const id = +b.closest(".card").dataset.id, sh = libData.shares.find((x) => x.id === id);
-  try {
-    if (b.dataset.a === "del") {
-      if (!confirm(`Remove ${sh.name} from On Demand? Your video files are not touched.`)) return;
-      await api(`/api/library/shares/${id}`, { method: "DELETE" }); toast("Library removed");
-    } else if (b.dataset.a === "scan") {
-      await api("/api/library/scan", { method: "POST", body: { share_id: id } });
-      toast("Scanning…"); pollJob();
-    } else if (b.dataset.a === "toggle") {
-      await api(`/api/library/shares/${id}`, { method: "PUT", body: { enabled: !sh.enabled } });
-    } else if (b.dataset.a === "review") {
-      $("lib-filter").value = "review"; $("lib-q").value = sh.name; libTitles();
-      $("lib-body").scrollIntoView({ behavior: "smooth" }); return;
-    } else if (b.dataset.a === "edit") {
-      libReset(); libEditing = id; const f = $("lib-form");
-      f.kind.value = sh.kind; f.elements.name.value = sh.name; f.location.value = sh.location; f.username.value = sh.username || "";
-      f.password.placeholder = sh.has_password ? "saved (leave empty to keep it)" : "";
-      $("lib-form-title").textContent = `Edit ${sh.name}`; $("lib-save").textContent = "Save changes";
-      $("lib-cancel").classList.remove("hidden"); f.scrollIntoView({ behavior: "smooth" });
-      return;
-    }
-  } catch (err) { toast(err.message); }
-  loaders.library();
+  const b = e.target.closest("[data-a]"); if (!b) return;
+  e.preventDefault();
+  if (b.dataset.a === "add") { $("lib-add").click(); return; }
+  const sh = libData.shares.find((x) => x.id === +b.closest(".card").dataset.id);
+  if (b.dataset.a === "edit") openLibDlg(sh);
+  else if (b.dataset.a === "review") libShow("review", sh.name);
+  else if (b.dataset.a === "scan") {
+    try { libStarted(await api("/api/library/scan", { method: "POST", body: { share_id: sh.id } }), `Reading all of ${sh.name}…`); }
+    catch (err) { toast(err.message); }
+  }
 });
+$("lib-del").onclick = async () => {
+  const sh = libData.shares.find((x) => x.id === libEditing);
+  if (!sh || !confirm(`Remove ${sh.name} from On Demand? Your video files are not touched.`)) return;
+  try { await api(`/api/library/shares/${sh.id}`, { method: "DELETE" }); toast("Library removed"); closeLibDlg(); loaders.library(); }
+  catch (err) { toast(err.message); }
+};
 $("lib-form").onsubmit = async (e) => {
   e.preventDefault();
   const body = libForm();
   try {
     const r = libEditing ? await api(`/api/library/shares/${libEditing}`, { method: "PUT", body })
                          : await api("/api/library/shares", { method: "POST", body });
-    toast(r.job ? "Saved. Scanning the folder…" : "Saved"); if (r.job) pollJob();
-    libReset(); loaders.library();
+    toast(r.job ? (libEditing ? "Saved. Scanning the folder…" : "Added. Scanning the folder…") : "Saved"); if (r.job) pollJob();
+    closeLibDlg(); loaders.library();
   } catch (err) { toast(err.message); }
 };
 
@@ -1252,28 +1472,6 @@ $("lib-browse").addEventListener("click", (e) => {
     $("lib-tested").textContent = `Folder picked: ${last}. Check "This folder has", then press ${libEditing ? "Save changes" : "Add library"}.`;
   }
 });
-
-$("lib-save-settings").onclick = async () => {
-  const body = { language: $("lib-lang").value.trim() || "en-US", auto_scan_hours: +$("lib-auto").value, video_mode: $("lib-video").value };
-  if ($("lib-key").value.trim()) body.tmdb_key = $("lib-key").value.trim();
-  try {
-    const hadKey = libData && libData.settings.tmdb_key_set;
-    await api("/api/library/settings", { method: "POST", body });
-    toast(body.tmdb_key && !hadKey ? "Saved. Downloading details…" : "Saved");
-    if (body.tmdb_key && !hadKey) pollJob();
-    loaders.library();
-  } catch (e) { toast(e.message); }
-};
-$("lib-test-key").onclick = async () => {
-  $("lib-key-state").textContent = "Testing…";
-  const r = await api("/api/library/test-key", { method: "POST", body: { key: $("lib-key").value.trim() } }).catch((e) => ({ ok: false, message: e.message }));
-  $("lib-key-state").innerHTML = r.ok ? `<span style="color:var(--ok)">✓</span> ${esc(r.message)}` : `<span class="bad-text">${esc(r.message)}</span>`;
-};
-$("lib-scan").onclick = async () => { await api("/api/library/scan", { method: "POST", body: {} }).catch((e) => toast(e.message)); pollJob(); };
-$("lib-refresh").onclick = async () => {
-  if (!confirm("Download every title's details and posters from TMDB again? Titles you picked by hand stay as they are.")) return;
-  await api("/api/library/scan", { method: "POST", body: { refresh: true } }).catch((e) => toast(e.message)); pollJob();
-};
 
 // the matches table: Fix (pick the TMDB title) and Leave out
 $("lib-body").addEventListener("click", async (e) => {

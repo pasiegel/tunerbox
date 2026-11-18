@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------- Home
 // One screen with what you'd want first. Live TV keeps playing in the corner with the highlighted tile's
 // details beside it, then rows: shortcuts, favorites on now, your teams' games on now, Continue Watching (On Demand and recordings),
+// what's new in My Library,
 // sports on now, recent channels, new recordings and what's coming up. Everything comes from one request
 // (/api/home). It opens when the TV turns on (Menu turns that off for this screen) and with the Home button.
 const HM = { rows: [], r: 1, cols: {}, seq: 0, timer: null, state: "loading" };   // state: loading | ok | error
@@ -39,6 +40,7 @@ function homeRows(d) {
   // posters and wide recording tiles in separate rows, so each row has one shape
   add("cont", "Continue Watching: On Demand", d.continue.filter((x) => x.type === "vod").map((x) => ({ ...x, t: x.type })));
   add("contrec", "Continue Watching: Recordings", d.continue.filter((x) => x.type !== "vod").map((x) => ({ ...x, t: x.type })));
+  add("libnew", "New in My Library", (d.library_new || []).map((x) => ({ ...x, t: x.type })));
   add("sports", "Sports on now", d.sports.map((p) => ({ t: "game", p })));
   add("recent", "Recent channels", d.recent.map((c) => ({ t: "chan", ...c })));
   add("recorded", "Recently recorded", d.recorded.map((r) => ({ t: "rec", ...r })));
@@ -59,7 +61,7 @@ async function openHome() {
   if (top() !== "home") S.layer.push("home");
   $("home").classList.remove("hidden"); video.classList.add("pip");
   HM.cols = {};
-  if (!HM.rows.length) HM.rows = homeRows({ favorites: [], teams: [], continue: [], sports: [], recent: [], recorded: [], coming: [] });
+  if (!HM.rows.length) HM.rows = homeRows({ favorites: [], teams: [], continue: [], library_new: [], sports: [], recent: [], recorded: [], coming: [] });
   if (HM.state !== "ok") HM.state = "loading";
   HM.r = Math.min(1, HM.rows.length - 1);
   homeRender();

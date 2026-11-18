@@ -19,7 +19,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -1488,7 +1488,8 @@ def _lib_err(fn, *a):
 
 @app.get("/api/library")
 def api_library():
-    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts()}
+    return {"settings": library.public_settings(), "shares": library.shares(), "counts": library.counts(),
+            "tasks": libtasks.listing()}
 
 
 @app.post("/api/library/settings")
@@ -1553,9 +1554,43 @@ def api_library_delete(sid: int):
     return {"ok": True}
 
 
+def _queued(job):
+    """{"job": …}, and when it waits for another job, what that one is ("after": "the guide update")."""
+    return {"job": bool(job), **({"queued": True, "after": jobs.running_what()} if job == "queued" else {})}
+
+
 @app.post("/api/library/scan")
 def api_library_scan(share_id: int = Body(0, embed=True), refresh: bool = Body(False, embed=True)):
-    return {"job": jobs.library_scan(share_id or None, refresh)}
+    return _queued(jobs.library_scan(share_id or None, refresh))
+
+
+@app.put("/api/library/tasks/{key}")
+def api_library_task_update(key: str, data: dict = Body(...)):
+    """Turn one of My Library's automatic tasks on or off, or change how often it runs."""
+    try:
+        return libtasks.update(key, data)
+    except KeyError:
+        raise HTTPException(404, "No such task")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/library/tasks/reset")
+def api_library_tasks_reset():
+    """My Library's automatic tasks back to their defaults."""
+    return libtasks.reset()
+
+
+@app.post("/api/library/tasks/run-all")
+def api_library_tasks_run_all():
+    return _queued(jobs.library_tasks_all())
+
+
+@app.post("/api/library/tasks/{key}/run")
+def api_library_task_run(key: str):
+    if key not in libtasks.KEYS:
+        raise HTTPException(404, "No such task")
+    return _queued(jobs.library_task(key))
 
 
 @app.get("/api/library/titles")

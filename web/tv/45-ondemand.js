@@ -67,6 +67,7 @@ async function odLoadTab(keep) {
     try { d = await api(`/api/vod/categories?kind=${odKind()}`); } catch (e) { toast(e.message); return; }
     if (seq !== OD.seq) return;
     OD.cats = [{ key: null, name: `All ${OD_KIND[odKind()]}`, count: d.total },
+               ...(d.lib_new ? [{ key: "*libnew", name: "New in My Library", count: d.lib_new }] : []),
                ...(d.recent ? [{ key: "*recent", name: "Recently Added", count: d.recent }] : []),
                ...d.cats.map((x) => ({ key: x.name, name: x.name || "Other", count: x.count }))];
     OD.cat = Math.min(OD.cat, OD.cats.length - 1);

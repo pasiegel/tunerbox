@@ -131,55 +131,26 @@
 
   <!-- local library: your own movies and shows in On Demand -->
   <section id="tab-library" class="hidden">
-    <h3>My Library</h3>
-    <p class="muted"><b>Your movies and shows in On Demand.</b> (To play folders as 24/7 channels in the guide, use <b>My Channels</b>.) Your own movies and TV shows, in On Demand next to your playlists. TunerBox reads them straight from your NAS over the network (or from a folder it can see) and never writes anything there. Details and posters come from TMDB and are kept in TunerBox's own data folder.</p>
+    <div class="sec-head lib-head"><div><h3>My Library</h3>
+        <p class="muted small lib-intro">Your own movies and TV shows in On Demand, read straight from your NAS or a folder. TunerBox never changes your files.</p></div>
+      <div class="lib-head-acts">
+        <button type="button" class="btn" id="lib-scan" title="Look for new, renamed and missing videos in every library now (folders that haven't changed are skipped)">Scan now</button>
+        <button type="button" class="btn primary" id="lib-add" title="Add a folder of movies or TV shows">+ Add library</button>
+      </div></div>
     <div id="lib-summary" class="lib-summary"></div>
-    <div class="cards" id="lib-list"></div>
-    <h3 id="lib-form-title">Add a library folder</h3>
-    <form id="lib-form" class="form" autocomplete="off">
-      <label>This folder has <select name="kind"><option value="movie">Movies</option><option value="series">TV shows</option></select></label>
-      <label>Name in On Demand <input name="name" placeholder="e.g. NAS Movies"></label>
-      <label class="wide">Folder or network location <input name="location" required placeholder="\\nas\Media\Movies   or   /media/Movies   or   D:\Movies"></label>
-      <label>NAS username <input name="username" autocomplete="off" placeholder="network shares only; empty for guest"></label>
-      <label>NAS password <input name="password" type="password" autocomplete="new-password"></label>
-      <div class="wide">
-        <button type="button" class="btn" id="lib-test">Connect &amp; browse</button> <span id="lib-tested" class="muted"></span>
-        <div id="lib-browse" class="lib-browse hidden"></div>
-      </div>
-      <div class="wide"><button class="btn primary" id="lib-save">Add library</button>
-        <button type="button" class="btn hidden" id="lib-cancel">Cancel editing</button>
-        <span class="muted small">Movies: a folder per movie, like <code>Dune Part Two (2024)/…mkv</code>, or files named with the year. TV: <code>Show/Season 01/Show - S01E02.mkv</code>.</span></div>
-    </form>
-    <details class="lib-where">
-      <summary>Where your files can be</summary>
-      <ul class="muted">
-        <li><b>A network share</b> (<code>\\nas\Media\Movies</code> or <code>smb://192.168.1.20/Media/Movies</code>): TunerBox logs in to the NAS itself with the username and password above, so nothing has to be mounted on the TunerBox computer first.</li>
-        <li><b>A folder on the TunerBox computer</b>: <code>D:\Movies</code> on Windows, <code>/home/me/Movies</code> on Linux, <code>/Volumes/Media/Movies</code> on a Mac. A drive letter mapped to a NAS works too, as long as TunerBox runs as the same Windows user. Leave the username and password empty.</li>
-        <li><b>In Docker</b>, TunerBox only sees its own container, not the computer's drives. Mount the folder as a volume, then enter the path <i>inside</i> the container. With <code>-v /srv/media:/media:ro</code> (compose.yaml: <code>volumes: ["/srv/media:/media:ro"]</code>), the host's <code>/srv/media/Movies</code> is <b><code>/media/Movies</code></b> here. Read-only (<code>:ro</code>) is fine: TunerBox never writes to your folders. A NAS share mounted on the host (CIFS or NFS) works the same way, and is the easy route when the share only allows guests.</li>
-        <li><b>Who can add folders:</b> the TunerBox PC and paired devices. On a Docker server, which has no screen of its own, any browser on your home network can too, until <b>Lock setup</b> (Setup › Phones) is on.</li>
-      </ul>
-    </details>
-
-    <h3>Details and posters (TMDB)</h3>
-    <p class="muted">Get a free key at <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org › Settings › API</a> and paste the <b>API Key</b> or the <b>API Read Access Token</b>. Without one, titles show the names from your folders and files.</p>
-    <div class="form">
-      <label class="wide">TMDB key <input id="lib-key" type="password" autocomplete="off" placeholder="paste your key"></label>
-      <label>Language for details <input id="lib-lang" placeholder="en-US"></label>
-      <label>Look for new files <select id="lib-auto"><option value="0">Only when I press Scan</option><option value="6">Every 6 hours</option><option value="12">Every 12 hours</option><option value="24">Once a day</option><option value="168">Once a week</option></select></label>
-      <label>Video <select id="lib-video"><option value="">Default (Settings)</option><option value="copy">Original (least CPU on the NAS)</option><option value="h264">Re-encode to H.264</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
-      <div class="wide"><button type="button" class="btn primary" id="lib-save-settings">Save</button>
-        <button type="button" class="btn" id="lib-test-key">Test key</button> <span id="lib-key-state" class="muted"></span></div>
-    </div>
-    <div class="toolbar">
-      <button class="btn primary" id="lib-scan">Scan libraries now</button>
-      <button class="btn" id="lib-refresh" title="Download every title's details and posters again">Refresh all details</button>
+    <div class="lib-label">Libraries</div>
+    <div class="cards lib-cards" id="lib-list"></div>
+    <div class="lib-label">Details and automation</div>
+    <div class="lib-panels">
+      <div class="card lib-panel" id="lib-tmdb-card"></div>
+      <div class="card lib-panel" id="lib-tasks-card"></div>
     </div>
 
-    <h3>Matches <span id="lib-review-count" class="muted small"></span></h3>
-    <p class="muted">How each folder was matched on TMDB. Check the ones listed under <b>Needs review</b>: press <b>Fix</b> to search TMDB and pick the right title (kept through rescans), or <b>Leave out</b> to hide a file from On Demand.</p>
+    <div class="lib-label lib-matches-head">Matches <span id="lib-review-count" class="tag weak hidden"></span></div>
+    <p class="muted small">Check the titles under <b>Needs review</b>: <b>Fix</b> picks the right title on TMDB (kept through rescans), <b>Leave out</b> hides a file from On Demand.</p>
     <div class="toolbar">
       <input id="lib-q" placeholder="Search titles or files…">
-      <select id="lib-filter"><option value="review">Needs review</option><option value="all">All titles</option><option value="pending">Not looked up yet</option><option value="ignored">Left out</option></select>
+      <select id="lib-filter"><option value="review">Needs review</option><option value="all">All titles</option><option value="pending">Not looked up yet</option><option value="ignored">Left out</option><option value="missing">Missing files</option></select>
       <span id="lib-shown" class="muted"></span>
     </div>
     <table class="grid lib-grid"><thead><tr><th></th><th>Title</th><th>Folder / file</th><th>Match</th><th></th></tr></thead><tbody id="lib-body"></tbody></table>
@@ -411,6 +382,88 @@
         <span class="grow"></span>
         <button type="button" class="btn" id="src-cancel">Cancel</button>
         <button class="btn primary" id="src-save">Add playlist</button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- add or edit a library folder (My Library) -->
+<div id="lib-dlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="lib-dlg-title">
+  <div class="modal-box fit">
+    <div class="modal-head">
+      <div><b id="lib-dlg-title">Add a library</b><div class="muted small" id="lib-dlg-sub"></div></div>
+      <button type="button" class="btn" id="lib-dlg-close">Close</button>
+    </div>
+    <form id="lib-form" class="form" autocomplete="off">
+      <div class="wide dlg-sec">What's in it</div>
+      <label>This folder has <select name="kind"><option value="movie">Movies</option><option value="series">TV shows</option></select></label>
+      <label>Name in On Demand <input name="name" placeholder="e.g. NAS Movies"></label>
+      <div class="wide dlg-sec">Where it is</div>
+      <label class="wide">Folder or network location <input name="location" required placeholder="\\nas\Media\Movies   or   /media/Movies   or   D:\Movies"></label>
+      <label>NAS username <input name="username" autocomplete="off" placeholder="network shares only; empty for guest"></label>
+      <label>NAS password <input name="password" type="password" autocomplete="new-password"></label>
+      <div class="wide">
+        <button type="button" class="btn" id="lib-test">Connect &amp; browse</button> <span id="lib-tested" class="muted"></span>
+        <div id="lib-browse" class="lib-browse hidden"></div>
+      </div>
+      <p class="wide muted small dlg-note">Movies: a folder per movie, like <code>Dune Part Two (2024)/…mkv</code>, or files named with the year. TV: <code>Show/Season 01/Show - S01E02.mkv</code>.</p>
+      <details class="wide lib-where">
+        <summary>Where your files can be</summary>
+        <ul class="muted">
+          <li><b>A network share</b> (<code>\\nas\Media\Movies</code> or <code>smb://192.168.1.20/Media/Movies</code>): TunerBox logs in to the NAS itself with the username and password here, so nothing has to be mounted on the TunerBox computer first.</li>
+          <li><b>A folder on the TunerBox computer</b>: <code>D:\Movies</code> on Windows, <code>/home/me/Movies</code> on Linux, <code>/Volumes/Media/Movies</code> on a Mac. A drive letter mapped to a NAS works too, as long as TunerBox runs as the same Windows user. Leave the username and password empty.</li>
+          <li><b>In Docker</b>, TunerBox only sees its own container, not the computer's drives. Mount the folder as a volume, then enter the path <i>inside</i> the container. With <code>-v /srv/media:/media:ro</code> (compose.yaml: <code>volumes: ["/srv/media:/media:ro"]</code>), the host's <code>/srv/media/Movies</code> is <b><code>/media/Movies</code></b> here. Read-only (<code>:ro</code>) is fine: TunerBox never writes to your folders. A NAS share mounted on the host (CIFS or NFS) works the same way, and is the easy route when the share only allows guests.</li>
+          <li><b>Who can add folders:</b> the TunerBox PC and paired devices. On a Docker server, which has no screen of its own, any browser on your home network can too, until <b>Lock setup</b> (Setup › Phones) is on.</li>
+        </ul>
+      </details>
+      <label class="wide chk lib-only-edit"><input type="checkbox" class="toggle" name="enabled"> Show this library in On Demand</label>
+      <div class="wide dlg-foot">
+        <button type="button" class="btn ghost-danger lib-only-edit" id="lib-del">Remove library</button>
+        <span class="muted small" id="lib-dlg-tip"></span>
+        <span class="grow"></span>
+        <button type="button" class="btn" id="lib-cancel">Cancel</button>
+        <button class="btn primary" id="lib-save">Add library</button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- My Library settings: TMDB, video and the automatic tasks, saved together -->
+<div id="tmdb-dlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tmdb-dlg-title">
+  <div class="modal-box fit lib-small-dlg">
+    <div class="modal-head">
+      <div><b id="tmdb-dlg-title">Details and posters</b><div class="muted small">From TMDB, plus how library videos play</div></div>
+      <button type="button" class="btn" id="tmdb-close">Close</button>
+    </div>
+    <form id="tmdb-form" class="form" autocomplete="off">
+      <p class="wide muted small dlg-note">A free key from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org › Settings › API</a> (the <b>API Key</b> or the <b>API Read Access Token</b>). Without one, titles show the names from your folders and files.</p>
+      <label class="wide">TMDB key
+        <span class="lib-key-row"><input id="lib-key" type="password" autocomplete="off" placeholder="paste your key"><button type="button" class="btn" id="lib-test-key">Test</button></span></label>
+      <span class="wide small" id="lib-key-state"></span>
+      <label>Language for details <input id="lib-lang" placeholder="en-US"></label>
+      <label>Video <select id="lib-video"><option value="">Default (Settings)</option><option value="copy">Original (least CPU on the NAS)</option><option value="h264">Re-encode to H.264</option><option value="roku720">Re-encode to 720p (Roku, slow devices)</option></select></label>
+      <div class="wide dlg-foot">
+        <button type="button" class="btn small" id="lib-refresh" title="Download every title's details and posters again">Download all again</button>
+        <button type="button" class="btn small ghost-danger" id="tmdb-remove">Remove key</button>
+        <span class="grow"></span>
+        <button type="button" class="btn" id="tmdb-cancel">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div id="tasks-dlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tasks-dlg-title">
+  <div class="modal-box fit lib-tasks-dlg">
+    <div class="modal-head">
+      <div><b id="tasks-dlg-title">Automatic tasks</b><div class="muted small">Run in the background, one at a time. Your files are only read, never renamed, moved or deleted.</div></div>
+      <button type="button" class="btn" id="tasks-close">Close</button>
+    </div>
+    <form id="tasks-form" class="lib-tasks-form" autocomplete="off">
+      <div class="lib-tasks" id="lib-tasks"></div>
+      <div class="dlg-foot">
+        <button type="button" class="btn small" id="tasks-run-all" title="Run every task that's on now, one after another">Run all now</button>
+        <button type="button" class="btn small" id="tasks-reset" title="Every task on, at its usual schedule, from 4 am">Reset to defaults</button>
+        <span class="grow"></span>
+        <button type="button" class="btn" id="tasks-cancel">Cancel</button>
+        <button class="btn primary">Save</button>
       </div>
     </form>
   </div>
