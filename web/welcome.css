@@ -42,6 +42,7 @@ input.big { font-size: 18px; padding: 11px 13px; border-radius: 10px; width: 100
 .wz-added { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
 .wz-added li { background: var(--c-fg-0d); border-radius: 10px; padding: 10px 14px; }
 .wz-added li::before { content: "✓ "; color: var(--ok); font-weight: 800; }
+.wz-added li.bad::before { content: "⚠ "; color: var(--bad); }
 .wz-pair { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
 .wz-pair img { width: 220px; height: 220px; background: #fff; border-radius: 12px; padding: 10px; }
 .wz-pair p { margin: 4px 0; }

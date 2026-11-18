@@ -504,10 +504,20 @@ def _disk_path_ok(request, type_, url):
                                  "while Setup is locked. Use a web address (http://…), or pair this device in Setup › Phones.")
 
 
+def _address_ok(type_, url):
+    """Catch an address pasted into one that was already there ("example.com/https://example.com/list.m3u"):
+    it would be saved, read as a file that isn't there, and give no channels."""
+    url = (url or "").strip()
+    if type_ in ("m3u", "xtream") and "://" in url and not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.I):
+        raise HTTPException(400, "That address doesn't look right: it has a second address inside it "
+                                 f"({url[:60]}). Clear the box and paste the address again.")
+
+
 @app.post("/api/sources")
 def api_add_source(request: Request, data: dict = Body(...)):
     if not data.get("url"):
         raise HTTPException(400, "URL / server is required")
+    _address_ok(data.get("type", "m3u"), data["url"])
     _disk_path_ok(request, data.get("type", "m3u"), data["url"])
     try:
         sid = sources.add_source(data.get("name", ""), data.get("type", "m3u"), data["url"].strip(),
@@ -559,6 +569,7 @@ def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     if not before:
         raise HTTPException(404)
     if isinstance(data.get("url"), str) and data["url"].strip() != before["url"]:
+        _address_ok(before["type"], data["url"])
         _disk_path_ok(request, before["type"], data["url"])
     for k in ("name", "url", "username", "password"):
         if isinstance(data.get(k), str):

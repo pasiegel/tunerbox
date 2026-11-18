@@ -85,6 +85,7 @@ function watchJobs() {
       $("dn-job-bar").style.width = j.total ? `${(j.done / j.total) * 100}%` : "15%";
     }
     jobTimer = j.running || needScan ? setTimeout(tick, 1500) : null;
+    if (!jobTimer) checkSources();          // everything read: say how each playlist went
   };
   tick();
 }
@@ -170,12 +171,15 @@ $("ch-form").onsubmit = async (e) => {
   const body = { type: chKind, name: d.name.trim(), url: d.url.trim(), username: (d.username || "").trim(), password: (d.password || "").trim() };
   if (!body.url) { f.url.focus(); return; }
   $("ch-add").disabled = true; say("ch-msg", chKind === "hdhomerun" ? "Connecting to the tuner…" : "Adding…");
-  try { await post("/api/sources", body); }
+  let added;
+  try { added = await post("/api/sources", body); }
   catch (err) { say("ch-msg", err.message, "bad-text"); $("ch-add").disabled = false; return; }
   $("ch-add").disabled = false;
   const label = body.name || body.url;
   (done.channels = done.channels || []).push(label);
-  $("ch-added").insertAdjacentHTML("beforeend", `<li>${esc(label)} <span class="muted small">${{ hdhomerun: "Antenna tuner", m3u: "M3U playlist", xtream: "Xtream login" }[chKind]}</span></li>`);
+  addedSources.push(added.id);
+  $("ch-added").insertAdjacentHTML("beforeend", `<li data-sid="${added.id}">${esc(label)} <span class="muted small">${{ hdhomerun: "Antenna tuner", m3u: "M3U playlist", xtream: "Xtream login" }[chKind]}</span>
+    <div class="small src-state muted">Reading its channels…</div></li>`);
   say("ch-msg", "Added. Its channels are read in the background. Add another, or continue.", "ok-text");
   $("ch-form").classList.add("hidden"); chKind = "";
   document.querySelectorAll("#ch-kinds .wz-choice").forEach((b) => b.setAttribute("aria-pressed", "false"));
@@ -272,6 +276,28 @@ $("ph-start").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- 6: summary
+// after the playlists are read: how many channels each gave, or why it couldn't be read (a wrong address
+// would otherwise only show up as an empty guide)
+const addedSources = [];
+async function checkSources() {
+  if (!addedSources.length) return;
+  let list; try { list = await api("/api/sources"); } catch (_) { return; }
+  const bad = [];
+  for (const id of addedSources) {
+    const src = list.find((x) => x.id === id), li = document.querySelector(`#ch-added li[data-sid="${id}"]`);
+    if (!src || !li) continue;
+    const err = (src.status || "").startsWith("error") ? src.status.replace(/^error:\s*/, "") : "";
+    const st = li.querySelector(".src-state");
+    li.classList.toggle("bad", !!err);
+    st.className = `small src-state ${err ? "bad-text" : "ok-text"}`;
+    st.textContent = err ? `Couldn't read it: ${err}` : `${(src.count || 0).toLocaleString()} channels`;
+    if (err) bad.push(src.name);
+  }
+  const w = $("dn-warn");
+  w.classList.toggle("hidden", !bad.length);
+  w.textContent = bad.length ? `${bad.join(", ")} couldn't be read, so it has no channels yet. Check its address in Setup › Playlists (Edit).` : "";
+}
+
 function summary() {
   const row = (label, v) => `<li class="${v ? "" : "skip"}"><b>${label}</b> ${v ? esc(Array.isArray(v) ? v.join(", ") : v) : "Skipped"}</li>`;
   $("dn-list").innerHTML = row("TV guide area", done.region) + row("Channels", done.channels) + row("My Library", done.library)
