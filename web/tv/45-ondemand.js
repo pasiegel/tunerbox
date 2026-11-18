@@ -606,11 +606,28 @@ function vodPause() {
   }
   showVodBar();
 }
-function vodSeek(delta) {
+// holding ◀ / ▶ (or pressing again and again) skips further each step the longer it goes on:
+// 10s / 30s at first, then 1 minute, then 3, then 10. Key repeats are taken about 8 times a second.
+function vodSkipStep(v, delta) {
+  const t = Date.now(), dir = Math.sign(delta);
+  if (v.target === null || !v.run || v.run.dir !== dir) v.run = { dir, start: t, last: 0 };
+  if (t - v.run.last < 120) return 0;                  // key repeat faster than this: wait for the next one
+  v.run.last = t;
+  const held = t - v.run.start;
+  const step = held < 1500 ? Math.abs(delta) : held < 4000 ? 60 : held < 8000 ? 180 : 600;
+  return dir * Math.max(Math.abs(delta), step);
+}
+function vodSeek(delta, hold = true) {
   const v = S.vod; if (!v || v.done) return;
-  let t = Math.max(0, vodPos() + delta);
+  if (hold) { delta = vodSkipStep(v, delta); if (!delta) return; }
+  vodSeekTo(vodPos() + delta, delta);
+}
+// jump to a point in the title (the bar's drag lands here too); dir rounds catch-up to the minute
+function vodSeekTo(t, delta = 0) {
+  const v = S.vod; if (!v || v.done) return;
+  t = Math.max(0, t);
   // catch-up: whole minutes (◀ ▶ = 1 minute), as the archive is asked for by the minute
-  if (v.it.catchup) t = Math.max(0, Math.floor((vodPos() + Math.sign(delta) * Math.max(60, Math.abs(delta))) / 60) * 60);
+  if (v.it.catchup) t = Math.max(0, Math.floor((delta ? vodPos() + Math.sign(delta) * Math.max(60, Math.abs(delta)) : t) / 60) * 60);
   if (v.dur) t = Math.min(t, Math.max(0, v.dur - 10));
   if (v.it.catchup && v.it.stop > now()) t = Math.min(t, Math.max(0, now() - v.it.start - 90));    // not past what has aired
   v.target = t;
@@ -622,21 +639,65 @@ function drawVodBar() {
   const v = S.vod; if (!v) return;
   const pos = vodPos();
   $("pb-title").textContent = (v.it.catchup ? "↺ " : "") + v.it.title + (v.it.sub ? ` · ${v.it.sub}` : "");
-  $("pb-progress").style.width = v.dur ? `${Math.min(100, pos / v.dur * 100)}%` : "0";
+  if (!pbScrub) $("pb-progress").style.width = v.dur ? `${Math.min(100, pos / v.dur * 100)}%` : "0";     // the drag sets it meanwhile
   $("pb-time").textContent = `${fmtDur(pos)}${v.dur ? ` / ${fmtDur(v.dur)}` : ""}${v.target !== null ? "   Skipping…" : v.paused ? "   ❚❚ Paused" : v.parked || video.readyState < 3 ? "   Loading…" : ""}`
-    + (v.it.catchup ? "      ◀ ▶ 1 min   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s   OK Pause   Back Stop")
+    + (v.it.catchup ? "      ◀ ▶ 1 min (hold: faster)   OK Pause   Back Live TV" : "      ◀ 10s   ▶ 30s (hold: faster)   OK Pause   Back Stop")
     + (avHas(v) ? "   M Audio & subtitles" : "");
 }
 function showVodBar() {
   hideBanner(); drawVodBar();
   $("playback").classList.remove("hidden");
   clearTimeout(vodBarTimer);
-  vodBarTimer = setTimeout(() => { const v = S.vod; if (!v || !v.paused) $("playback").classList.add("hidden"); }, 5000);     // stays up while paused
+  vodBarTimer = setTimeout(function hide() {          // stays up while paused, dragged or pointed at
+    const v = S.vod;
+    if (v && !v.paused && pbHeld()) { vodBarTimer = setTimeout(hide, 1500); return; }
+    if (!v || !v.paused) $("playback").classList.add("hidden");
+  }, 5000);
 }
+// click or drag the progress bar to go to that point: On Demand, catch-up and recordings.
+// While dragging, the bar and a time tip follow the pointer; letting go makes the jump.
+let pbScrub = null;      // { at } seconds under the pointer while dragging
+function pbLength() {
+  if (S.mode === "vod" && S.vod && !S.vod.done) return S.vod.dur || 0;
+  if (S.mode === "playback") { const d = video.duration; return isFinite(d) ? d : 0; }
+  return 0;
+}
+function pbScrubAt(e) {
+  const d = pbLength(), r = $("pb-seek").getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / (r.width || 1)));
+  pbScrub = { at: f * d };
+  if (S.mode === "vod") showVodBar(); else showPlaybackBar();          // keeps the bar up while dragging
+  $("pb-progress").style.width = `${f * 100}%`;
+  const tip = $("pb-tip");
+  tip.textContent = `${fmtDur(pbScrub.at)} / ${fmtDur(d)}`;
+  tip.style.left = `${f * 100}%`; tip.classList.remove("hidden");
+}
+function pbScrubEnd(e, go) {
+  const el = $("pb-seek");
+  if (!el.classList.contains("drag")) return;
+  el.classList.remove("drag"); $("pb-tip").classList.add("hidden");
+  try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+  const s = pbScrub; pbScrub = null;
+  if (!go || !s) { if (S.mode === "vod") drawVodBar(); return; }
+  if (S.mode === "vod") vodSeekTo(s.at);
+  else if (S.mode === "playback") { video.currentTime = Math.min(s.at, Math.max(0, pbLength() - 1)); showPlaybackBar(); }
+}
+$("pb-seek").addEventListener("pointerdown", (e) => {
+  if (!pbLength() || (e.pointerType === "mouse" && e.button !== 0)) return;
+  e.preventDefault(); e.stopPropagation();
+  const el = $("pb-seek");
+  el.classList.add("drag");
+  try { el.setPointerCapture(e.pointerId); } catch (_) {}
+  pbScrubAt(e);
+});
+$("pb-seek").addEventListener("pointermove", (e) => { if ($("pb-seek").classList.contains("drag")) pbScrubAt(e); });
+$("pb-seek").addEventListener("pointerup", (e) => pbScrubEnd(e, true));
+$("pb-seek").addEventListener("pointercancel", (e) => pbScrubEnd(e, false));
+$("pb-seek").addEventListener("click", (e) => e.stopPropagation());     // not a tap on the picture
 let vodTicks = 0;
 setInterval(() => {
   const v = S.vod; if (!v || S.mode !== "vod" || v.done) return;
-  if (!$("playback").classList.contains("hidden")) drawVodBar();
+  if (!$("playback").classList.contains("hidden") && !pbScrub) drawVodBar();
   if (v.parked || video.paused || v.target !== null) return;
   if (++vodTicks % 15 === 0) { vodSave(); if (video.readyState >= 3) v.retries = 0; }
   if (v.dur && vodPos() >= v.dur - 1) vodFinish();        // also the only end signal on iPad/iPhone
@@ -647,8 +708,8 @@ function vodKey(k) {
     case " ": case "Enter": vodPause(); break;
     case "ArrowLeft": vodSeek(-10); break;
     case "ArrowRight": vodSeek(30); break;
-    case "ChannelUp": vodSeek(-300); break;
-    case "ChannelDown": vodSeek(300); break;
+    case "ChannelUp": vodSeek(-300, false); break;
+    case "ChannelDown": vodSeek(300, false); break;
     case "Back": case "s": vodStop(); break;
     case "i": if ($("playback").classList.contains("hidden")) showVodBar(); else $("playback").classList.add("hidden"); break;
     case "o": openOD(); break;

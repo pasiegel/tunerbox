@@ -109,8 +109,10 @@ function hideRemoteLater(ms) {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     // not while the pointer rests on the controls or the More menu is open
-    if ($("remote").matches(":hover") || !$("rm-menu").classList.contains("hidden")) { hideRemoteLater(1500); return; }
+    if ($("remote").matches(":hover") || !$("rm-menu").classList.contains("hidden") || pbHeld()) { hideRemoteLater(1500); return; }
     $("tv").classList.add("idle"); hideRemote();
+    // a movie's or recording's progress bar goes with the controls (a paused movie keeps it)
+    if ((S.mode === "vod" && !(S.vod && S.vod.paused)) || S.mode === "playback") $("playback").classList.add("hidden");
   }, ms);
 }
 // the on-screen controls: navigation at the top; this channel, volume and More at the bottom
@@ -120,6 +122,10 @@ function showRemote() {
   r.classList.toggle("live", S.mode === "live");
   if (wasHidden) remoteSync();
 }
+// the progress bar is being dragged or pointed at: nothing hides meanwhile
+function pbHeld() { return !!pbScrub || $("playback").matches(":hover"); }
+// the progress bar is up with the controls: it hides when they do (hideRemoteLater), not on its own timer
+function pbWithRemote() { clearTimeout(vodBarTimer); clearTimeout(pbTimer); }
 function hideRemote() { $("remote").classList.add("hidden"); $("rm-menu").classList.add("hidden"); }
 let rmSeq = 0;
 async function remoteSync() {
@@ -171,7 +177,15 @@ document.addEventListener("mousemove", () => {
   $("tv").classList.remove("idle");
   if (S.mode !== "off" && !top()) showRemote();
   hideRemoteLater(3000);
+  // a movie, show or recording: its progress bar comes up with the controls (not over the info banner)
+  if (!top() && (S.mode === "vod" || S.mode === "playback") && $("banner").classList.contains("hidden")
+      && Date.now() - pbMoveShown > 250) {
+    pbMoveShown = Date.now();
+    if (S.mode === "vod") { if (S.vod && !S.vod.done) showVodBar(); } else showPlaybackBar();
+  }
+  if (!$("playback").classList.contains("hidden") && !$("remote").classList.contains("hidden")) pbWithRemote();
 });
+let pbMoveShown = 0;
 $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => {
@@ -184,7 +198,10 @@ $("remote").addEventListener("click", (e) => {
   if (!b.dataset.k) return;
   // CH up/down, favorite and mute keep the controls up (flipping through channels); others put them away
   const stay = ["ChannelUp", "ChannelDown", "*", "u"].includes(b.dataset.k);
-  if (!stay) { clearTimeout(idleTimer); hideRemote(); }
+  if (!stay) {
+    clearTimeout(idleTimer); hideRemote();
+    if (S.mode === "vod" || S.mode === "playback") $("playback").classList.add("hidden");    // the key below brings it back if it needs it
+  }
   handleKey(b.dataset.k);
   if (stay) setTimeout(remoteSync, b.dataset.k.startsWith("Channel") ? 400 : 150);
 });
@@ -199,7 +216,7 @@ function toggleOverlay() {
   }
   showRemote(); hideRemoteLater(6000);
   if (S.mode === "live") showBanner();
-  else if (S.mode === "vod") showVodBar();
+  else if (S.mode === "vod") { showVodBar(); pbWithRemote(); }
   else if (S.mode === "playback") { $("playback").classList.add("hidden"); recInfo(); }
 }
 $("learn").addEventListener("click", stopLearn);
@@ -269,7 +286,7 @@ $("tv").addEventListener("touchend", (e) => {
   const dy = e.changedTouches[0].clientY - touchY; touchY = null;
   // taps on the remote bar (or other tap targets) are clicks for them, not "toggle the bar"
   if (e.target.closest && e.target.closest("#remote")) { hideRemoteLater(5000); return; }
-  if (e.target.closest && e.target.closest("#power, #tapplay, #saver, #stillthere, #learn")) return;
+  if (e.target.closest && e.target.closest("#power, #tapplay, #saver, #stillthere, #learn, #pb-seek")) return;
   if (Math.abs(dy) > 80) { if (S.mode !== "vod") chStep(dy < 0 ? 1 : -1); }     // no channel change by accident mid-movie
   else if (S.mode === "live" || S.mode === "playback" || S.mode === "vod") toggleOverlay();
 }, { passive: true });

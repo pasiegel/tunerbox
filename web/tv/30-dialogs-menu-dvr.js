@@ -316,11 +316,15 @@ let pbTimer;
 function showPlaybackBar() {
   hideBanner();                 // the bar and the info banner share the bottom of the screen
   $("playback").classList.remove("hidden");
-  clearTimeout(pbTimer); pbTimer = setTimeout(() => $("playback").classList.add("hidden"), 4000);
+  clearTimeout(pbTimer);
+  pbTimer = setTimeout(function hide() {               // not while it's dragged or pointed at
+    if (S.mode === "playback" && pbHeld()) { pbTimer = setTimeout(hide, 1500); return; }
+    $("playback").classList.add("hidden");
+  }, 4000);
 }
 const fmtDur = (s) => { s = Math.max(0, s | 0); const h = s / 3600 | 0, m = (s % 3600) / 60 | 0, x = s % 60; return (h ? h + ":" : "") + String(m).padStart(h ? 2 : 1, "0") + ":" + String(x).padStart(2, "0"); };
 video.addEventListener("timeupdate", () => {
-  if (S.mode !== "playback") return;
+  if (S.mode !== "playback" || pbScrub) return;      // not while the bar is being dragged
   const d = video.duration || 0;
   $("pb-progress").style.width = d ? `${video.currentTime / d * 100}%` : "0";
   $("pb-time").textContent = `${fmtDur(video.currentTime)} / ${fmtDur(d)}${video.paused ? "   ❚❚ Paused" : ""}`;
