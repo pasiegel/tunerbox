@@ -317,7 +317,9 @@ function odEpisodeDialog(show, e) {
 }
 // the same film or show under the playlist's other labels (languages, 4K…)
 function odVersions(d) {
-  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else odMovie(v.id); };
+  // a movie: straight into it, from where this version was stopped (else wherever that version was left)
+  const at = d.kind !== "series" && !d.watched && d.position > RESUME_MIN ? d.position : undefined;
+  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else playVod(v.id, v.current ? undefined : at); };
   openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
     ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
       const name = (x) => x.tag || x.where || "No label";

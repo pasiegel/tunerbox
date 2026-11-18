@@ -534,17 +534,19 @@ def library_new(kind=None, limit=RECENT, unwatched=False):
 
 
 def continue_watching(kind=None):
-    """Titles you're part-way through, the latest first. A show appears once, at its latest episode."""
+    """Titles you're part-way through, the latest first. A show appears once, at its latest episode, and a film
+    or show with several versions (languages, 4K…) appears once, as the version played last."""
     w, a = (" AND t.kind=?", [kind]) if kind else ("", [])
-    rows = db.rows(f"""SELECT {_COLS}, p.item_id, p.position, p.duration AS pdur, p.updated, e.season, e.episode, e.name AS ep_name,
+    rows = db.rows(f"""SELECT {_COLS}, t.search, p.item_id, p.position, p.duration AS pdur, p.updated, e.season, e.episode, e.name AS ep_name,
                               e.duration AS ep_duration
                        {_FROM} JOIN vod_progress p ON p.title_id=t.id LEFT JOIN vod_episodes e ON e.id=p.item_id
                        WHERE p.watched=0 AND p.position>?{w} ORDER BY p.updated DESC""", (RESUME_MIN, *a))
     out, seen, now = [], set(), int(time.time())
     for r in rows:
-        if r["id"] in seen or (r["kind"] == "series" and r["season"] is None):
+        same = (r["kind"], r["search"], r["year"])          # its other versions count as the same title
+        if same in seen or (r["kind"] == "series" and r["season"] is None):
             continue
-        seen.add(r["id"])
+        seen.add(same)
         if r["kind"] == "series":
             r["duration"] = r["ep_duration"]
         tile = _tile(r, now)

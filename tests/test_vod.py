@@ -441,6 +441,20 @@ def test_search_lists_a_film_once_with_its_versions(labelled):
     assert (hit["tag"], hit["versions"]) == ("EN", [])
 
 
+def test_continue_watching_lists_a_film_once_as_the_version_played_last(labelled):
+    ids = [v["id"] for v in vod.title([h for h in vod.search("film 2") if h["name"] == "Film 2"][0]["id"])["versions"]]
+    a, b = ids[0], ids[1]
+    vod.set_progress(a, 600, 6000)
+    vod.set_progress(b, 900, 6000)
+    db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (1000, a))
+    db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (2000, b))
+    cont = vod.titles(tab="continue")["items"]
+    assert [(t["id"], t["resume"]) for t in cont] == [(b, b)]
+    assert vod.counts()["movie"]["continue"] == 1
+    db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (3000, a))
+    assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [a]
+
+
 def test_preferred_language_leads_the_versions_and_hidden_categories_stay_out(labelled):
     config.update({"vod_search_first": "DE"})
     hit = [h for h in vod.search("film 2") if h["name"] == "Film 2"][0]
