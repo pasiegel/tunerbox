@@ -1,6 +1,7 @@
 """First-time setup (/welcome): a new install's first screen goes there once; finishing or skipping ends it,
 and installs set up before the wizard existed never see it."""
 import json
+import re
 
 from fastapi.testclient import TestClient
 
@@ -61,6 +62,11 @@ def test_home_screen_icon_at_the_addresses_ios_tries():
     # every page names it, so Add to Home Screen from any of them gets the icon, not a snapshot of the page
     for page in ("/", "/setup", "/welcome", "/pair"):       # /remote has it too (it asks to pair first here)
         assert 'rel="apple-touch-icon" sizes="180x180"' in c.get(page).text, page
+    # stamped like the scripts, so Safari can't reuse an icon it once got for an older address
+    html = c.get("/").text
+    assert re.search(r'rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-180\.png\?v=\d+"', html)
+    assert re.search(r'href="/static/manifest\.webmanifest\?v=\d+"', html)
+    assert c.get(re.search(r'href="(/static/icons/apple-180\.png\?v=\d+)"', html).group(1)).content[:4] == b"\x89PNG"
 
 
 def test_an_address_pasted_into_another_is_refused():

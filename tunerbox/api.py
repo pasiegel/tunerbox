@@ -1838,12 +1838,14 @@ def _named(html):
     return html.replace("<small>Setup</small>", f"<small>Setup · {escape(name)}</small>")
 
 
-_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
+_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css|png|webmanifest)))"')
 
 
 def _page(name):
-    """Serve a page with ?v=<file time> on its scripts/styles, so an updated TunerBox never runs
-    with a script the browser or app window cached from the old version."""
+    """Serve a page with ?v=<file time> on its scripts, styles, icons and manifest, so an updated TunerBox
+    never runs with a script the browser or app window cached from the old version. For the icons: Safari
+    keeps the home-screen icon it once got for an address (even a failed one, e.g. while a proxy said
+    502) and Add to Home Screen reuses it without asking again; a new address makes it fetch the icon."""
     html = _named((config.WEB / name).read_text(encoding="utf-8"))
 
     def stamp(m):
