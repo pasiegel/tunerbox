@@ -294,6 +294,9 @@ For streams that stutter or freeze, turn on the stream cache. TunerBox then hold
 * The server also reads ahead for each viewer, so a slow Wi-Fi device never makes the provider connection (or the other screens) wait.
 * A screen that tunes to a channel another screen is already on fills its cache at once: the server keeps the last few seconds of every channel being watched.
 
+## Stream stats
+To see how a stream is doing, turn on **Menu › Stream stats** on that screen. A box in the top-left corner updates every second while something plays. It shows the picture size, codec and frame rate, the audio format, the download rate, how many seconds are cached ahead, dropped frames (in red when the screen can't keep up) and whether the player is waiting for data. It also says when TunerBox is converting the picture to H.264 for that screen. The setting is remembered for that screen only. On iPhone and iPad, Safari's built-in player reports less, so the codecs, frame rate and download rate are left out. The same goes for recordings that aren't .ts files, which play as a plain file.
+
 ## Sleep timer and screensaver
 Like a cable box, a TV screen asks **"Are you still watching?"** after 4 hours without a button press. If nobody presses a button within 2 minutes, it turns off and stops streaming. Once a screen is off, a screensaver (a drifting clock) starts after 10 minutes. Any button wakes it and turns the TV back on.
 

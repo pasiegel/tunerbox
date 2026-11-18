@@ -107,6 +107,13 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .saver-logo span { color: var(--hl); }
 #buffering { position: absolute; right: 3vw; top: 4vh; z-index: 55; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); padding: .6em 1.2em; border-radius: .9em; font-size: 1.15em; display: flex; align-items: center; gap: .6em; }
 #buffering .spin { width: 1em; height: 1em; border: .18em solid var(--c-t4-55); border-top-color: var(--hl); border-radius: 50%; animation: tbspin .8s linear infinite; }
+/* Menu › Stream stats: a box over the picture, top left, under the guide / Home / On Demand screens */
+#sstats { position: absolute; left: 1.6em; top: 1.6em; z-index: 25; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: .9em; padding: .7em 1em; font-size: .9em; max-width: min(30em, calc(100vw - 3.2em)); pointer-events: none; }
+#sstats .ss-head { font-weight: 800; color: var(--hl); margin-bottom: .35em; }
+#sstats .ss-grid { display: grid; grid-template-columns: auto 1fr; gap: .15em .9em; font-variant-numeric: tabular-nums; }
+#sstats .ss-k { color: var(--dim); }
+#sstats .ss-v { color: var(--text); overflow-wrap: anywhere; }
+#sstats .ss-bad { color: var(--red); }
 @keyframes tbspin { to { transform: rotate(360deg); } }
 #dlg-img { display: block; width: min(38vh, 70vw); height: auto; margin: .6em auto; background: var(--c-fg); border-radius: 10px; padding: .6em; }
 /* show pictures from the guide */
