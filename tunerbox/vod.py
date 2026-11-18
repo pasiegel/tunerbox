@@ -841,6 +841,12 @@ def set_watched(item_id, watched=True):
     return {"ok": True}
 
 
+def forget(title_id):
+    """Take a movie or show off Continue Watching: drop where it was stopped, keep what was watched."""
+    db.run("DELETE FROM vod_progress WHERE title_id=? AND watched=0", (title_id,))
+    return {"ok": True}
+
+
 def set_listed(title_id, on=True):
     if on and not db.one("SELECT 1 FROM vod_titles WHERE id=?", (title_id,)):
         return None

@@ -257,10 +257,7 @@ function homeAct(it) {
   if (it.t === "vod") {
     if (it.kind !== "series") { odMovie(it.id); return; }
     if (!it.resume) { openOD("series", it.id); return; }
-    openDialog(it.name, it.sub || "", [
-      { label: `Resume ${it.sub || "episode"}`, act: () => playVod(it.resume) },
-      { label: "All episodes", act: () => { closeDialog(); openOD("series", it.id); } },
-      { label: "Close", act: closeDialog }]);
+    odResumeDialog(it, () => openOD("series", it.id));
     return;
   }
   if (it.t === "rec") { recDialog(it, () => homeLoad()); return; }

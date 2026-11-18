@@ -104,9 +104,17 @@ def test_progress_continue_watching_and_my_list(xtream):
     show = next(t for t in cont if t["kind"] == "series")
     assert show["resume"] == ep and show["sub"] == "S2 E1 · The Big Seventeen" and show["pct"] == 38
     assert next(t for t in vod.titles("movie", "Mystery")["items"] if t["id"] == movie)["pct"] == 37
+    vod.forget(movie)                                       # off Continue Watching, not marked watched
+    assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [f"{sid}:s7"]
+    assert vod.item(movie)["position"] == 0 and not db.one("SELECT 1 FROM vod_progress WHERE item_id=?", (movie,))
+    vod.set_progress(movie, 2538, 6780)
     vod.set_watched(movie)
     assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [f"{sid}:s7"]
     assert vod.item(movie)["position"] == 0                 # watched: plays from the start again
+    vod.set_watched(f"{sid}:e101")
+    vod.forget(f"{sid}:s7")                                 # a show: every episode part-way through, watched ones kept
+    assert vod.titles(tab="continue")["items"] == []
+    assert db.one("SELECT watched FROM vod_progress WHERE item_id=?", (f"{sid}:e101",))["watched"] == 1
     vod.set_watched(f"{sid}:s7")                            # a whole show
     assert all(e["watched"] for e in vod.title(f"{sid}:s7")["episodes"])
     assert vod.set_listed(movie)["in_list"] and vod.set_listed("nope") is None
