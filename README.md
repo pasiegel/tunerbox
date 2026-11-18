@@ -382,7 +382,50 @@ To build the image yourself instead, use `build: .` in `compose.yaml` (or `docke
 * HDHomeRun auto-discovery needs `network_mode: host` (Linux); adding a tuner by IP works on any network.
 * For My Channels and My Library, mount your videos (e.g. `/path/to/videos:/media:ro`) and use `/media/...` as the folder in Setup. The path is the one inside the container, not the host's.
 * The image sets `TUNERBOX_TRUST_LAN=1`: with no screen of its own, any browser on your home network counts as the TunerBox PC (settings, folders, pairing) until **Setup › Phones › Lock setup** is on. Pair your browser before turning the lock on; afterwards only paired devices can change setup.
+* **Unraid:** see [Unraid](#unraid) below.
 * **Two TunerBoxes on one host** (say one for the family and one private): give the second its own data volume and port, e.g. `-v tunerbox-private-data:/data` and `-p 8644:8644` with the command `python -m tunerbox --server --port 8644` (with host networking, just the `--port`). Then set **Setup › Settings › Other apps › Network name** on each (before adding them as tuners), so Plex, Jellyfin, Emby and Channels DVR list them under different names. Home-screen icons stay "TunerBox". Each one gets its own HDHomeRun device ID for Plex automatically.
+
+### Unraid
+
+TunerBox isn't in Community Applications, so add it by hand. It takes a few minutes and updates like any other container.
+
+1. Open the **Docker** tab and press **Add Container** at the bottom. (If it's missing, turn Docker on under **Settings › Docker**.)
+2. Turn on **Advanced View** (top right) and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Name | `TunerBox` |
+   | Repository | `ghcr.io/pasiegel/tunerbox:latest` |
+   | Icon URL | `https://raw.githubusercontent.com/pasiegel/tunerbox/main/web/icons/icon-192.png` |
+   | WebUI | `http://[IP]:[PORT:8642]/` |
+   | Extra Parameters | `--user 99:100` |
+   | Network Type | `Bridge` (or `Host`, see below) |
+
+   **Don't skip `--user 99:100`.** Unraid's shares belong to `nobody:users` (99:100), and without it TunerBox can't write its appdata folder: the container stops at once with `Permission denied: '/data/settings.json.tmp'` in its log.
+3. Press **Add another Path, Port, Variable, Label or Device** once for each of these:
+
+   | Config Type | Name | Container | Host / Value | Access mode |
+   |---|---|---|---|---|
+   | Port | Web UI | `8642` (TCP) | `8642` | |
+   | Path | Data | `/data` | `/mnt/user/appdata/tunerbox` | Read/Write |
+   | Variable | Time zone | `TZ` | your time zone, e.g. `America/Chicago` | |
+   | Path | Videos (optional) | `/media` | your media share, e.g. `/mnt/user/Media` | Read Only |
+
+   * **Data** holds the settings, the database, logs and recordings. Keep it on appdata (the cache drive if you have one), and include it in your appdata backup.
+   * **Time zone** sets the guide times and when recordings start.
+   * **Videos** is only for My Channels and My Library from a folder: in Setup, use the path inside the container (`/media/Movies` for `/mnt/user/Media/Movies`). My Library can also read an SMB share over the network with no path at all (`\\tower\Media\Movies`, with a user that can read it).
+   * **HTTPS** (optional, for installing TunerBox as an app): add a Port `8643` → `8643` as well, switch HTTPS on in **Setup › Settings › HTTPS**, and add your Unraid server's address under **Extra addresses for the certificate**.
+4. Press **Apply**. Unraid pulls the image and starts it. Click the TunerBox icon › **WebUI** (or open `http://<unraid-ip>:8642/`): a new install opens the setup wizard.
+
+**Network type.** `Bridge` works for everything except finding an HDHomeRun on its own: add the tuner by its IP address instead. With `Host`, HDHomeRun discovery works and the port fields are ignored (TunerBox is at port 8642 on the Unraid server; make sure nothing else uses it). With `Custom: br0` TunerBox gets an address of its own on your network.
+
+**Recordings** go in `/data/recordings`, which is `/mnt/user/appdata/tunerbox/recordings` on the server. To keep them on the array instead, add a Path `/recordings` → `/mnt/user/Recordings` (Read/Write), then set **Setup › Settings › Recordings folder** to `/recordings`.
+
+**Updates.** On the Docker tab, **Check for Updates**, then **apply update** on TunerBox (or let the CA Auto Update Applications plugin do it). Your settings stay in appdata. To stay on one release, use its tag in Repository, e.g. `ghcr.io/pasiegel/tunerbox:1.9.0`.
+
+**Plex, Jellyfin or Emby on the same Unraid server:** add TunerBox as an HDHomeRun tuner at `http://<unraid-ip>:8642`, not `localhost`: each container has its own `localhost`.
+
+**Already started it without `--user 99:100`?** Add it under Extra Parameters and, if the container still won't start, reset the folder's owner in the Unraid terminal: `chown -R nobody:users /mnt/user/appdata/tunerbox`.
 
 ## Security notes
 * TunerBox has no logins on your home network: anyone on the Wi-Fi can watch, and change setup until **Setup › Phones › lock** is on. On a Docker server that includes PC-only settings (ffmpeg, recordings folder, ports) and folders on the server. Pair your phone (and on a NAS, your PC's browser) and turn the lock on if others share your network.
