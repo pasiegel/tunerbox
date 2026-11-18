@@ -57,8 +57,7 @@ const G = {
     hideBanner(); $("playback").classList.add("hidden");
     $("guide").classList.remove("hidden");
     video.classList.add("pip");
-    this.rows = window.innerHeight < window.innerWidth ? 8 : 9;
-    this.span = isPhone() && window.innerHeight > window.innerWidth ? 5400 : 7200;   // phone portrait: 90 min, wider cells
+    this.fit();
     this.win = Math.floor(now() / HALF) * HALF;
     this.focusT = now();
     this.favOnly = favs; this.genre = ""; this.genreNums = null; this.genreKey = ""; this.filterFocus = false; this.build();
@@ -80,6 +79,13 @@ const G = {
     this.top = Math.max(0, Math.min(this.row - 2, this.list.length - this.rows));
     toast(this.favOnly ? "★ Favorites only" : "All channels");
     this.render();
+  },
+  // rows and time span for the screen's shape: a phone on its side has little height, so fewer, taller rows;
+  // a phone upright shows 90 min so the cells are wide enough to read
+  fit() {
+    const wide = window.innerHeight < window.innerWidth;
+    this.rows = wide ? (isPhone() ? 5 : 8) : 9;
+    this.span = isPhone() && !wide ? 5400 : 7200;
   },
   // favorites changed while the guide is open
   refresh() {
@@ -339,6 +345,14 @@ const G = {
     programDialog(ch, p);
   },
 };
+
+// a phone turned while the guide is open: re-fit the rows and keep the highlighted one in view
+window.addEventListener("resize", () => {
+  if ($("guide").classList.contains("hidden")) return;
+  const rows = G.rows, span = G.span;
+  G.fit();
+  if (G.rows !== rows || G.span !== span) G.refresh();
+});
 
 // touch: tap the day (top left of the guide) for the next genre
 $("g-day").addEventListener("click", () => { if (top() === "guide") G.cycleGenre(); });
