@@ -124,6 +124,29 @@ def test_progress_continue_watching_and_my_list(xtream):
     assert vod.titles(tab="list")["total"] == 0
 
 
+def test_a_finished_episode_leaves_the_next_one_up_next(xtream):
+    sid, _ = xtream
+    show, e1, e2 = f"{sid}:s7", f"{sid}:e101", f"{sid}:e102"
+    vod.title(show)
+    db.run("UPDATE vod_progress SET updated=0")
+    vod.set_progress(e1, 1490, 1500)                        # watched to the end
+    [t] = vod.titles(tab="continue")["items"]
+    assert (t["id"], t["resume"], t["upnext"], t["pct"]) == (show, e2, True, 0)
+    assert t["sub"].startswith("Up next · S1 E2") and t["ep"].startswith("S1 E2")
+    db.run("UPDATE vod_progress SET updated=1")             # forgotten after it was watched
+    vod.forget(show)
+    assert vod.titles(tab="continue")["items"] == []        # stays away...
+    db.run("UPDATE vod_dismissed SET at=1")
+    vod.set_progress(e2, 600, 1500)                         # ...until another episode is played
+    [t] = vod.titles(tab="continue")["items"]
+    assert (t["resume"], t["upnext"]) == (e2, False)
+    vod.set_watched(show)                                   # the whole show: caught up, nothing next
+    assert vod.titles(tab="continue")["items"] == []
+    movie = f"{sid}:m10"
+    vod.set_watched(movie)                                  # a finished film has no Up next
+    assert vod.titles(tab="continue")["items"] == []
+
+
 def test_play_address_and_command(xtream):
     sid, _ = xtream
     it = vod.item(f"{sid}:m10")
@@ -453,6 +476,19 @@ def test_continue_watching_lists_a_film_once_as_the_version_played_last(labelled
     assert vod.counts()["movie"]["continue"] == 1
     db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (3000, a))
     assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [a]
+
+
+def test_continue_watching_can_show_every_version(labelled):
+    ids = [v["id"] for v in vod.title([h for h in vod.search("film 2") if h["name"] == "Film 2"][0]["id"])["versions"]]
+    a, b = ids[0], ids[1]
+    vod.set_progress(a, 600, 6000)
+    vod.set_progress(b, 900, 6000)
+    db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (1000, a))
+    db.run("UPDATE vod_progress SET updated=? WHERE item_id=?", (2000, b))
+    config.update({"vod_continue_versions": True})
+    assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [b, a]      # both, the latest first
+    config.update({"vod_continue_versions": False})
+    assert [t["id"] for t in vod.titles(tab="continue")["items"]] == [b]
 
 
 def test_preferred_language_leads_the_versions_and_hidden_categories_stay_out(labelled):

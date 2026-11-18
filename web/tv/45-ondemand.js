@@ -247,7 +247,8 @@ function odInfo() {
 function odFill(t, d) {
   const x = d || t, movie = t.kind === "movie";
   let seen = "";
-  if (t.sub) seen = `Stopped in ${t.sub}`;
+  if (t.upnext) seen = `Up next: ${t.ep}`;
+  else if (t.sub) seen = `Stopped in ${t.sub}`;
   else if (d && movie && d.watched) seen = "Watched";
   else if (d && movie && d.position > RESUME_MIN) seen = `Watched ${Math.round(d.position / 60)} min${d.duration ? ` of ${Math.round(d.duration / 60)}` : ""}`;
   odSetInfo(x.name,
@@ -279,9 +280,10 @@ async function odForget(id) {
 const odForgetEntry = (id) => ({ label: "Remove from Continue Watching", act: () => odForget(id) });
 // a show in Continue Watching (On Demand or Home): straight back into the episode
 function odResumeDialog(t, allEpisodes) {
-  const ep = t.sub || "episode";
+  // an Up next tile: you finished the episode before it, so this one plays from the start
+  const ep = t.ep || t.sub || "episode";
   openDialog(t.name, t.sub || "", [
-    { label: `Resume ${ep}`, act: () => playVod(t.resume) },
+    { label: `${t.upnext ? "Play" : "Resume"} ${ep}`, act: () => playVod(t.resume) },
     { label: "All episodes", act: () => { closeDialog(); allEpisodes(); } },
     { label: `Mark ${ep} as watched`, act: () => odMark(t.resume, true) },
     odForgetEntry(t.id),

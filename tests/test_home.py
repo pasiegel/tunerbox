@@ -89,3 +89,38 @@ def test_channel_tiles_carry_the_game_they_show(monkeypatch):
     d = home.overview([7, 9])
     assert d["favorites"][0]["game"] == ev                         # channel 4 has the game too
     assert [(c["number"], c["game"]) for c in d["recent"]] == [(7, ev), (9, None)]
+
+
+def test_rows_follow_the_saved_order_and_leave_hidden_ones_empty(monkeypatch):
+    _setup(monkeypatch)
+    called = []
+    monkeypatch.setattr(sports, "overview", lambda tab: called.append(tab) or {"on_now": []})
+    config.update({"favorites": [4], "home_order": ["coming", "fav"], "home_hidden": ["teams", "sports", "fav", "recent"]})
+    d = home.overview([9])
+    # rows the saved order doesn't name keep their usual place after the rows they follow
+    assert d["rows"] == ["coming", "cont", "contrec", "libnew", "recorded"]
+    assert d["favorites"] == [] and d["recent"] == [] and d["teams"] == [] and d["sports"] == []
+    assert called == []                     # sports switched off: the scoreboard isn't asked at all
+    config.update({"home_order": [], "home_hidden": []})
+    assert home.overview()["rows"] == list(home.ROWS)
+
+
+def test_continue_rows_hide_separately(monkeypatch):
+    now = _setup(monkeypatch)
+    db.run("INSERT INTO recordings(number, title, start, stop, status, file) VALUES (4, 'Show', ?, ?, 'done', 'x.mp4')",
+           (now - 9000, now - 7200))
+    dvr.progress(1, 300, 1800)
+    config.update({"home_hidden": ["contrec"]})
+    assert home.overview()["continue"] == []
+    config.update({"home_hidden": ["cont"]})
+    assert [x["title"] for x in home.overview()["continue"]] == ["Show"]
+
+
+def test_home_row_settings_are_checked():
+    c = TestClient(api.app)
+    r = c.post("/api/settings", json={"home_order": ["sports", "nope", "sports", "fav"], "home_hidden": ["teams", 3]})
+    assert r.status_code == 200
+    assert config.get("home_order") == ["sports", "fav"] and config.get("home_hidden") == ["teams"]
+    assert c.post("/api/settings", json={"home_order": "fav"}).status_code == 400
+    # unnamed rows follow the row they usually come after (Recent channels follows Sports on now)
+    assert c.get("/api/home").json()["rows"] == ["sports", "recent", "recorded", "coming", "fav", "cont", "contrec", "libnew"]

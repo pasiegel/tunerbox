@@ -32,19 +32,28 @@ const HM_NAV = [
   { label: "Menu", info: "Favorites, settings, sleep timer and more", act: () => openMenu() },
 ];
 
+// every row Home can show, in its usual order. Which are shown, and in what order, is set in
+// Setup › Settings › Screens › Home rows; /api/home sends that as `rows` (ids as in tunerbox/home.py ROWS).
+const HM_ROWS = {
+  fav: ["★ Favorites on now", (d) => d.favorites.map((c) => ({ t: "chan", ...c }))],
+  teams: ["⭐ Your teams on now", (d) => (d.teams || []).map((p) => ({ t: "game", p }))],
+  // posters and wide recording tiles in separate rows, so each row has one shape
+  cont: ["Continue Watching: On Demand", (d) => d.continue.filter((x) => x.type === "vod").map((x) => ({ ...x, t: x.type }))],
+  contrec: ["Continue Watching: Recordings", (d) => d.continue.filter((x) => x.type !== "vod").map((x) => ({ ...x, t: x.type }))],
+  libnew: ["New in My Library", (d) => (d.library_new || []).map((x) => ({ ...x, t: x.type }))],
+  sports: ["Sports on now", (d) => d.sports.map((p) => ({ t: "game", p }))],
+  recent: ["Recent channels", (d) => d.recent.map((c) => ({ t: "chan", ...c }))],
+  recorded: ["Recently recorded", (d) => d.recorded.map((r) => ({ t: "rec", ...r }))],
+  coming: ["Coming up", (d) => d.coming.map((x) => ({ ...x, t: x.type === "rec" ? "sched" : "remind" }))],
+};
+
 function homeRows(d) {
   const rows = [{ id: "nav", items: HM_NAV.filter(featOn).map((n) => ({ t: "nav", ...n })) }];
-  const add = (id, label, items) => { if (items && items.length) rows.push({ id, label, items }); };
-  add("fav", "★ Favorites on now", d.favorites.map((c) => ({ t: "chan", ...c })));
-  add("teams", "⭐ Your teams on now", (d.teams || []).map((p) => ({ t: "game", p })));
-  // posters and wide recording tiles in separate rows, so each row has one shape
-  add("cont", "Continue Watching: On Demand", d.continue.filter((x) => x.type === "vod").map((x) => ({ ...x, t: x.type })));
-  add("contrec", "Continue Watching: Recordings", d.continue.filter((x) => x.type !== "vod").map((x) => ({ ...x, t: x.type })));
-  add("libnew", "New in My Library", (d.library_new || []).map((x) => ({ ...x, t: x.type })));
-  add("sports", "Sports on now", d.sports.map((p) => ({ t: "game", p })));
-  add("recent", "Recent channels", d.recent.map((c) => ({ t: "chan", ...c })));
-  add("recorded", "Recently recorded", d.recorded.map((r) => ({ t: "rec", ...r })));
-  add("coming", "Coming up", d.coming.map((x) => ({ ...x, t: x.type === "rec" ? "sched" : "remind" })));
+  for (const id of d.rows || Object.keys(HM_ROWS)) {
+    if (!HM_ROWS[id]) continue;
+    const [label, make] = HM_ROWS[id], items = make(d);
+    if (items && items.length) rows.push({ id, label, items });
+  }
   return rows;
 }
 const hmKey = (it) => it && ({ nav: `n${it.label}`, chan: `c${it.number}`, vod: `v${it.id}`, rec: `r${it.id}`, sched: `r${it.id}`, fail: `r${it.id}`,
