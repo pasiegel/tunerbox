@@ -198,7 +198,7 @@ def test_sports_stats_fields(client, monkeypatch):
     g = d["game"]
     for key in ("id", "league", "state", "detail", "teams", "players", "team_stats", "plays"):
         assert key in g, key
-    for key in ("name", "abbr", "color", "score", "record"):
+    for key in ("name", "short", "abbr", "color", "logo", "score", "record"):   # StatsView drawTeams: one-line scoreline
         assert key in g["teams"][0], key
     tb = g["players"][0]["tables"][0]
     assert {"abbr"} <= g["players"][0].keys() and {"title", "cols", "rows"} <= tb.keys()
@@ -207,6 +207,7 @@ def test_sports_stats_fields(client, monkeypatch):
     o = d["others"][0]
     for key in ("id", "name", "league", "detail", "teams", "ch", "also", "feeds"):
         assert key in o, key
+    assert {"abbr", "color", "logo", "score"} <= o["teams"][0].keys()   # StatsView drawGame: the tile's logos
     assert {"number", "name"} <= o["ch"].keys() and {"key", "name", "group", "status", "slot"} <= o["feeds"][0].keys()
 
 

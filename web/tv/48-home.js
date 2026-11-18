@@ -163,12 +163,16 @@ function hmTile(it, r, i) {
 }
 // a game the scoreboard knows: both teams' logos on their colours, split down the middle, and the
 // score between them once it has started (the leader brighter) with the clock under it. "" if it has
-// no logos, so the tile falls back to the guide's picture.
-function hmMatchup(e, p) {
+// no logos, so the tile falls back to the guide's picture; with `noLogo`, a team without one (or whose
+// logo won't load) shows its abbreviation instead (the game stats' Live scores tiles).
+function hmMatchup(e, p, noLogo = false) {
   const t = e && e.teams;
-  if (!t || t.length !== 2 || !t[0].logo || !t[1].logo) return "";
+  if (!t || t.length !== 2 || (!noLogo && (!t[0].logo || !t[1].logo))) return "";
   const col = (x, dflt) => (/^[0-9a-f]{6}$/i.test(x.color || "") ? `#${x.color}` : dflt);
-  const img = (x, side) => `<img class="mu-${side}" loading="lazy" alt="" src="${esc(safePic(x.logo))}">`;
+  const word = (x) => x.abbr || x.name || "";
+  const img = (x, side) => (!x.logo ? `<b class="mu-${side}">${esc(word(x))}</b>`
+    : `<img class="mu-${side}" loading="lazy" alt="${esc(word(x))}" src="${esc(safePic(x.logo))}"`
+      + (noLogo ? ` onerror="this.replaceWith(Object.assign(document.createElement('b'),{className:this.className,textContent:this.alt}))">` : ">"));
   const a = parseFloat(t[0].score), b = parseFloat(t[1].score), scored = t[0].score !== "" && t[1].score !== "";
   const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
   const mid = scored

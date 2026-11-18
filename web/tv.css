@@ -516,21 +516,23 @@ html:not(.phone) #tv:has(#remote.live:not(.hidden)) #banner { display: none; }  
 .hm-tile.t4 { background: var(--kids); } .hm-tile.t5 { background: #4a2440; } .hm-tile.t6 { background: var(--cell-now); } .hm-tile.t7 { background: #433817; }
 .hm-tile .pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .hm-tile:not(.art) { background-image: linear-gradient(135deg, var(--c-fg-24) 0%, var(--c-fg-00) 55%); }   /* a soft sheen on plain tiles */
-/* a game: the two teams' logos on their colours (hmMatchup) */
-.hm-tile .mu { position: absolute; inset: 0; background: linear-gradient(105deg, var(--l) 0 49.6%, var(--c-fg-33) 49.6% 50.4%, var(--r) 50.4% 100%); }
-.hm-tile .mu::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 35%, var(--c-fg-22) 0%, #0000 45%, #0007 100%); }
-.hm-tile .mu img { position: absolute; top: 36%; width: 36%; height: 58%; object-fit: contain; transform: translate(-50%, -50%);
+/* a game: the two teams' logos on their colours (hmMatchup), on Home's tiles and the game stats' Live scores */
+.mu { position: absolute; inset: 0; background: linear-gradient(105deg, var(--l) 0 49.6%, var(--c-fg-33) 49.6% 50.4%, var(--r) 50.4% 100%); }
+.mu::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 35%, var(--c-fg-22) 0%, #0000 45%, #0007 100%); }
+.mu .mu-l, .mu .mu-r { position: absolute; top: 36%; width: 36%; height: 58%; object-fit: contain; transform: translate(-50%, -50%);
   filter: drop-shadow(0 .12em .3em #000b); }
-.hm-tile .mu-l { left: 25%; } .hm-tile .mu-r { left: 75%; }
-.hm-tile .mu.scored img { width: 27%; height: 50%; } .hm-tile .mu.scored .mu-l { left: 16%; } .hm-tile .mu.scored .mu-r { left: 84%; }
+/* no logo (or it won't load): the team's abbreviation in its place */
+.mu b.mu-l, .mu b.mu-r { display: grid; place-items: center; font-size: 1.3em; font-weight: 800; color: var(--c-fg-cc); white-space: nowrap; }
+.mu .mu-l { left: 25%; } .mu .mu-r { left: 75%; }
+.mu.scored .mu-l, .mu.scored .mu-r { width: 27%; height: 50%; } .mu.scored .mu-l { left: 16%; } .mu.scored .mu-r { left: 84%; }
 /* between the logos: "@" before the game, the score and clock during it */
-.hm-tile .mu-mid { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: .2em; }
-.hm-tile .mu-vs { padding: .12em .45em; border-radius: 999px; background: #000a; color: var(--c-fg); font-size: .8em; font-weight: 800; }
-.hm-tile .mu-sc { display: flex; align-items: baseline; gap: .25em; padding: .05em .45em; border-radius: .35em; background: #000b;
+.mu-mid { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: .2em; }
+.mu-vs { padding: .12em .45em; border-radius: 999px; background: #000a; color: var(--c-fg); font-size: .8em; font-weight: 800; }
+.mu-sc { display: flex; align-items: baseline; gap: .25em; padding: .05em .45em; border-radius: .35em; background: #000b;
   font-size: 1.55em; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; }
-.hm-tile .mu-sc b { color: var(--c-fg-a6); } .hm-tile .mu-sc b.lead { color: var(--c-fg); }
-.hm-tile .mu-sc i { font-style: normal; font-size: .7em; color: var(--c-fg-80); }
-.hm-tile .mu-clk { padding: .05em .4em; border-radius: 999px; background: #000a; color: var(--hl); font-size: .72em; font-weight: 700; white-space: nowrap; }
+.mu-sc b { color: var(--c-fg-a6); } .mu-sc b.lead { color: var(--c-fg); }
+.mu-sc i { font-style: normal; font-size: .7em; color: var(--c-fg-80); }
+.mu-clk { padding: .05em .4em; border-radius: 999px; background: #000a; color: var(--hl); font-size: .72em; font-weight: 700; white-space: nowrap; }
 .hm-tile .logo { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); max-width: 62%; max-height: 46%; object-fit: contain; }
 .hm-tile .big { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); font-size: 2.8em; font-weight: 800; color: var(--c-fg-cc); letter-spacing: .02em; }
 .hm-tile.art .logo { display: none; }
@@ -647,67 +649,73 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
   .phone .rm-menu { top: 52px; }
 }
 
-/* game stats: a side panel over the picture, the game keeps playing beside it */
-#gstats { position: absolute; z-index: 45; top: 0; right: 0; bottom: 0; width: 30em; max-width: 92vw; display: flex; flex-direction: column; gap: .9em;
-  background: var(--surface); backdrop-filter: blur(18px); border-left: 1px solid var(--line); box-shadow: -1em 0 3em #0008; padding: 1.6em 1.3em 1.2em; }
-/* the picture shrinks into the space left of the panel (16:9, letterboxed), so nothing is hidden behind it */
-html:not(.phone) #tv.gs-open #video:not(.pip) { width: calc(100% - min(30em, 92vw)); }
-.gs-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; }
-#gs-league { font-size: .95em; letter-spacing: .08em; color: var(--a-sports); }
-#gs-clock { font-size: 1.05em; font-variant-numeric: tabular-nums; }
-#gs-teams { display: flex; flex-direction: column; gap: .5em; }
-.gs-team { display: flex; align-items: center; gap: .8em; }
-.gs-team i { width: .45em; height: 2.6em; border-radius: .25em; background: var(--dim); flex: none; }
-.gs-team img { width: 2.4em; height: 2.4em; object-fit: contain; flex: none; }
-.gs-team div { flex: 1; min-width: 0; }
-.gs-team b { display: block; font-size: 1.35em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gs-team small { color: var(--dim); }
-.gs-team em { font-style: normal; font-size: 2.5em; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dim); }
+/* game stats: a card in the top right corner over the picture, as tall as what's in it; the Live
+   scores tab makes it a slim panel down the right. The picture stays full size behind both, showing through. */
+#gstats { position: absolute; z-index: 45; top: 1.6em; right: 1.6em; width: 24em; max-width: 92vw; max-height: calc(100% - 3.2em);
+  display: flex; flex-direction: column; gap: .7em; font-size: .92em; background: var(--c-bg-cc); backdrop-filter: blur(16px);
+  border: 1px solid var(--line); border-radius: 1em; box-shadow: 0 1em 3em #0009; padding: 1em 1.1em .9em; }
+#gstats.scores { bottom: 1.6em; max-height: none; background: var(--c-bg-b3); }
+:root[data-theme="contrast"] #gstats { background: var(--surface); }
+.gs-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: .9em; }
+#gs-league { letter-spacing: .08em; color: var(--a-sports); }
+#gs-clock { font-variant-numeric: tabular-nums; }
+.gs-head:has(#gs-league:empty) { display: none; }
+/* the score on one line: [bar logo name score] – [score name logo bar], the leader brighter */
+#gs-teams { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: .5em; }
+#gs-teams:empty { display: none; }
+.gs-team { display: flex; align-items: center; gap: .45em; min-width: 0; }
+.gs-team.r { flex-direction: row-reverse; }
+.gs-team i { width: .3em; height: 1.7em; border-radius: .2em; background: var(--dim); flex: none; }
+.gs-team img { width: 1.8em; height: 1.8em; object-fit: contain; flex: none; }
+.gs-team div { flex: 1; min-width: 0; line-height: 1.2; }
+.gs-team.r div { text-align: right; }
+.gs-team b, .gs-team small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-team b { font-size: 1em; font-weight: 600; }
+.gs-team small { font-size: .75em; color: var(--dim); }
+.gs-team em { font-style: normal; font-size: 1.7em; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dim); }
 .gs-team.lead em { color: var(--text); }
-#gstats .tabs { margin: 0; }
-#gstats .tab { font-size: 1em; }
-#gs-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-.gs-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-bottom: 1.1em; table-layout: fixed; }
-.gs-tbl th { font-size: .8em; letter-spacing: .06em; color: var(--dim); text-align: right; font-weight: 700; padding: .2em .35em .35em; width: 3.4em; }
+.gs-dash { color: var(--dim); font-weight: 700; }
+#gstats .tabs { flex: none; flex-wrap: wrap; row-gap: .4em; margin: 0; }
+#gstats .tab { font-size: .9em; padding: .3em .8em; white-space: nowrap; }
+#gs-body { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+#gstats.scores #gs-body { flex: 1 1 auto; padding: .7em .7em .2em; margin: -.7em -.7em 0; }
+.gs-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-bottom: .9em; table-layout: fixed; }
+.gs-tbl th { font-size: .8em; letter-spacing: .06em; color: var(--dim); text-align: right; font-weight: 700; padding: .2em .3em .3em; width: 3.2em; }
 .gs-tbl th:first-child { text-align: left; width: auto; }
-.gs-tbl th.w { width: 5.6em; }   /* header text is .8em: about 4.5em of the row's size */
-.gs-tbl td { text-align: right; padding: .38em .35em; font-size: 1.05em; white-space: nowrap; }
+.gs-tbl th.w { width: 5.4em; }   /* header text is .8em: about 4.3em of the row's size */
+.gs-tbl td { text-align: right; padding: .28em .3em; font-size: .95em; white-space: nowrap; }
 .gs-tbl td:first-child { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-tbl td:nth-child(2) { font-weight: 700; }
 .gs-tbl td small { color: var(--dim); margin-right: .35em; }
-.gs-tbl.team th:not(:first-child) { width: 7em; }   /* two teams side by side: room for "25-61" or "32:15" with a gap */
+.gs-tbl.team th:not(:first-child) { width: 6em; }   /* two teams side by side: room for "25-61" or "32:15" with a gap */
 .gs-tbl.team td:not(:first-child) { padding-left: 1em; }
 .gs-tbl.team td:nth-child(2) { font-weight: 400; }
 .gs-tbl.team td:first-child { color: var(--dim); }
-.gs-play { padding: .5em 0; border-bottom: 1px solid var(--line); }
+.gs-play { padding: .45em 0; border-bottom: 1px solid var(--line); font-size: .95em; }
 .gs-play small { display: block; color: var(--dim); margin-bottom: .15em; }
 .gs-play.score { color: var(--hl); }
-.gs-game { display: grid; grid-template-columns: minmax(0, 1fr) 8.5em; gap: .8em; align-items: center; padding: .55em .8em; margin-bottom: .45em;
-  border-radius: .6em; background: var(--cell); border: 2px solid transparent; cursor: pointer; font-variant-numeric: tabular-nums; }
-.gs-game.sel { border-color: var(--hl); }
-.gs-gt { display: flex; align-items: center; gap: .6em; padding: .1em 0; }
-.gs-gt i { width: .3em; height: 1.1em; border-radius: .15em; background: var(--dim); flex: none; }
-.gs-gt b { flex: 1; font-size: 1.05em; }
-.gs-gt em { font-style: normal; font-weight: 700; font-size: 1.15em; min-width: 2.2em; text-align: right; }
-.gs-gt.trail em { color: var(--dim); }
-.gs-gw { text-align: right; min-width: 0; }
-.gs-gw b { display: block; font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gs-gw span { display: block; font-size: .75em; font-weight: 700; letter-spacing: .06em; color: var(--a-sports); }
-.gs-gw small { display: block; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gs-empty { color: var(--dim); padding: 2em 0; text-align: center; }
-.gs-foot { margin-top: 0; }
+/* Live scores: a tile per game like Home's (hmMatchup draws the teams), the matchup and where to watch under it */
+.gs-game { position: relative; height: 8.4em; margin-bottom: .7em; border-radius: .8em; border: .2em solid transparent; overflow: hidden; cursor: pointer; background: var(--cell); }
+.gs-game.sel { border-color: var(--hl); box-shadow: 0 0 1.2em var(--hl-glow); }
+.gs-game .mu-mid, .gs-game .mu .mu-l, .gs-game .mu .mu-r { top: 34%; }
+.gs-gx { position: absolute; left: 0; right: 0; bottom: 0; padding: 1.2em .7em .5em; background: linear-gradient(transparent, #000d 55%); color: var(--c-fg); }
+.gs-gx b, .gs-gx span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-gx b { font-size: .95em; }
+.gs-gx span { font-size: .8em; color: var(--c-fg-cc); }
+.gs-gx em { font-style: normal; font-weight: 700; color: var(--a-sports); }
+.gs-empty { color: var(--dim); padding: 1.5em 0; text-align: center; }
+.gs-foot { margin-top: 0; font-size: .85em; }
 #gs-upd { float: right; }
 /* phones: a sheet along the bottom with the score at its top, the picture above it; the Back button
    (bottom right) closes it, so the last line leaves room for it. Sideways, the panel stays beside the picture. */
-.phone #gstats { top: auto; left: 0; right: 0; width: 100%; max-width: none; height: 58%; gap: 10px; border-left: 0; border-top: 1px solid var(--line);
+.phone #gstats, .phone #gstats.scores { top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-width: none; max-height: none; height: 58%; gap: 10px;
+  font-size: 1em; background: var(--surface); border: 0; border-top: 1px solid var(--line);
   border-radius: 14px 14px 0 0; box-shadow: 0 -1em 3em #0008; padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 64px); }
+.phone #gstats #gs-body { flex: 1 1 auto; }
 .phone #tv.gs-open #video:not(.pip) { height: 42%; }
-.phone .gs-team i { height: 2em; }
-.phone .gs-team img { width: 1.9em; height: 1.9em; }
-.phone .gs-team b { font-size: 1.15em; }
-.phone .gs-team em { font-size: 1.9em; }
+.phone .gs-team em { font-size: 1.6em; }
 @media (orientation: landscape) {
-  .phone #gstats { top: 0; left: auto; width: 46%; height: auto; border-top: 0; border-left: 1px solid var(--line); border-radius: 0;
+  .phone #gstats, .phone #gstats.scores { top: 0; left: auto; width: 46%; height: auto; border-top: 0; border-left: 1px solid var(--line); border-radius: 0;
     padding: calc(env(safe-area-inset-top, 0px) + 10px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 64px) 12px; }
   .phone #tv.gs-open #video:not(.pip) { height: 100%; width: 54%; }
 }
