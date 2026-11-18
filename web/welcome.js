@@ -202,7 +202,7 @@ $("lib-test").onclick = async () => {
   say("lib-msg", "Connecting…");
   try {
     const r = await post("/api/library/browse", { ...body, path: "" });
-    say("lib-msg", r.ok ? `✓ ${r.message}${r.folders && r.folders.length ? ` · ${r.folders.length} folder${r.folders.length === 1 ? "" : "s"} inside` : ""}` : r.message, r.ok ? "ok-text" : "bad-text");
+    say("lib-msg", r.ok ? `✓ ${r.message}` : r.message, r.ok ? "ok-text" : "bad-text");
   } catch (e) { say("lib-msg", e.message, "bad-text"); }
 };
 $("lib-form").onsubmit = async (e) => {
