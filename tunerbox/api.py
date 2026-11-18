@@ -1617,6 +1617,23 @@ def index(request: Request):
     return _page("index.html")
 
 
+# iPhone and iPad also look for the home-screen icon at these fixed addresses (when adding to the home screen
+# and when the icon named on the page doesn't load); without them they draw a plain letter instead
+_ROOT_ICONS = {"apple-touch-icon.png": "apple-180.png", "apple-touch-icon-precomposed.png": "apple-180.png",
+               "apple-touch-icon-180x180.png": "apple-180.png", "favicon.ico": "icon-192.png"}
+
+
+def _root_icon(file):
+    def serve():
+        return FileResponse(config.WEB / "icons" / file, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    return serve
+
+
+for _name, _file in _ROOT_ICONS.items():
+    app.add_api_route(f"/{_name}", _root_icon(_file), methods=["GET", "HEAD"], include_in_schema=False)
+
+
 @app.get("/welcome")
 def welcome_page(request: Request):
     if config.get("require_pairing") and not remote.trusted(request):

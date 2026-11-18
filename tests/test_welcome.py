@@ -49,3 +49,13 @@ def test_wizard_steps_use_setup_settings():
     c = _client()
     s = c.post("/api/settings", json={"dvr_enabled": False, "gracenote": {"enabled": False}}).json()
     assert s["dvr_enabled"] is False and s["gracenote"]["enabled"] is False
+
+
+def test_home_screen_icon_at_the_addresses_ios_tries():
+    c = _client()
+    for name in ("apple-touch-icon.png", "apple-touch-icon-precomposed.png", "favicon.ico"):
+        r = c.get("/" + name)
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
+    assert c.get("/setup").status_code == 200 and c.get("/discover.json").status_code == 200
+    config.update({"welcome_done": True})
+    assert 'rel="apple-touch-icon" sizes="180x180"' in c.get("/").text
