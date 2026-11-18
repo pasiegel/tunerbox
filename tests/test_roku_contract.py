@@ -6,12 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.routing import Route
 
-from tunerbox import api, db, gamestats, scoreboard, sports
+from tunerbox import api, db, gamestats, home, scoreboard, sports
 
 # (method, path) exactly as the Roku calls them; {x} marks a value the Roku fills in
 ROKU_ROUTES = [
     ("GET", "/playlist.m3u"),
     ("GET", "/epg.xml"),
+    ("GET", "/guide.json"),
+    ("GET", "/channels.json"),
     ("GET", "/api/stream/{number}"),
     ("GET", "/api/feed/stream"),
     ("GET", "/api/favorites"),
@@ -35,6 +37,12 @@ ROKU_ROUTES = [
     ("POST", "/api/vod/progress"),
     ("POST", "/api/vod/watched"),
     ("POST", "/api/vod/list"),
+    ("POST", "/api/vod/forget"),
+    ("GET", "/api/vod/tracks/{item_id}"),
+    ("GET", "/api/vod/subs/{item_id}/{sub_id}"),
+    # catch-up TV (MainScene.brs: Start over, past shows in the Guide)
+    ("GET", "/api/catchup"),
+    ("GET", "/api/guide"),
     # Home (HomeView.brs / MainScene.brs)
     ("GET", "/api/home"),
     ("GET", "/api/art/{number}/{start}"),
@@ -65,6 +73,34 @@ def test_playlist_and_epg_formats(client):
     assert client.get("/epg.xml").text.lstrip().startswith("<")
 
 
+def test_guide_json_rows(client, monkeypatch):
+    # LoadTask.brs loadGuide / jsonProgs: {"programs": {"<number>": [[start, stop, title, subtitle, desc, cat, ep, rating]]}}
+    from tunerbox import epg, guide
+    monkeypatch.setattr(guide, "channels", lambda *a: [{"number": 5, "epg": "x:a"}, {"number": 6, "epg": ""}])
+    p = {"start": 100, "stop": 200, "title": "News", "subtitle": None, "descr": "d", "category": "News", "episode": "",
+         "rating": "TV-G"}
+    monkeypatch.setattr(epg, "programs", lambda keys, a, b: {"x:a": [p]})
+    r = client.get("/guide.json?hours=12", headers={"Accept-Encoding": "identity"})
+    assert r.json() == {"programs": {"5": [[100, 200, "News", "", "d", "News", "", "TV-G"]]}}     # no listings: left out
+    z = client.get("/guide.json", headers={"Accept-Encoding": "gzip"})
+    assert z.headers.get("content-encoding") == "gzip" and z.json() == r.json()       # the Roku asks for gzip
+
+
+def test_channels_json_rows(client, monkeypatch):
+    # LoadTask.brs loadBoot / rowsToChannels: {"channels": [[number, name, logo, group, url, tvg-id, tvg-name]]},
+    # by number; unmapped=0 leaves out the extra channels (Roku: Hide unmapped channels)
+    from tunerbox import guide
+    monkeypatch.setattr(guide, "channels", lambda *a: [
+        {"number": 20001, "name": "Extra", "logo": "", "kind": "extra", "group": "Sports"},
+        {"number": 7, "name": "Seven", "logo": "l.png", "kind": "lineup"},
+        {"number": 3, "name": "Three", "logo": None, "kind": "media", "group": "My Channels"}])
+    rows = client.get("/channels.json?unmapped=0").json()["channels"]
+    assert [r[0] for r in rows] == ["3", "7"]
+    assert rows[1][:4] == ["7", "Seven", "l.png", "Local Lineup"] and rows[1][4].endswith("/api/stream/7")
+    assert rows[1][5:] == ["ch7", "Seven"]
+    assert [r[0] for r in client.get("/channels.json?unmapped=1").json()["channels"]] == ["3", "7", "20001"]
+
+
 def test_favorites_is_a_list(client):
     # the Roku keeps the reply only when it's a JSON array (LoadTask.brs loadFavs / setFav)
     assert isinstance(client.get("/api/favorites").json(), list)
@@ -85,10 +121,32 @@ def test_settings_has_theme(client):
     assert client.get("/api/settings").json().get("theme") in ("midnight", "classic", "retro", "contrast", "light")
 
 
+# the row ids HomeView.brs rowIds() / makeRow() draws; a row it doesn't know is left off the Roku's Home
+ROKU_HOME_ROWS = {"fav", "teams", "cont", "contrec", "libnew", "sports", "recent", "recorded", "coming"}
+
+
 def test_home_lists(client):
     d = client.get("/api/home").json()
-    for key in ("favorites", "teams", "recent", "continue", "sports", "recorded", "coming"):   # HomeView.brs buildRows
+    for key in ("favorites", "teams", "recent", "continue", "library_new", "sports", "recorded", "coming"):   # HomeView.brs makeRow
         assert isinstance(d.get(key), list), key
+    assert isinstance(d.get("rows"), list) and all(isinstance(r, str) for r in d["rows"])     # the order HomeView.brs draws
+
+
+def test_catchup_is_days_by_channel(client, monkeypatch):
+    # MainScene.brs cuDaysOf: { "<channel number>": days }, only channels with an archive
+    from tunerbox import guide
+    monkeypatch.setattr(guide, "channels", lambda *a: [{"number": 5, "catchup": 3}, {"number": 7, "catchup": 0}])
+    assert client.get("/api/catchup").json() == {"5": 3}
+
+
+def test_vod_tracks_shape(client):
+    # MainScene.brs vodTracks: audio and subs lists (empty for a playlist title or a catch-up show)
+    d = client.get("/api/vod/tracks/cu-5-1700000000").json()
+    assert isinstance(d.get("audio"), list) and isinstance(d.get("subs"), list)
+
+
+def test_home_rows_known_to_roku():
+    assert set(home.ROWS) == ROKU_HOME_ROWS, "a Home row was added or renamed; add it to HomeView.brs makeRow too"
 
 
 def test_sports_lists(client):

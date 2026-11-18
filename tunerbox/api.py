@@ -1,4 +1,5 @@
 """HTTP API + web UI + M3U/XMLTV/HDHomeRun outputs."""
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -74,6 +75,13 @@ class LiveResponse(StreamingResponse):
 def api_channels(all: int = 0):
     return [{k: v for k, v in c.items() if k != "streams"} | {"alts": max(0, len(c["streams"]) - 1)}
             for c in guide.channels(bool(all) or None)]
+
+
+@app.get("/api/catchup")
+def api_catchup():
+    """{channel number: days of catch-up} for the channels whose playlist keeps an archive. The Roku reads
+    this rather than /api/channels, which runs to megabytes with a big playlist."""
+    return {str(c["number"]): c["catchup"] for c in guide.channels() if c.get("catchup")}
 
 
 @app.get("/api/favorites")
@@ -1337,6 +1345,32 @@ def out_m3u(request: Request):
     return PlainTextResponse("\n".join(lines) + "\n", media_type="audio/x-mpegurl")
 
 
+def _roku_json(request, obj):
+    """A big JSON reply for the Roku, compact and gzipped when the caller accepts it."""
+    body = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
+    headers = {"Cache-Control": "no-store"}
+    if "gzip" in request.headers.get("accept-encoding", "").lower():
+        body = gzip.compress(body, compresslevel=5)
+        headers["Content-Encoding"] = "gzip"
+        headers["Vary"] = "Accept-Encoding"
+    return Response(body, media_type="application/json", headers=headers)
+
+
+@app.get("/channels.json")
+def out_channels_json(request: Request, unmapped: int = 1):
+    """The channel list for the Roku, as playlist.m3u has it but as rows it reads with its built-in JSON parser:
+    {"channels": [[number, name, logo, group, stream address, tvg-id, tvg-name]]}, by number. unmapped=0 leaves
+    out the extra channels (the Roku's "Hide unmapped channels", on by default), which with a big playlist is
+    most of them."""
+    base = _base(request)
+    chans = [c for c in guide.channels() if unmapped or c["kind"] != "extra"]
+    chans.sort(key=lambda c: c["number"])
+    rows = [[str(c["number"]), c["name"], c["logo"] or "",
+             "Local Lineup" if c["kind"] == "lineup" else (c.get("group") or "Extra"),
+             f"{base}/api/stream/{c['number']}", f"ch{c['number']}", c["name"]] for c in chans]
+    return _roku_json(request, {"channels": rows})
+
+
 @app.get("/epg.xml")
 def out_xmltv():
     def fmt(t):
@@ -1361,6 +1395,25 @@ def out_xmltv():
                        + ("<new/>" if p["is_new"] else "") + "</programme>")
     out.append("</tv>")
     return Response("\n".join(out), media_type="application/xml")
+
+
+@app.get("/guide.json")
+def out_guide_json(request: Request, hours: int = 12):
+    """The guide for the Roku: from 3 hours ago to `hours` ahead, only channels that have listings, as
+    {"programs": {"<number>": [[start, stop, title, subtitle, descr, category, episode, rating]]}}. A fraction
+    of epg.xml (three days of every channel) and read with the Roku's built-in JSON parser instead of picking
+    the XML apart in BrightScript. Gzipped when the caller accepts it."""
+    hours = max(1, min(72, hours))
+    now = int(time.time())
+    chans = guide.channels()
+    progs = epg.programs({c["epg"] for c in chans if c["epg"]}, now - 3 * 3600, now + hours * 3600)
+    out = {}
+    for c in chans:
+        rows = progs.get(c["epg"]) if c["epg"] else None
+        if rows:
+            out[str(c["number"])] = [[p["start"], p["stop"], p["title"] or "", p["subtitle"] or "", p["descr"] or "",
+                                       p["category"] or "", p["episode"] or "", p["rating"] or ""] for p in rows]
+    return _roku_json(request, {"programs": out})
 
 
 # HDHomeRun emulation so Plex / Emby / Jellyfin can add TunerBox as a tuner
