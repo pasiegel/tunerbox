@@ -150,7 +150,7 @@ async function remoteSync() {
     if (!p) return;
     const pct = Math.min(100, Math.max(0, (now() - p.start) / (p.stop - p.start) * 100));
     const sub = [p.episode, p.subtitle].filter(Boolean).join(" · ");
-    const meta = [`${fmtTime(p.start)} – ${fmtTime(p.stop)}`, d.next && `up next: ${d.next.title}`].filter(Boolean).join(" · ");
+    const meta = [`${fmtTime(p.start)} – ${fmtTime(p.stop)}`, d.next && `Next: ${fmtTime(d.next.start)} ${d.next.title}`].filter(Boolean).join(" · ");
     $("rm-now").innerHTML = `${head}<div class="rm-what"><div class="rm-title">${esc(p.title || ch.name)} ${flags(p)}</div>`
       + `<div class="rm-sub">${esc([sub, meta].filter(Boolean).join("  ·  "))}</div>`
       + `<div class="rm-bar"><i style="width:${pct}%"></i></div></div>`;

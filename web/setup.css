@@ -59,6 +59,9 @@ table.grid { width: 100%; border-collapse: collapse; }
 .fd-list .nm { flex: 1; min-width: 0; }
 .fd-list .meta { color: var(--dim); font-size: 12px; }
 .fd-role { width: 64px; flex: none; font-size: 12px; color: var(--dim); }
+.fd-move { display: inline-flex; gap: 2px; flex: none; }
+.fd-move .mv, .fd-move .mv-gap { width: 28px; height: 24px; flex: none; }
+.fd-move .mv { padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .fd-foot { display: flex; align-items: center; gap: 8px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }

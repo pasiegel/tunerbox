@@ -175,4 +175,7 @@ def test_archive_is_read_fast_at_first_then_at_playing_speed(monkeypatch):
     from tunerbox import vod
     cmd = vod.stream_cmd("http://p/x.ts", 0, None, ["-readrate", "1"])
     assert "-re" not in cmd and cmd.index("-readrate") < cmd.index("-i")
-    assert "-re" in vod.stream_cmd("http://p/x.ts")                        # On Demand titles as before
+    assert "-re" in vod.stream_cmd("http://p/x.ts")                        # On Demand on an older ffmpeg
+    monkeypatch.setattr(streaming, "has_option", lambda name: True)
+    cmd = vod.stream_cmd("http://p/x.ts")                                  # newer: a 10 s burst, then playing speed
+    assert "-re" not in cmd and cmd[cmd.index("-readrate_initial_burst") + 1] == "10" and cmd.index("-readrate") < cmd.index("-i")

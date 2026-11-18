@@ -4,7 +4,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from tunerbox import api, config, db, jobs, sources, vod
+from tunerbox import api, config, db, jobs, sources, streaming, vod
 
 NOW = int(time.time())
 XTREAM = {
@@ -147,8 +147,9 @@ def test_a_finished_episode_leaves_the_next_one_up_next(xtream):
     assert vod.titles(tab="continue")["items"] == []
 
 
-def test_play_address_and_command(xtream):
+def test_play_address_and_command(xtream, monkeypatch):
     sid, _ = xtream
+    monkeypatch.setattr(streaming, "has_option", lambda name: True)        # the same on any ffmpeg
     it = vod.item(f"{sid}:m10")
     assert it["url"] == "http://host:8080/movie/user/pass/10.mkv" and it["kind"] == "movie"
     vod.title(f"{sid}:s7")
@@ -157,8 +158,23 @@ def test_play_address_and_command(xtream):
     assert ep["sub"] == "S1 E1 · The Human Bomb" and ep["next"] == {"id": f"{sid}:e102", "label": "S1 E2 · The Big Actor"}
     assert vod.item(f"{sid}:s7") is None                    # a show itself can't be played
     cmd = vod.stream_cmd(it["url"], 42.5)
-    assert cmd.index("-re") < cmd.index("-ss") < cmd.index("-i") and cmd[cmd.index("-ss") + 1] == "42.50"
+    assert cmd.index("-readrate") < cmd.index("-ss") < cmd.index("-i") and cmd[cmd.index("-ss") + 1] == "42.50"
     assert "-ss" not in vod.stream_cmd(it["url"])
+
+
+def test_on_demand_starts_with_a_burst_then_plays_at_speed(monkeypatch):
+    monkeypatch.setattr(streaming, "has_option", lambda name: True)
+    burst = ["-readrate", "1", "-readrate_initial_burst", "10"]
+    cmd = vod.stream_cmd("http://p/x.mkv", 42.5)
+    i = cmd.index("-readrate")
+    assert cmd[i:i + 4] == burst and "-re" not in cmd and i < cmd.index("-ss") < cmd.index("-i")
+    assert vod.hls_pre(42.5) == burst + ["-ss", "42.50"]                   # iPhone/iPad: the same
+    assert vod.hls_pre(0) == burst
+    assert vod.hls_pre(5, ["-re"]) == ["-re", "-ss", "5.00"]                # a caller's own pace wins
+    monkeypatch.setattr(streaming, "has_option", lambda name: False)       # ffmpeg before 6.1
+    cmd = vod.stream_cmd("http://p/x.mkv", 42.5)
+    assert "-readrate" not in cmd and cmd.index("-re") < cmd.index("-ss") < cmd.index("-i")
+    assert vod.hls_pre(42.5) == ["-re", "-ss", "42.50"]
 
 
 def test_hidden_categories(xtream):
