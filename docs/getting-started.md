@@ -15,6 +15,12 @@ Download the latest build from the [Releases page](https://github.com/pasiegel/t
 
 Open TunerBox. On Windows, the first time it starts, Windows asks whether to allow it on the network: choose **Private networks**, so phones and TVs in your home can reach it.
 
+The first time, TunerBox opens the **setup wizard**. It asks the same things as steps 2 and 3 below, one screen at a time: your ZIP or postal code and provider, your playlist or tuner (it scans and tells you how many channels it found), a folder of your own movies or shows, whether to record, and a phone to use as the remote. Every step has **Skip**, and it works with a TV remote as well as a mouse. If you finish it, jump to [4. Check the channel lineup](#4-check-the-channel-lineup).
+
+![The setup wizard's first screen](images/getting-started/01-setup-wizard.png)
+
+To do it by hand instead, press **Skip setup** and follow this guide. You can run the wizard again any time from **Setup › Overview › Setup wizard**.
+
 With nothing set up yet, the screen says **No channels yet**. Press **Enter** or click it to open **Setup**.
 
 ![The TV screen before any playlist is added: No channels yet](images/getting-started/01-no-channels.jpg)
@@ -74,7 +80,7 @@ Set the filter to **Weak matches (check these)** to see the guesses worth a look
 
 ![The Change picker: best guesses for a channel, with preview](images/getting-started/10-change-picker.png)
 
-**Feeds** lists a channel's main feed and its backups, in the order they're tried when one fails. **Remove** takes a wrong feed off that channel for good, and **Allow again** brings removed feeds back.
+**Feeds** lists a channel's main feed and its backups, in the order they're tried when one fails. **Remove** takes a wrong feed off that channel for good, and **Allow again** brings removed feeds back. **Make main** plays a backup first, and with three or more feeds the ▲ ▼ arrows change the order of the rest; while watching, **Menu › Switch feed** plays another one right away.
 
 ![The Feeds list on channel 3: the main feed and one backup](images/getting-started/09-feeds-list.png)
 
