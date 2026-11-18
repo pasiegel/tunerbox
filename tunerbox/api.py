@@ -10,7 +10,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from xml.sax.saxutils import escape
 
 import anyio
@@ -559,10 +559,20 @@ def _disk_path_ok(request, type_, url):
                                  "while Setup is locked. Use a web address (http://…), or pair this device in Setup › Phones.")
 
 
+def _address_ok(type_, url):
+    """Catch an address pasted into one that was already there ("example.com/https://example.com/list.m3u"):
+    it would be saved, read as a file that isn't there, and give no channels."""
+    url = (url or "").strip()
+    if type_ in ("m3u", "xtream") and "://" in url and not re.match(r"^[a-z][a-z0-9+.-]*://", url, re.I):
+        raise HTTPException(400, "That address doesn't look right: it has a second address inside it "
+                                 f"({url[:60]}). Clear the box and paste the address again.")
+
+
 @app.post("/api/sources")
 def api_add_source(request: Request, data: dict = Body(...)):
     if not data.get("url"):
         raise HTTPException(400, "URL / server is required")
+    _address_ok(data.get("type", "m3u"), data["url"])
     _disk_path_ok(request, data.get("type", "m3u"), data["url"])
     try:
         sid = sources.add_source(data.get("name", ""), data.get("type", "m3u"), data["url"].strip(),
@@ -614,6 +624,7 @@ def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     if not before:
         raise HTTPException(404)
     if isinstance(data.get("url"), str) and data["url"].strip() != before["url"]:
+        _address_ok(before["type"], data["url"])
         _disk_path_ok(request, before["type"], data["url"])
     for k in ("name", "url", "username", "password"):
         if isinstance(data.get(k), str):
@@ -1753,8 +1764,36 @@ async def api_library_file(request: Request, item_id: str):
 
 # ------------------------------------------------------------------ web UI
 @app.get("/")
-def index():
+def index(request: Request):
+    # a new install: the first screen opened walks through setup first (each step can be skipped)
+    if not config.get("welcome_done"):
+        q = request.url.query
+        return RedirectResponse("/welcome" + (f"?next={quote('/?' + q, safe='')}" if q else ""), 303)
     return _page("index.html")
+
+
+# iPhone and iPad also look for the home-screen icon at these fixed addresses (when adding to the home screen
+# and when the icon named on the page doesn't load); without them they draw a plain letter instead
+_ROOT_ICONS = {"apple-touch-icon.png": "apple-180.png", "apple-touch-icon-precomposed.png": "apple-180.png",
+               "apple-touch-icon-180x180.png": "apple-180.png", "favicon.ico": "icon-192.png"}
+
+
+def _root_icon(file):
+    def serve():
+        return FileResponse(config.WEB / "icons" / file, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    return serve
+
+
+for _name, _file in _ROOT_ICONS.items():
+    app.add_api_route(f"/{_name}", _root_icon(_file), methods=["GET", "HEAD"], include_in_schema=False)
+
+
+@app.get("/welcome")
+def welcome_page(request: Request):
+    if config.get("require_pairing") and not remote.trusted(request):
+        return RedirectResponse("/pair?next=/welcome", 303)
+    return _page("welcome.html")
 
 
 @app.get("/setup")
@@ -1799,12 +1838,14 @@ def _named(html):
     return html.replace("<small>Setup</small>", f"<small>Setup · {escape(name)}</small>")
 
 
-_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css)))"')
+_ASSET = re.compile(r'((?:src|href)="/static/([^"?]+\.(?:js|css|png|webmanifest)))"')
 
 
 def _page(name):
-    """Serve a page with ?v=<file time> on its scripts/styles, so an updated TunerBox never runs
-    with a script the browser or app window cached from the old version."""
+    """Serve a page with ?v=<file time> on its scripts, styles, icons and manifest, so an updated TunerBox
+    never runs with a script the browser or app window cached from the old version. For the icons: Safari
+    keeps the home-screen icon it once got for an address (even a failed one, e.g. while a proxy said
+    502) and Add to Home Screen reuses it without asking again; a new address makes it fetch the icon."""
     html = _named((config.WEB / name).read_text(encoding="utf-8"))
 
     def stamp(m):

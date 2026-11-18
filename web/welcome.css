@@ -1,0 +1,67 @@
+/* First-time setup (/welcome). Colours come from setup.css (loaded first) and its themes. Sized to read
+   from the sofa: big buttons, a clear focus ring for TV remotes. */
+body.welcome { min-height: 100vh; font-size: 17px; }
+.wz { max-width: 920px; margin: 0 auto; padding: 22px 24px 40px; }
+.wz-top { display: flex; align-items: center; gap: 18px; margin-bottom: 26px; flex-wrap: wrap; }
+.wz-top .logo { font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--c-fg); }
+.wz-top .logo span, .hl { color: var(--hl); }
+.wz-dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; flex: 1; justify-content: center; flex-wrap: wrap; }
+.wz-dots li { font-size: 13px; color: var(--dim); padding: 4px 10px; border-radius: 12px; background: var(--c-fg-0d); }
+.wz-dots li.on { background: var(--hl); color: #000; font-weight: 700; }
+.wz-dots li.done { color: var(--text); }
+.wz-dots li.done::before { content: "✓ "; color: var(--ok); }
+.wz-step h1 { font-size: 38px; margin: 10px 0 12px; }
+.wz-step h2 { font-size: 30px; margin: 4px 0 10px; }
+.wz-step .lead { font-size: 18px; color: var(--c-t1); line-height: 1.5; max-width: 760px; }
+.wz-logo { width: 96px; height: 96px; border-radius: 20px; }
+.btn.big { font-size: 17px; padding: 12px 20px; border-radius: 10px; }
+input.big { font-size: 18px; padding: 11px 13px; border-radius: 10px; width: 100%; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; }
+/* the remote's focus: always visible, never just the browser's thin outline */
+.welcome :focus-visible, body.kb :focus { outline: 3px solid var(--hl); outline-offset: 3px; }
+.wz-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.wz-row input.big { flex: 1; min-width: 200px; width: auto; }
+.wz-foot { display: flex; gap: 10px; align-items: center; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.wz-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; max-height: 46vh; overflow-y: auto; padding: 4px; }
+.wz-opt { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px;
+  font-size: 17px; font-family: inherit; cursor: pointer; }
+.wz-opt small { display: block; color: var(--dim); font-size: 13px; margin-top: 2px; }
+.wz-opt[aria-pressed="true"], .wz-choice[aria-pressed="true"] { border-color: var(--hl); box-shadow: 0 0 0 2px var(--hl); }
+.wz-opt:hover, .wz-choice:hover { background: var(--panel2); }
+.wz-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0; }
+.wz-choice { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px; padding: 18px;
+  font-family: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.wz-choice b { font-size: 19px; }
+.wz-choice span { color: var(--dim); font-size: 14px; }
+.wz-form { display: flex; flex-direction: column; gap: 12px; margin: 14px 0; max-width: 640px; }
+.wz-form label { display: flex; flex-direction: column; gap: 5px; color: var(--c-t2); font-size: 15px; }
+.wz-form .xt-only, .wz-form .hd-only { display: none; }
+.wz-form.xt .xt-only, .wz-form.hd .hd-only { display: flex; }
+.wz-form.hd .hd-only { flex-direction: column; align-items: flex-start; gap: 8px; }
+.wz-seg { margin: 0; }
+.wz-added { list-style: none; padding: 0; margin: 12px 0; display: flex; flex-direction: column; gap: 6px; }
+.wz-added li { background: var(--c-fg-0d); border-radius: 10px; padding: 10px 14px; }
+.wz-added li::before { content: "✓ "; color: var(--ok); font-weight: 800; }
+.wz-added li.bad::before { content: "⚠ "; color: var(--bad); }
+.wz-pair { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.wz-pair img { width: 220px; height: 220px; background: #fff; border-radius: 12px; padding: 10px; }
+.wz-pair p { margin: 4px 0; }
+.wz-code { font-size: 44px; font-weight: 800; letter-spacing: .12em; color: var(--hl); margin: 6px 0; }
+.wz-summary { list-style: none; padding: 0; margin: 16px 0; display: flex; flex-direction: column; gap: 8px; font-size: 18px; }
+.wz-summary li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.wz-summary li b { display: inline-block; min-width: 150px; }
+.wz-summary li.skip { color: var(--dim); }
+.wz-job { margin: 14px 0; }
+.wz-job .bar { height: 6px; background: var(--c-fg-1a); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+.wz-job .bar div { height: 100%; width: 15%; background: var(--hl); transition: width .4s; }
+.bad-text { color: var(--bad); }
+.ok-text { color: var(--ok); }
+#toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px 18px; z-index: 20; font-size: 16px; }
+@media (max-width: 640px) {
+  .wz { padding: 14px 16px 30px; }
+  .wz-step h1 { font-size: 30px; }
+  .wz-step h2 { font-size: 24px; }
+  .wz-dots { order: 3; flex-basis: 100%; justify-content: flex-start; }
+  .wz-pair img { width: 180px; height: 180px; }
+}

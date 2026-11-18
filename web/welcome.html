@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Welcome · TunerBox</title>
+<link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/setup.css">
+<link rel="stylesheet" href="/static/welcome.css">
+</head>
+<body class="welcome">
+<!-- First-time setup, one step at a time. Works with a mouse, a touch screen or a TV remote (arrows, OK, Back).
+     Every step can be skipped, and everything here can be changed later in Setup. -->
+<div class="wz">
+  <div class="wz-top">
+    <div class="brand"><span class="logo">Tuner<span>Box</span></span></div>
+    <ol class="wz-dots" id="wz-dots" aria-label="Steps"></ol>
+    <button type="button" class="btn wz-skipall" id="wz-skipall">Skip setup</button>
+  </div>
+
+  <!-- 0: welcome -->
+  <section class="wz-step" data-step="welcome" data-title="Welcome">
+    <img src="/static/icons/icon-192.png" alt="" class="wz-logo">
+    <h1>Welcome to Tuner<span class="hl">Box</span></h1>
+    <p class="lead">Let's get you watching. A few quick questions: your area for the TV guide, where your channels
+      come from, your own movies and shows, recordings, and a phone as the remote.</p>
+    <p class="muted">Each step can be skipped, and everything can be changed later in Setup.</p>
+    <div class="wz-foot">
+      <span class="grow"></span>
+      <button type="button" class="btn big primary" data-next>Get started</button>
+    </div>
+  </section>
+
+  <!-- 1: region for the guide -->
+  <section class="wz-step hidden" data-step="region" data-title="Your area">
+    <h2>Where do you watch?</h2>
+    <p class="lead">Your ZIP or postal code finds the TV providers near you. TunerBox then uses that provider's
+      channel numbers and local listings, so the guide matches the one where you live. US and Canada.</p>
+    <div class="wz-row">
+      <input id="rg-zip" class="big" inputmode="text" autocomplete="postal-code" maxlength="7" placeholder="ZIP / postal code">
+      <button type="button" class="btn big" id="rg-find">Find providers</button>
+    </div>
+    <p id="rg-msg" class="muted"></p>
+    <div class="wz-list" id="rg-list"></div>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" data-skip>Skip</button>
+      <button type="button" class="btn big primary" id="rg-save" disabled>Continue</button>
+    </div>
+  </section>
+
+  <!-- 2: tuner or playlist -->
+  <section class="wz-step hidden" data-step="channels" data-title="Channels">
+    <h2>Where do your channels come from?</h2>
+    <p class="lead">Add an antenna tuner on your network, an M3U playlist, or an Xtream login from your provider.
+      You can add more than one.</p>
+    <div class="wz-choices" id="ch-kinds">
+      <button type="button" class="wz-choice" data-kind="hdhomerun"><b>Antenna tuner</b><span>HDHomeRun on your network</span></button>
+      <button type="button" class="wz-choice" data-kind="m3u"><b>M3U playlist</b><span>A web address or a file</span></button>
+      <button type="button" class="wz-choice" data-kind="xtream"><b>Xtream login</b><span>Server, username and password</span></button>
+    </div>
+    <form id="ch-form" class="wz-form hidden" autocomplete="off">
+      <div class="hd-only">
+        <button type="button" class="btn" id="ch-find">Look for tuners again</button>
+        <div id="ch-found" class="wz-list"></div>
+      </div>
+      <label><span id="ch-url-label">Playlist address</span> <input name="url" class="big" required></label>
+      <label class="xt-only">Username <input name="username" class="big" autocomplete="off"></label>
+      <label class="xt-only">Password <input name="password" class="big" type="password" autocomplete="new-password"></label>
+      <label>Name <span class="muted small">(optional)</span> <input name="name" class="big" maxlength="60"></label>
+      <div class="wz-row"><button class="btn big primary" id="ch-add">Add</button>
+        <button type="button" class="btn big" id="ch-cancel">Cancel</button></div>
+    </form>
+    <p id="ch-msg" class="muted"></p>
+    <ul class="wz-added" id="ch-added"></ul>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" data-skip>Skip</button>
+      <button type="button" class="btn big primary hidden" id="ch-next" data-next>Continue</button>
+    </div>
+  </section>
+
+  <!-- 3: local library -->
+  <section class="wz-step hidden" data-step="library" data-title="My Library">
+    <h2>Your own movies and shows</h2>
+    <p class="lead">Point TunerBox at a folder of movies or TV shows, on a NAS or on this computer, and they show up
+      in On Demand. TunerBox only reads them; it never changes your files.</p>
+    <form id="lib-form" class="wz-form" autocomplete="off">
+      <div class="wz-row wz-seg" id="lib-kind">
+        <button type="button" class="btn big" data-kind="movie" aria-pressed="true">Movies</button>
+        <button type="button" class="btn big" data-kind="series" aria-pressed="false">TV shows</button>
+      </div>
+      <label>Folder or network location <input name="location" class="big" required placeholder="\\nas\Media\Movies"></label>
+      <p class="muted small" id="lib-where"></p>
+      <label>NAS username <span class="muted small">(network shares only; empty for guest)</span> <input name="username" class="big" autocomplete="off"></label>
+      <label>NAS password <input name="password" class="big" type="password" autocomplete="new-password"></label>
+      <label>Name in On Demand <span class="muted small">(optional)</span> <input name="name" class="big" maxlength="60"></label>
+      <div class="wz-row"><button type="button" class="btn big" id="lib-test">Check it</button>
+        <button class="btn big primary" id="lib-add">Add library</button></div>
+    </form>
+    <p id="lib-msg" class="muted"></p>
+    <ul class="wz-added" id="lib-added"></ul>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" data-skip>Skip</button>
+      <button type="button" class="btn big primary hidden" id="lib-next" data-next>Continue</button>
+    </div>
+  </section>
+
+  <!-- 4: DVR -->
+  <section class="wz-step hidden" data-step="dvr" data-title="Recordings">
+    <h2>Record shows?</h2>
+    <p class="lead">With recordings on, you can record a show or a whole series from the guide and watch it later.
+      Off leaves Record and Recordings out of every screen.</p>
+    <div class="wz-choices" id="dvr-pick">
+      <button type="button" class="wz-choice" data-dvr="1"><b>Yes, record shows</b><span>Recordings on</span></button>
+      <button type="button" class="wz-choice" data-dvr="0"><b>No recordings</b><span>Recordings off</span></button>
+    </div>
+    <p id="dvr-msg" class="muted"></p>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" data-skip>Skip</button>
+    </div>
+  </section>
+
+  <!-- 5: phone remote -->
+  <section class="wz-step hidden" data-step="phone" data-title="Phone remote">
+    <h2>Use your phone as the remote</h2>
+    <p class="lead">A paired phone can change channels, browse the guide and search on any TunerBox screen. It has
+      to be on the same Wi-Fi.</p>
+    <div id="ph-idle"><button type="button" class="btn big primary" id="ph-start">Pair a phone</button></div>
+    <div id="ph-live" class="wz-pair hidden">
+      <img id="ph-qr" alt="QR code">
+      <div>
+        <p>Scan this with the phone's camera, or open</p>
+        <p><code id="ph-addr"></code></p>
+        <p>on the phone and enter</p>
+        <div id="ph-code" class="wz-code"></div>
+        <p class="muted" id="ph-left"></p>
+      </div>
+    </div>
+    <p id="ph-msg" class="muted"></p>
+    <ul class="wz-added" id="ph-added"></ul>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" data-skip>Skip</button>
+      <button type="button" class="btn big primary hidden" id="ph-next" data-next>Continue</button>
+    </div>
+  </section>
+
+  <!-- 6: done -->
+  <section class="wz-step hidden" data-step="done" data-title="Done">
+    <h2>You're all set</h2>
+    <ul class="wz-summary" id="dn-list"></ul>
+    <p id="dn-warn" class="bad-text hidden"></p>
+    <div id="dn-job" class="wz-job hidden"><span id="dn-job-text"></span><div class="bar"><div id="dn-job-bar"></div></div></div>
+    <p class="muted">Anything you skipped is in Setup, whenever you want it.</p>
+    <div class="wz-foot">
+      <button type="button" class="btn big" data-back>Back</button>
+      <span class="grow"></span>
+      <button type="button" class="btn big" id="dn-setup">Open Setup</button>
+      <button type="button" class="btn big primary" id="dn-watch">Start watching</button>
+    </div>
+  </section>
+</div>
+<div id="toast" class="hidden"></div>
+<script src="/static/welcome.js"></script>
+</body>
+</html>
