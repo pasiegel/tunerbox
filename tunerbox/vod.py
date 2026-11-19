@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS vod_titles (
     search TEXT,                   -- the name folded for matching what people type
     hidden INTEGER DEFAULT 0,      -- its category is unticked in Setup: kept, so ticking it again is instant
     tag TEXT DEFAULT '',           -- the provider's label in front of the name: "EN", "4K-FR", "NF" (see split_tag)
-    country TEXT DEFAULT ''        -- a show's country from the end of its name: "(US)" -> "US"
+    country TEXT DEFAULT '',       -- a show's country from the end of its name: "(US)" -> "US"
+    bitrate INTEGER DEFAULT 0,     -- kbit/s, from the title's details (Xtream); 0 = not known
+    tmdb TEXT DEFAULT '',          -- The Movie Database id from the details: ties versions with different names together
+    o_search TEXT DEFAULT '',      -- the original-language title from the details, folded like search
+    av TEXT DEFAULT ''             -- picture and sound as ffmpeg read them when played or scanned (JSON, see tracks.av_summary)
 );
 CREATE INDEX IF NOT EXISTS ix_vod_category ON vod_titles(source_id, kind, category);
 CREATE TABLE IF NOT EXISTS vod_episodes (
@@ -64,7 +68,8 @@ CREATE TABLE IF NOT EXISTS vod_episodes (
     duration INTEGER DEFAULT 0,
     ext TEXT DEFAULT '',
     url TEXT DEFAULT '',
-    aired TEXT DEFAULT ''
+    aired TEXT DEFAULT '',
+    av TEXT DEFAULT ''             -- picture and sound of your own copy (My Library), as for a movie's av
 );
 CREATE INDEX IF NOT EXISTS ix_vod_episodes ON vod_episodes(title_id, season, episode);
 CREATE TABLE IF NOT EXISTS vod_progress (
@@ -107,10 +112,30 @@ def init():
         db._add_column(c, "vod_titles", "hidden", "INTEGER DEFAULT 0")     # test builds made the table without it
         db._add_column(c, "vod_titles", "tag", "TEXT DEFAULT ''")         # 1.5: language / platform labels
         db._add_column(c, "vod_titles", "country", "TEXT DEFAULT ''")
+        db._add_column(c, "vod_titles", "bitrate", "INTEGER DEFAULT 0")   # 1.10: details shown in Pick a version
+        db._add_column(c, "vod_titles", "tmdb", "TEXT DEFAULT ''")
+        db._add_column(c, "vod_titles", "o_search", "TEXT DEFAULT ''")
+        db._add_column(c, "vod_titles", "av", "TEXT DEFAULT ''")
+        db._add_column(c, "vod_episodes", "av", "TEXT DEFAULT ''")      # 1.10: an episode's picture and sound
         for old in ("ix_vod_titles", "ix_vod_lang"):                       # indexes from test builds
             c.execute(f"DROP INDEX IF EXISTS {old}")
         c.execute("CREATE INDEX IF NOT EXISTS ix_vod_browse ON vod_titles(kind, hidden, name COLLATE NOCASE)")
         c.execute("CREATE INDEX IF NOT EXISTS ix_vod_same ON vod_titles(kind, search, year)")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_vod_tmdb ON vod_titles(tmdb) WHERE tmdb!=''")
+        # details fetched before bitrate / tmdb / o_search were kept: fetch those again (once, when next needed)
+        if not c.execute("SELECT 1 FROM meta WHERE k='vod_details_v2'").fetchone():
+            c.execute("UPDATE vod_titles SET info_at=0 WHERE source_id>0 AND info_at>0 AND bitrate=0 AND tmdb=''")
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('vod_details_v2', '1')")
+        if not c.execute("SELECT 1 FROM meta WHERE k='vod_details_v3'").fetchone():     # and the panel's av
+            c.execute("UPDATE vod_titles SET info_at=0 WHERE source_id>0 AND kind='movie' AND info_at>0 AND av=''")
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('vod_details_v3', '1')")
+        if not c.execute("SELECT 1 FROM meta WHERE k='vod_details_v4'").fetchone():
+            # a panel's minutes taken as seconds, and the bitrate worked out from them (size over a minute):
+            # cleared, and the details fetched again when next needed
+            c.execute(f"""UPDATE vod_titles SET duration=0, info_at=0, bitrate=CASE WHEN bitrate>{MAX_KBPS} THEN 0 ELSE bitrate END
+                          WHERE source_id>0 AND kind='movie' AND duration BETWEEN 1 AND {MOVIE_MIN - 1}""")
+            c.execute(f"UPDATE vod_titles SET bitrate=0 WHERE source_id>0 AND bitrate>{MAX_KBPS}")
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('vod_details_v4', '1')")
     from . import library
     library.init()             # your own movies and shows: listed through the vod_sources view
     _changed()
@@ -195,15 +220,21 @@ def _label(rows):
             r["name"], r["year"] = name, year
 
 
-def _secs(info):
-    """Length in seconds from Xtream's duration_secs / 'duration' (01:53:00) / episode_run_time (minutes)."""
+MOVIE_MIN = 300     # a film "shorter" than this (5 minutes) from a panel is its length in minutes
+
+
+def _secs(info, movie=False):
+    """Length in seconds from Xtream's duration_secs / 'duration' (01:53:00) / episode_run_time (minutes).
+
+    When duration_secs and the text disagree the text wins: some panels put minutes in duration_secs
+    ("92" next to "01:32:00"). A `movie` under MOVIE_MIN is taken as minutes: panels that put minutes in
+    both ("92", "00:01:32") would otherwise list a feature film as a minute and a half."""
     n = _int(info.get("duration_secs"))
-    if n:
-        return n
     parts = _s(info.get("duration")).split(":")
-    if len(parts) == 3 and all(p.isdigit() for p in parts):
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-    return _int(info.get("episode_run_time")) * 60
+    text = (int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+            if len(parts) == 3 and all(p.isdigit() for p in parts) else 0)
+    secs = text if text and (not n or abs(text - n) > 120) else n or _int(info.get("episode_run_time")) * 60
+    return secs * 60 if movie and 0 < secs < MOVIE_MIN else secs
 
 
 def is_file(url):
@@ -389,18 +420,36 @@ def refresh_all(progress=None, source_id=None, kinds=KINDS):
 
 
 # ---------------------------------------------------------------- details of one title (fetched when opened)
-def _fetch_movie_info(src, t):
-    d = sources.xtream_api(src, "get_vod_info", vod_id=t["xid"]) or {}
+def _extra(info, t):
+    """The details kept for Pick a version and Search: bitrate, TMDB id, the original title."""
+    tmdb = _s(info.get("tmdb_id") or info.get("tmdb"))
+    return (_int(info.get("bitrate")) or t["bitrate"], tmdb if tmdb not in ("", "0") else t["tmdb"],
+            fold(_s(info.get("o_name"))) or t["o_search"])
+
+
+def _panel_av(info):
+    """The panel's own reading of the movie's picture and sound (info.video / info.audio), as JSON for av; ''
+    when it sent none. ffmpeg's reading (played, or a peek) is kept over it."""
+    from . import tracks
+    av = tracks.xtream_summary(info)
+    return json.dumps(av, separators=(",", ":")) if av else ""
+
+
+def _fetch_movie_info(src, t, timeout=120):
+    d = sources.xtream_api(src, "get_vod_info", timeout=timeout, vod_id=t["xid"])
+    d = d if isinstance(d, dict) else {}
     info = d.get("info") if isinstance(d.get("info"), dict) else {}
     data = d.get("movie_data") if isinstance(d.get("movie_data"), dict) else {}
+    if not info and not data:      # a busy panel can answer with nothing: try again next time, not in 30 days
+        raise ValueError("the provider sent an empty reply")
     released = _s(info.get("releasedate") or info.get("release_date"))
     db.run("""UPDATE vod_titles SET plot=?, actors=?, director=?, genre=?, year=?, rating=?, duration=?, poster=?, ext=?,
-              info_at=? WHERE id=?""",
+              bitrate=?, tmdb=?, o_search=?, av=CASE WHEN av='' THEN ? ELSE av END, info_at=? WHERE id=?""",
            (_s(info.get("plot") or info.get("description")) or t["plot"], _s(info.get("cast") or info.get("actors")) or t["actors"],
             _s(info.get("director")) or t["director"], _s(info.get("genre")) or t["genre"], released[:4] or t["year"],
-            _s(info.get("rating")) or t["rating"], _secs(info) or t["duration"],
+            _s(info.get("rating")) or t["rating"], _secs(info, movie=True) or t["duration"],
             t["poster"] or _s(info.get("movie_image") or info.get("cover_big")),
-            _s(data.get("container_extension")) or t["ext"], int(time.time()), t["id"]))
+            _s(data.get("container_extension")) or t["ext"], *_extra(info, t), _panel_av(info), int(time.time()), t["id"]))
 
 
 def _fetch_series_info(src, t):
@@ -427,10 +476,11 @@ def _fetch_series_info(src, t):
             c.execute("DELETE FROM vod_episodes WHERE title_id=?", (t["id"],))
             c.executemany("""INSERT OR REPLACE INTO vod_episodes(id, title_id, xid, season, episode, name, plot, duration, ext, aired)
                              VALUES (?,?,?,?,?,?,?,?,?,?)""", rows)
-        c.execute("UPDATE vod_titles SET plot=?, actors=?, director=?, genre=?, year=?, rating=?, info_at=? WHERE id=?",
+        c.execute("""UPDATE vod_titles SET plot=?, actors=?, director=?, genre=?, year=?, rating=?, bitrate=?, tmdb=?,
+                     o_search=?, info_at=? WHERE id=?""",
                   (_s(info.get("plot")) or t["plot"], _s(info.get("cast")) or t["actors"], _s(info.get("director")) or t["director"],
                    _s(info.get("genre")) or t["genre"], released[:4] or t["year"], _s(info.get("rating")) or t["rating"],
-                   int(time.time()), t["id"]))
+                   *_extra(info, t), int(time.time()), t["id"]))
 
 
 def _row(title_id):
@@ -454,7 +504,12 @@ def title(title_id):
         except Exception as e:  # noqa: BLE001
             log.warning("No details for %s: %s", t["name"], e)
     out = {k: t[k] for k in ("id", "kind", "name", "category", "year", "rating", "genre", "plot", "actors", "director",
-                             "poster", "duration", "source_name", "tag", "country")}
+                             "poster", "duration", "source_name", "tag", "country", "bitrate")}
+    out["av"] = _av(t["av"])
+    out["ext"] = (t["ext"] or "").lower()
+    f = db.one("SELECT size, path FROM lib_files WHERE item_id=?", (title_id,)) or {}
+    out["size"] = f.get("size") or 0
+    out["hint"] = None if out["av"] else _hint({"path": f.get("path"), "tag": t["tag"]})
     out["versions"] = versions(t)
     out["in_list"] = bool(db.one("SELECT 1 FROM vod_list WHERE title_id=?", (title_id,)))
     prog = {p["item_id"]: p for p in db.rows("SELECT * FROM vod_progress WHERE title_id=?", (title_id,))}
@@ -463,10 +518,13 @@ def title(title_id):
         out.update(position=p.get("position", 0), watched=bool(p.get("watched")),
                    duration=t["duration"] or int(p.get("duration") or 0))
         return out
-    eps = db.rows("SELECT id, season, episode, name, plot, duration, aired FROM vod_episodes WHERE title_id=? "
-                  "ORDER BY season, episode, id", (title_id,))
+    eps = db.rows("""SELECT e.id, e.season, e.episode, e.name, e.plot, e.duration, e.aired, e.av, e.ext,
+                            COALESCE(f.size, 0) size
+                     FROM vod_episodes e LEFT JOIN lib_files f ON f.item_id=e.id
+                     WHERE e.title_id=? ORDER BY e.season, e.episode, e.id""", (title_id,))
     seasons, latest = {}, None
     for e in eps:
+        e["av"], e["ext"] = _av(e["av"]), (e["ext"] or "").lower()       # an episode of your own: what was read
         p = prog.get(e["id"]) or {}
         e.update(position=p.get("position", 0), watched=bool(p.get("watched")),
                  duration=e["duration"] or int(p.get("duration") or 0))
@@ -654,11 +712,11 @@ def _matches(words, limit):
     where, args = ["1=1"], []
     for word in words:
         if YEAR_WORD.match(word):
-            where.append("(t.year=? OR t.search LIKE ?)")
-            args += [word, f"%{word}%"]
-        else:
-            where.append("t.search LIKE ?")
-            args.append(f"%{word}%")
+            where.append("(t.year=? OR t.search LIKE ? OR t.o_search LIKE ?)")
+            args += [word, f"%{word}%", f"%{word}%"]
+        else:      # the original title too ("amelie" finds a copy listed in English), once its details were read
+            where.append("(t.search LIKE ? OR t.o_search LIKE ?)")
+            args += [f"%{word}%", f"%{word}%"]
     return db.rows(f"SELECT {_COLS}, t.search {_FROM} WHERE {' AND '.join(where)} LIMIT ?", (*args, limit))
 
 
@@ -692,15 +750,73 @@ def _by_preference(rows, first=None):
     return sorted(rows, key=lambda r: (-_mine(r), _tag_order(r, first), -_tag_rank.get(r["tag"], 0), r["tag"], r["id"]))
 
 
+def _version_rows(t):
+    # the same name and year, or (once details were fetched) the same TMDB id under a different name.
+    # kind is repeated in each branch so SQLite uses ix_vod_same and ix_vod_tmdb (a MULTI-INDEX OR), not a scan
+    return db.rows(f"""SELECT t.id, t.tag, t.country, t.source_id, t.bitrate, t.duration, t.added, t.info_at,
+                              src.name AS place, src.type AS source_type, t.kind, t.xid, t.plot, t.actors, t.director,
+                              t.genre, t.year, t.rating, t.poster, t.ext, t.tmdb, t.o_search, t.av, lf.size, lf.path
+                       {_FROM} LEFT JOIN lib_files lf ON lf.item_id=t.id       -- your own copy's file size
+                       WHERE (t.kind=? AND t.search=? AND t.year=?) OR (t.kind=? AND t.tmdb!='' AND t.tmdb=?)""",
+                   (t["kind"], t["search"], t["year"], t["kind"], t["tmdb"] or ""))
+
+
+RES_4K = re.compile(r"4K|UHD|2160", re.I)
+RES_1080 = re.compile(r"1080|FHD", re.I)
+RES_720 = re.compile(r"720|(?<![UF])HD", re.I)
+
+
+def _quality(r):
+    """How good a version's picture is, for Pick a version's order: 4 = 4K, 3 = 1080p, 2 = 720p, 1 = SD. From
+    what ffmpeg read when there is that, else from the label; unknown (1.5) goes between 720p and SD."""
+    av = _av(r["av"]) or _hint(r)
+    if av and av.get("w"):
+        w = av["w"]
+        return 4 if w >= 3200 else 3 if w >= 1800 else 2 if w >= 1200 else 1
+    tag = r["tag"] or ""
+    return 4 if RES_4K.search(tag) else 3 if RES_1080.search(tag) else 2 if RES_720.search(tag) else 1.5
+
+
 def versions(t):
-    """The same film or show under the playlist's other labels ("EN", "4K-EN", "DE"…) that are shown."""
-    rows = db.rows(f"SELECT t.id, t.tag, t.country, t.source_id, src.name AS place {_FROM} WHERE t.kind=? AND t.search=? AND t.year=?",
-                   (t["kind"], t["search"], t["year"]))
+    """The same film or show under the playlist's other labels ("EN", "4K-EN", "DE"…) that are shown,
+    the best first: your own copy, then the best picture, then the highest bitrate."""
+    rows = _version_rows(t)
     if len(rows) < 2:
         return []
+    rows = sorted(_by_preference(rows), key=lambda r: (-_mine(r), -_quality(r), -(r["bitrate"] or 0)))
     # "where": the playlist or library it's in, so copies with no label can be told apart ("Movies", "35mm")
-    return [{"id": r["id"], "tag": r["tag"], "where": r["place"] or "", "current": r["id"] == t["id"]}
-            for r in _by_preference(rows)]
+    return [{"id": r["id"], "tag": r["tag"], "where": r["place"] or "", "current": r["id"] == t["id"], "mine": r["source_id"] < 0,
+             "bitrate": r["bitrate"], "duration": r["duration"], "added": r["added"], "av": _av(r["av"]),
+             "hint": None if _av(r["av"]) else _hint(r), "ext": (r["ext"] or "").lower(), "size": r["size"] or 0}
+            for r in rows]
+
+
+def _hint(r):
+    """Until a version is read: what its file name says (your own copies: "….1080p.BluRay.x264.DTS.5.1.mkv"),
+    else its label ("4K-EN"). Shown like av; None when neither says anything about the picture."""
+    from . import tracks
+    return (tracks.name_summary((r.get("path") or "").rsplit("/", 1)[-1]) if r.get("path") else {}) or \
+        tracks.name_summary(r.get("tag") or "") or None
+
+
+def check_versions(title_id, budget=12.0):
+    """Pick a version: fetch the details (bitrate, length) of the versions not fetched yet, one at a time
+    (a provider may refuse several at once), for at most `budget` seconds. -> versions(), or None."""
+    t = _row(title_id)
+    if not t:
+        return None
+    end = time.monotonic() + budget
+    for r in _version_rows(t):
+        if time.monotonic() > end:
+            break
+        # movies only: a show's details are its whole episode list, and shows have no bitrate
+        if r["kind"] != "movie" or r["source_type"] != "xtream" or time.time() - r["info_at"] <= INFO_TTL:
+            continue
+        try:
+            _fetch_movie_info(_source(r["source_id"]), r, timeout=15)
+        except Exception as e:  # noqa: BLE001
+            log.warning("No details for version %s: %s", r["id"], e)
+    return versions(_row(title_id))
 
 
 def search(q, limit=12):
@@ -789,15 +905,211 @@ def item(item_id):
     return out
 
 
+PROBE_TIMEOUT = 25
+TIMED_OUT = "no answer within"      # probe_why's reason when the file didn't answer in time (try again soon)
+_ERR_LINE = re.compile(r"(?im)^(?!\s*(?:Input|Output|Stream|Duration|Metadata|  ))(.*(?:error|failed|invalid|denied|not found|"
+                       r"refused|timed out|unable|no such|server returned|end of file).*)$")
+
+
+def probe_why(raw_url, timeout=PROBE_TIMEOUT):
+    """(length in seconds, ffmpeg's description of the input, why it couldn't be read: '' when it could).
+    ffmpeg's description is '' unless it found the file's contents ("Input #0"): an error isn't a description."""
+    try:
+        r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", *input_args(raw_url, reconnect=False)],
+                           capture_output=True, timeout=timeout, creationflags=NO_WINDOW)
+        text = r.stderr.decode("utf-8", "ignore")
+    except subprocess.TimeoutExpired as e:
+        text = (e.stderr or b"").decode("utf-8", "ignore")
+        return 0, "", f"{TIMED_OUT} {timeout} s" + (f" ({_last_error(text)})" if _last_error(text) else "")
+    except OSError as e:
+        return 0, "", f"ffmpeg didn't start: {e}"
+    if "Input #" not in text:
+        return 0, "", _last_error(text) or "ffmpeg found nothing it could read"
+    m = DUR.search(text)
+    secs = int(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0
+    return secs, text, ""
+
+
+def _last_error(text):
+    found = _ERR_LINE.findall(text or "")
+    return found[-1].strip()[:200] if found else ""
+
+
+def probe(raw_url):
+    """(length in seconds, ffmpeg's description of the input) of a video file (0, '' when it can't tell)."""
+    secs, text, _ = probe_why(raw_url)
+    return secs, text
+
+
 def probe_duration(raw_url):
     """Length of a video file in seconds, read with ffmpeg (0 when it can't tell)."""
-    try:
-        r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", *input_args(raw_url)], capture_output=True,
-                           timeout=25, creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired):
-        return 0
-    m = DUR.search(r.stderr.decode("utf-8", "ignore"))
+    return probe(raw_url)[0]
+
+
+MAX_KBPS = 200_000      # 200 Mbps: more than any film file; a bitrate worked out above this came from a wrong length
+
+
+def _file_secs(text):
+    """The length ffmpeg read from a file's header ("Duration: 01:31:32.00"), 0 when it didn't say."""
+    m = DUR.search(text or "")
     return int(int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0
+
+
+def _fix_length(item_id, text):
+    """A provider's movie: the length in its file wins over the panel's when they're more than 2 minutes apart.
+    -> the length now known."""
+    secs = _file_secs(text)
+    if secs > 60:
+        db.run("UPDATE vod_titles SET duration=? WHERE id=? AND source_id>0 AND kind='movie' AND abs(duration-?)>120",
+               (secs, item_id, secs))
+    return (db.one("SELECT duration FROM vod_titles WHERE id=?", (item_id,)) or {}).get("duration") or 0
+
+
+def save_av(item_id, text, empty=False, episode=False):
+    """Keep a movie's picture and sound as ffmpeg described them (playing it, or the library scan), for
+    Pick a version. A bitrate the provider gave stays (ffmpeg's is only an estimate for a stream); for your
+    own files ffmpeg's is the only one. `empty`: keep '{}' when there's no picture to describe, so the
+    library scan doesn't read the file again."""
+    from . import tracks
+    av = tracks.av_summary(text or "")
+    if episode:                 # an episode of your own (My Library): its bitrate goes with the rest ("kbps")
+        js = json.dumps(av, separators=(",", ":")) if av else ("{}" if empty else "")
+        if js:
+            db.run("UPDATE vod_episodes SET av=? WHERE id=?", (js, item_id))
+        return bool(av)
+    if not av:
+        if empty:
+            db.run("UPDATE vod_titles SET av='{}' WHERE id=? AND kind='movie' AND av=''", (item_id,))
+        return False
+    _fix_length(item_id, text)
+    kbps = av.pop("kbps", 0)
+    js = json.dumps(av, separators=(",", ":"))
+    db.run("""UPDATE vod_titles SET av=?, bitrate=CASE WHEN bitrate=0 OR source_id<0 THEN ? ELSE bitrate END
+              WHERE id=? AND kind='movie' AND (av!=? OR bitrate=0 OR source_id<0)""", (js, kbps, item_id, js))
+    return True
+
+
+# ---------------------------------------------------------------- Pick a version: a quick look at each version
+PEEK_BYTES = 2 * 1024 * 1024    # an MKV's track list (codec, size, HDR, sound) is well inside its first 2 MB
+PEEK_RETRY = 86400              # a version that couldn't be read isn't tried again for a day
+CONTENT_RANGE = re.compile(r"bytes\s+\d+-\d+/(\d+)")
+_peeked = {}                    # version id -> (when reading it failed, why)
+
+
+def _read_start(raw_url, timeout=8):
+    """The first PEEK_BYTES of a file on the provider, with a Range request. -> (bytes, total size), or
+    None when the provider ignores Range (a plain 200 would be the whole film: it's never read)."""
+    url, headers = streaming.split_url(raw_url)
+    with httpx.Client(follow_redirects=True, timeout=timeout) as c:
+        with c.stream("GET", url, headers={**headers, "Range": f"bytes=0-{PEEK_BYTES - 1}"}) as r:
+            if r.status_code != 206:
+                log.info("Pick a version: the provider answered %s to a range request, not 206", r.status_code)
+                return None
+            m = CONTENT_RANGE.match(r.headers.get("content-range", ""))
+            buf = bytearray()
+            for chunk in r.iter_bytes():
+                buf += chunk
+                if len(buf) >= PEEK_BYTES:
+                    break
+    return bytes(buf[:PEEK_BYTES]), int(m.group(1)) if m else 0
+
+
+def _describe(data):
+    """ffmpeg's description of the start of a file."""
+    r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-i", "pipe:0"], input=data, capture_output=True,
+                       timeout=15, creationflags=NO_WINDOW)
+    return r.stderr.decode("utf-8", "ignore")
+
+
+PEEK_PROBE_TIMEOUT = 20        # seconds ffmpeg may take reading a version itself (after the 2 MB read found nothing)
+
+
+NO_CONNECTION = "No connection free on this playlist right now"
+
+
+def peek(version_id, force=False, client=""):
+    """Pick a version: what one version is, read without playing it (your own copy: as the library task would).
+    First the start of its file (2 MB, one request); when that says nothing (an MP4 keeps its track list at the
+    end, or the provider won't send part of a file) ffmpeg reads the file itself, only as far as it needs.
+    Skipped when the setting (vod_details) is off, or "ask" without `force` (Read details pressed), when it was
+    read already, it couldn't be read today (`force`: try anyway) or its playlist has no connection free. When the connection is taken only by `client`'s own stream (the screen
+    asking: live TV in the corner, or a movie), nothing is read: "mine" says the screen can let go of it first
+    (unless vod_details_pause is off).
+    -> the version's {id, bitrate, duration, av, why, mine} (`why`: why it wasn't read), or None when it isn't a movie."""
+    from . import connections
+    t = _row(version_id)
+    if not t or t["kind"] != "movie":
+        return None
+
+    def out(why=""):
+        r = _row(version_id)
+        return {"id": r["id"], "bitrate": r["bitrate"], "duration": r["duration"], "av": _av(r["av"]),
+                "why": "" if r["av"] not in ("", "{}") else why}
+
+    def failed(why):
+        _peeked[version_id] = (time.time(), why)
+        return out(why)
+    mode = config.get("vod_details", "auto")
+    if t["av"] not in ("", "{}") or mode == "off" or (mode == "ask" and not force):
+        return out()
+    when, why = _peeked.get(version_id, (0, ""))
+    if not force and (t["av"] == "{}" or time.time() - when < PEEK_RETRY):
+        return out(why or "Nothing in the file says")
+    if t["source_id"] < 0:          # your own copy the library task hasn't got to yet: read it now, the same way
+        from . import library
+        return out() if library.measure_one(version_id) else failed("Couldn't read it from the NAS (see Setup › Log)")
+    try:
+        connections.check(t["source_id"])                     # never at the cost of something playing
+    except connections.Full:                                  # not remembered: tried again next time
+        try:
+            if not client or not config.get("vod_details_pause", True):
+                raise
+            connections.check(t["source_id"], client=client)  # free but for this screen's own stream?
+        except connections.Full:
+            return out(NO_CONNECTION)
+        return {**out("This screen is using the playlist's connection"), "mine": True}
+    it = item(version_id)
+    if not it or not it["url"].lower().startswith("http"):
+        return out()
+    text, total = "", 0
+    try:
+        got = _read_start(it["url"])
+        if got:
+            data, total = got
+            text = _describe(data)
+    except Exception as e:  # noqa: BLE001
+        log.info("Pick a version: the start of %s couldn't be read (%s); reading it with ffmpeg", version_id, e)
+    if not tracks_av(text):
+        secs, text, why = probe_why(it["url"], PEEK_PROBE_TIMEOUT)
+        if not text:
+            log.warning("Pick a version: couldn't read %s: %s", _vod_name(t), why)
+            return failed(f"Couldn't read it: {why}")
+    # no bitrate from the provider: the file's size over its length (the file's own length first, then before
+    # ffmpeg's guess from 2 MB). Nothing when that comes out impossible: the length is wrong, not the film
+    secs = _fix_length(version_id, text)
+    kbps = int(total * 8 / secs / 1000) if total and secs > 60 else 0
+    if 0 < kbps <= MAX_KBPS:
+        db.run("UPDATE vod_titles SET bitrate=? WHERE id=? AND bitrate=0", (kbps, version_id))
+    if not save_av(version_id, text, empty=True):
+        return failed("Nothing in the file says")
+    _peeked.pop(version_id, None)
+    return out()
+
+
+def tracks_av(text):
+    from . import tracks
+    return tracks.av_summary(text or "")
+
+
+def _vod_name(t):
+    return " ".join(str(x) for x in (t.get("tag"), t.get("name"), f"({t['year']})" if t.get("year") else "") if x)
+
+
+def _av(v):
+    try:
+        return json.loads(v) or None if v else None      # '{}': read, nothing to show
+    except ValueError:
+        return None
 
 
 def prepare(item_id):
@@ -820,7 +1132,8 @@ def stream_cmd(raw_url, start=0.0, mode=None, pace=None, audio=0):
     `audio`: which of its audio tracks (0 = the first)."""
     inp, vid, aud = play_args(raw_url, mode)
     seek = ["-ss", f"{start:.2f}"] if start > 0 else []
-    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", *(pace or streaming.pace()), *seek, *inp,
+    # info, not just errors: ffmpeg describes the input first, which save_av keeps (no progress lines: -nostats)
+    return [ffmpeg_bin(), "-hide_banner", "-loglevel", "info", "-nostats", "-nostdin", *(pace or streaming.pace()), *seek, *inp,
             "-map", "0:v:0?", "-map", f"0:a:{max(0, int(audio))}?", "-sn", "-dn", *vid, *aud,
             "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
 

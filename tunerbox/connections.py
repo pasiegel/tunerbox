@@ -210,6 +210,12 @@ def was_stopped(client):
     return bool(client) and _stopped.get(_hold_key(client, ""), 0) > time.monotonic()
 
 
+def client_name(client):
+    """For the log: the name a device gave itself, else its id (both come from the request: one line, kept short)."""
+    name = str(_client_names.get(client) or client or "")
+    return "".join(ch if ch.isprintable() else " " for ch in name)[:60]
+
+
 def _who(name, screens, recs):
     """A reader's name (tuner.py / streaming.py) as something a person recognises."""
     if not name:

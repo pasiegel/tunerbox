@@ -14,6 +14,41 @@ const OD = { tab: 0, focus: 0, zone: "cats",      // zone: tabs | cats | grid, a
 const RESUME_MIN = 30;                  // seconds in before "Resume" is offered (same as the server)
 const fmtLen = (s) => { s = Math.round((s || 0) / 60); return !s ? "" : s < 60 ? `${s} min` : `${s / 60 | 0}h ${s % 60}m`; };
 const vodPath = (id) => encodeURIComponent(id);
+const fmtRate = (k) => !k ? "" : k >= 1000 ? `${(k / 1000).toFixed(1)} Mbps` : `${k} kbps`;   // the provider's bitrate, kbit/s
+// a version's file: its type and size. Your own files' size is known; a provider's is its bitrate × length ("≈")
+const fmtFile = (v) => {
+  const bytes = v.size || (v.bitrate && v.duration ? v.bitrate * 125 * v.duration : 0);
+  const size = !bytes ? "" : `${v.size ? "" : "≈"}${bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`}`;
+  return [(v.ext || "").toUpperCase(), size].filter(Boolean).join(" ");
+};
+// a version's picture and sound as ffmpeg read them (played once, or a library file): "4K HEVC Dolby Vision · 5.1 DD+".
+// By width: a widescreen film is 3840×1600 or 1920×800, still 4K and 1080p
+const fmtAv = (av) => {
+  if (!av) return "";
+  const res = av.w >= 3200 ? "4K" : av.w >= 1800 ? "1080p" : av.w >= 1200 ? "720p" : av.w ? "SD" : "";
+  const vc = { hevc: "HEVC", h264: "H.264", av1: "AV1", vp9: "VP9", mpeg2video: "MPEG-2", mpeg4: "MPEG-4" }[av.vcodec] || "";
+  const ac = { eac3: "DD+", ac3: "DD", truehd: "TrueHD", dts: "DTS", aac: "AAC", mp3: "MP3", opus: "Opus", flac: "FLAC" }[av.acodec] || "";
+  return [[res, vc, av.hdr].filter(Boolean).join(" "), [av.layout, ac].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+};
+// Pick a version: one row per version. Its name with small tags (your copy, the one you opened), what's known of
+// it underneath, and the resolution and HDR as badges on the right (dashed: only what the file name says)
+function pvRow(v, label, lenDiffers) {
+  const av = v.av || v.hint, guess = !v.av && !!v.hint;
+  const res = !av ? "" : av.w >= 3200 ? "4K" : av.w >= 1800 ? "1080p" : av.w >= 1200 ? "720p" : av.w ? "SD" : "";
+  const vc = av && ({ hevc: "HEVC", h264: "H.264", av1: "AV1", vp9: "VP9", mpeg2video: "MPEG-2", mpeg4: "MPEG-4" }[av.vcodec] || "");
+  const ac = av && ({ eac3: "DD+", ac3: "DD", truehd: "TrueHD", dts: "DTS", aac: "AAC", mp3: "MP3", opus: "Opus", flac: "FLAC" }[av.acodec] || "");
+  const meta = [av && [vc, av.bits >= 10 && !av.hdr ? `${av.bits}-bit` : ""].filter(Boolean).join(" "),
+    av && [av.layout === "stereo" ? "Stereo" : av.layout === "mono" ? "Mono" : av.layout, ac].filter(Boolean).join(" "),
+    fmtRate(v.bitrate), lenDiffers && fmtLen(v.duration), fmtFile(v)].filter(Boolean);
+  const tags = (v.mine ? '<span class="pv-tag">Your copy</span>' : "") + (v.current ? '<span class="pv-tag now">Current</span>' : "");
+  const badge = (text, cls) => `<span class="pv-b ${cls}${guess ? " guess" : ""}">${esc(text)}</span>`;
+  const badges = (res ? badge(res, res === "4K" ? "k4" : "") : "") + (av && av.hdr ? badge(av.hdr, "hdr") : "");
+  return `<div class="pv-main"><div class="pv-name"><span class="pv-label">${esc(label)}</span>${tags}</div>`
+    + `<div class="pv-meta">${esc(meta.join("  ·  ")) || (v.checking ? "" : esc(v.why || "No details yet"))}`
+    + `${v.checking ? `<span class="pv-reading">${meta.length ? " · " : ""}Reading…</span>` : ""}`
+    + `${!v.checking && v.why && meta.length ? `<span class="pv-why"> · ${esc(v.why)}</span>` : ""}${guess ? `<span class="pv-guess"> · ${v.mine ? "from the file name" : "from its label"}</span>` : ""}</div></div>`
+    + (badges ? `<div class="pv-badges">${badges}</div>` : "");
+}
 const odTabId = () => OD_TABS[OD.tab][0];
 const odHasCats = () => OD.tab < 2;                  // the Movies and TV Shows tabs
 const odKind = () => OD_TABS[OD.tab][0];             // "movie" / "series" on those tabs
@@ -225,7 +260,8 @@ function odInfo() {
     odSetInfo(s.name, e ? `Season ${e.season} · Episode ${e.episode}${e.name ? ` · ${e.name}` : ""}` : "",
       ["TV Show", odLabel(s), s.year, plural(n, "season"), s.genre || s.category, `from ${s.source_name}`].filter(Boolean).join(" · "),
       (e && e.plot) || s.plot,
-      [e && fmtLen(e.duration), e && e.aired && `First aired ${e.aired}`, e && e.id === s.next && !e.watched && "Next up for you", !e && s.actors].filter(Boolean).join(" · "));
+      [e && fmtLen(e.duration), e && fmtAv(e.av), e && e.av && fmtRate(e.av.kbps), e && fmtFile(e), e && e.aired && `First aired ${e.aired}`,
+       e && e.id === s.next && !e.watched && "Next up for you", !e && s.actors].filter(Boolean).join(" · "));
     return;
   }
   if (OD.zone === "tabs" && OD_TABS[OD.focus][0] === "search") {
@@ -244,6 +280,9 @@ function odInfo() {
     if (odItem() === t && !OD.show && top() === "od") odFill(t, d);
   }, 400);
 }
+// a movie's picture, sound, bitrate and file, as far as they're known: "4K HEVC HDR10 · 5.1 DD+ · 16.4 Mbps · MKV 42.1 GB"
+// (not read yet: what its file name or label says, e.g. "1080p H.264")
+const odStats = (d) => [fmtAv(d.av || d.hint), fmtRate(d.bitrate), fmtFile(d)].filter(Boolean).join(" · ");
 function odFill(t, d) {
   const x = d || t, movie = t.kind === "movie";
   let seen = "";
@@ -253,7 +292,7 @@ function odFill(t, d) {
   else if (d && movie && d.position > RESUME_MIN) seen = `Watched ${Math.round(d.position / 60)} min${d.duration ? ` of ${Math.round(d.duration / 60)}` : ""}`;
   odSetInfo(x.name,
     [odLabel(x), x.year, movie ? fmtLen(x.duration) : d && d.seasons.length ? plural(d.seasons.length, "season") : "", odRating(x.rating), (d && d.genre) || x.category].filter(Boolean).join(" · "),
-    [movie ? "Movie" : "TV Show", d && `from ${d.source_name}`, d && d.in_list && "In My List", seen].filter(Boolean).join(" · "),
+    [movie ? "Movie" : "TV Show", d && movie && odStats(d), d && `from ${d.source_name}`, d && d.in_list && "In My List", seen].filter(Boolean).join(" · "),
     d ? d.plot : "", d ? [d.actors, d.director && `Directed by ${d.director}`].filter(Boolean).join(" · ") : "");
 }
 
@@ -303,7 +342,7 @@ function odMovieDialog(d) {
   if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || v.where || "no label").join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
-  openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
+  openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), fmtAv(d.av || d.hint), fmtRate(d.bitrate), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
     + (resume ? ` · You stopped at ${fmtDur(d.position)}` : d.watched ? " · Watched" : ""), entries);
 }
 function odEpisodeDialog(show, e) {
@@ -317,18 +356,128 @@ function odEpisodeDialog(show, e) {
   openDialog(`${show.name} · S${e.season} E${e.episode}`,
     [e.name, fmtLen(e.duration), resume ? `You stopped at ${fmtDur(e.position)}` : e.watched ? "Watched" : ""].filter(Boolean).join(" · "), entries);
 }
+// where `at` seconds into a copy `from` long falls in a copy `to` long. Only a 24 fps film against a 25 fps
+// (PAL) copy of it is scaled: the same frames run 4% faster, so lengths differ by 24/25. Any other difference
+// (another cut, credits left off) keeps the seconds as they are.
+function odSamePoint(at, from, to) {
+  const r = from > 0 && to > 0 ? to / from : 1;
+  return (r >= 0.95 && r <= 0.97) || (r >= 1 / 0.97 && r <= 1 / 0.95) ? Math.round(at * r) : at;
+}
+// Pick a version needs a connection that this screen's own playback holds (live TV in the corner, or a movie):
+// let go of it for the read. -> a function that picks up again where it was, or null when there's nothing to let
+// go of here (an event feed: no channel to go back to). Picking up never overrides something started meanwhile.
+function pvHold() {
+  const v = S.vod;
+  if (S.mode === "vod" && v && !v.done) {
+    const wasPaused = v.paused;
+    clearTimeout(v.parkTimer);
+    if (!v.parked) { v.base = vodPos(); v.parked = true; }
+    v.paused = true; vodSave(); destroyPlayer(); showVodBar();
+    return () => {
+      if (S.vod !== v || !v.parked) return;
+      v.paused = wasPaused;
+      if (wasPaused) showVodBar(); else vodStart(v.base);
+    };
+  }
+  if (S.mode === "live" && !S.feedCh && S.idx >= 0 && S.player) {
+    const idx = S.idx, ch = S.channels[idx];
+    destroyPlayer();
+    showStatic(ch ? ch.number : "", "Paused", "Reading the versions' details. It comes back on by itself.");
+    return () => { if (S.mode === "live" && S.idx === idx && !S.feedCh && !S.player) { hideStatic(); tune(idx); } };
+  }
+  return null;
+}
 // the same film or show under the playlist's other labels (languages, 4K…)
 function odVersions(d) {
   // a movie: straight into it, from where this version was stopped (else wherever that version was left)
   const at = d.kind !== "series" && !d.watched && d.position > RESUME_MIN ? d.position : undefined;
-  const go = (v) => { closeDialog(); if (d.kind === "series") { closePanels(); openOD("series", v.id); } else playVod(v.id, v.current ? undefined : at); };
-  openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version", [
-    ...(d.versions || []).map((v, i, all) => {          // a provider can list the same label twice: number them
+  const go = (v) => {
+    closeDialog();
+    if (d.kind === "series") { closePanels(); openOD("series", v.id); return; }
+    if (v.current || at === undefined) { playVod(v.id, v.current ? undefined : at); return; }
+    const here = (d.versions || []).find((x) => x.current);
+    playVod(v.id, odSamePoint(at, (here && here.duration) || d.duration, v.duration));
+  };
+  const entries = (vs) => {
+    // lengths only when they differ (another cut, a PAL copy): otherwise they'd just repeat
+    const lens = vs.map((v) => v.duration).filter(Boolean);
+    const lenDiffers = lens.length > 1 && Math.max(...lens) - Math.min(...lens) > 120;
+    return [...vs.map((v, i, all) => {          // a provider can list the same label twice: number them, and say which is newer
       const name = (x) => x.tag || x.where || "No label";
       const same = all.filter((x) => name(x) === name(v)), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
-      return { label: `${name(v)}${n}${v.current ? " · this one" : ""}`, act: () => go(v) };
+      const added = same.length > 1 && v.added
+        ? `added ${new Date(v.added * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" })}` : "";
+      return { label: [`${name(v)}${n}`, added].filter(Boolean).join(" · "), cls: "pv",
+               html: pvRow(v, [`${name(v)}${n}`, added].filter(Boolean).join(" · "), lenDiffers), act: () => go(v) };
     }),
-    { label: "Close", act: closeDialog }]);
+    // "Only when I ask": Read details. Some couldn't be read (no connection free, the provider was slow): try again
+    ...(!reading && d.kind !== "series" && peekMode() !== "off" && vs.some((v) => !v.av && (v.why || peekMode() === "ask"))
+      ? [{ label: vs.some((v) => !v.av && v.why) ? "Read details again" : "Read details", cls: "pv-again", act: () => readAll(true) }] : []),
+    { label: "Close", act: closeDialog }];
+  };
+  const peekMode = () => (S.settings || {}).vod_details || "auto";       // auto | ask | off (Setup › Settings)
+  let reading = true;
+  openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version · checking each one…", entries(d.versions || []));
+  $("dialog").classList.add("pv-dlg");          // wider, for the details (openDialog takes it off again)
+  let shown = dlg.entries;
+  const open = () => top() === "dialog" && dlg.entries === shown;      // not closed, no other dialog meanwhile
+  const redraw = (vs) => {
+    // the highlight stays on the same version when the list comes back in another order; on Close or
+    // Read details again, it stays that many rows from the end
+    const rows = [...$("dlg-list").children];
+    const sel = Math.max(0, rows.findIndex((li) => li.classList.contains("sel")));
+    const was = (d.versions || [])[sel];
+    d.versions = vs;
+    const at = was ? vs.findIndex((v) => v.id === was.id) : -1;
+    shown = dlg.entries = entries(vs);
+    const fromEnd = rows.length - 1 - sel;
+    fillList($("dlg-list"), dlg.entries, at >= 0 ? at : was ? 0 : Math.max(0, dlg.entries.length - 1 - fromEnd));
+  };
+  const mark = (id, more) => d.versions.map((x) => (x.id === id ? { ...x, ...more } : x));
+  // a look at each version not read yet: resolution, HDR, sound. One at a time (a provider allows few
+  // connections), each row saying "Reading…" until it comes back, or why it couldn't be read
+  // When this screen's own playback holds the playlist's connection, it's paused for the reads and picked up
+  // again once they're done (or the dialog is closed).
+  async function readAll(force) {
+    reading = true;
+    let resume = null;
+    const peek = (v) => api(`/api/vod/peek/${vodPath(v.id)}?client=${encodeURIComponent(CID)}${force ? "&force=1" : ""}`)
+      .catch((e) => ({ id: v.id, why: e.message }));
+    $("dlg-sub").textContent = "Pick a version · reading each one…";
+    try {
+      for (const v of (d.versions || []).filter((x) => !x.av)) {
+        if (!open()) return;
+        redraw(mark(v.id, { checking: true, why: "" }));
+        let got = await peek(v);
+        if (got && got.mine && !resume && open()) {
+          resume = pvHold();
+          if (resume) {
+            $("dlg-sub").textContent = "Pick a version · paused what's playing to read each one…";
+            await api("/api/stop", { method: "POST", body: { client: CID } }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 1500));      // some providers take a moment to see it closed
+            if (!open()) return;
+            got = await peek(v);
+          }
+        }
+        if (!open()) return;
+        redraw(mark(v.id, { ...(got || {}), checking: false }));
+      }
+    } finally {
+      reading = false;
+      if (resume) resume();
+    }
+    if (!open()) return;
+    redraw(d.versions);
+    $("dlg-sub").textContent = "Pick a version";
+  }
+  (async () => {
+    // the provider's bitrate of each version: fetched once per version, then kept
+    const vs = await api(`/api/vod/title/${vodPath(d.id)}/versions`).catch(() => null);
+    if (!open()) return;
+    if (vs && vs.length) redraw(vs);
+    if (d.kind !== "series" && peekMode() === "auto") await readAll(false);
+    else { reading = false; if (open()) { redraw(d.versions || []); $("dlg-sub").textContent = "Pick a version"; } }
+  })();
 }
 // OK on a movie (from the grid or from Search): its options
 async function odMovie(id) {

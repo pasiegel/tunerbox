@@ -31,7 +31,7 @@ function fillList(listEl, entries, sel = 0) {
 
 let dlg = { entries: [] };
 function openDialog(title, sub, entries) {
-  dlg.entries = entries; $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
+  dlg.entries = entries; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
   $("dlg-title").textContent = title; $("dlg-sub").textContent = sub || "";
   fillList($("dlg-list"), entries);
   if (top() !== "dialog") S.layer.push("dialog");

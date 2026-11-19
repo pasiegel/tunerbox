@@ -13,6 +13,7 @@ mounted on the computer or in Docker. Playing serves the file to TunerBox's own 
 (/api/library/file, this computer only) with byte ranges, so skipping works.
 """
 import hashlib
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import logging
 import os
@@ -28,6 +29,10 @@ from rapidfuzz import fuzz
 from . import db
 
 log = logging.getLogger("tunerbox.library")
+# The SMB client only notices a NAS connection that went dead after 10-20 minutes (an idle check every 10): every
+# read on it (grabbing details, a movie playing) waits that long. Every 60 s: a dead one is closed within ~2 minutes
+# and the next read connects again. Read by smbprotocol each time it connects.
+os.environ.setdefault("SMB_EXPERIMENTAL_TRANSPORT_RECEIVE_TIMEOUT", "60")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lib_shares (
@@ -110,17 +115,38 @@ IMG = "https://image.tmdb.org/t/p/"
 GOOD_MATCH = 80             # an automatic match below this is listed under Needs review
 REFRESH_DAYS = 30           # details are downloaded again after this long
 RETRY_DAYS = 7              # a title TMDB didn't know is looked up again after this long
+DETAIL_WORKERS = 4          # titles looked up on TMDB at once (well inside its limit of ~40 requests a second)
 WALK_DEPTH = 6
 SMALL_FILE = 50 * 1024 * 1024   # a renamed file this small is only recognised with the same modified time too
 
 # auto_scan_hours: only read once, to set up the "scan" task (libtasks.py) for people who had changed it
-DEFAULT_SETTINGS = {"tmdb_key": "", "language": "en-US", "video_mode": "", "auto_scan_hours": 24, "remove_after_days": 30}
+DEFAULT_SETTINGS = {"tmdb_key": "", "language": "en-US", "video_mode": "", "auto_scan_hours": 24, "remove_after_days": 30,
+                    "read_at_once": 2}      # video files read at once while grabbing their details (see _workers)
 DETAIL_COLS = "name, search, year, plot, genre, rating, actors, director, poster, info_at"
-_meta_lock = threading.Lock()
+_locks, _locks_guard = {}, threading.Lock()
+
+
+def _title_lock(tid):
+    """One title's details are downloaded by one at a time: the automatic lookup (several titles at once) and
+    Fix / Look up again in Setup don't overwrite each other, and Fix doesn't wait for the whole download."""
+    with _locks_guard:
+        return _locks.setdefault(tid, threading.Lock())
 
 
 class LibraryError(Exception):
     """Something the person can fix: wrong password, no such share, folder not found…"""
+
+
+class LibraryStopped(LibraryError):
+    """The library was removed or turned off while it was being read: nothing more of it is added."""
+
+
+def _check_on(sid, c=None):
+    """Raise LibraryStopped unless the library is still there and turned on."""
+    one = (c.execute("SELECT 1 FROM lib_shares WHERE id=? AND enabled=1", (sid,)).fetchone() if c
+           else db.one("SELECT 1 FROM lib_shares WHERE id=? AND enabled=1", (sid,)))
+    if not one:
+        raise LibraryStopped("Stopped: removed or turned off while it was being read")
 
 
 def init():
@@ -162,6 +188,13 @@ def save_settings(changes):
                 v = max(0, min(365, int(float(v))))
             except (TypeError, ValueError):
                 raise ValueError("Remove missing videos after: a number of days")
+        elif k == "read_at_once":
+            try:
+                v = int(float(v))
+            except (TypeError, ValueError):
+                v = 0
+            if v not in READ_AT_ONCE:
+                raise ValueError(f"Files read at once: {', '.join(map(str, READ_AT_ONCE))}")
         elif k == "video_mode":
             v = str(v or "")
             if v not in ("", "copy", "h264", "roku720"):
@@ -310,12 +343,40 @@ def _friendly(e, sh, rel=""):
 
 
 def reset_connections():
-    """Forget open SMB sessions (after a login is changed), so the next read logs in again."""
+    """Forget the open NAS connections (a login changed, or one stopped answering), so the next read connects
+    again. Closed by closing the socket only: the polite way (close each file, then the share, then log off)
+    waits for the NAS to answer each step, forever when it has stopped answering. Closing the socket also wakes
+    every read still waiting on that connection. In its own thread, given RESET_WAIT at most."""
     try:
         import smbclient
-        smbclient.reset_connection_cache(fail_on_error=False)
-    except Exception:  # noqa: BLE001
-        pass
+        from smbclient import _pool
+    except Exception:  # noqa: BLE001  (no SMB support installed: nothing to forget)
+        return
+    cache = getattr(_pool, "_SMB_CONNECTIONS", None)
+    if isinstance(cache, dict):
+        conns = [c for c in (cache.pop(name, None) for name in list(cache)) if c is not None]
+        if not conns:
+            return
+
+        def close():
+            for c in conns:
+                try:
+                    c.disconnect(close=False)      # the socket, and the thread reading it; nothing sent to the NAS
+                except Exception as e:  # noqa: BLE001  (an smbprotocol without close=: the next read reconnects anyway)
+                    log.warning("Couldn't close a NAS connection: %s", e)
+    else:
+        # an smbprotocol that keeps its connections elsewhere: its own reset, which is the polite way (it may
+        # wait on a stuck NAS, hence the thread and RESET_WAIT below as well)
+        def close():
+            try:
+                smbclient.reset_connection_cache(fail_on_error=False)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Couldn't reset the NAS connections: %s", e)
+    t = threading.Thread(target=close, name="smb-reset", daemon=True)
+    t.start()
+    t.join(RESET_WAIT)
+    if t.is_alive():
+        log.warning("A NAS connection is still closing; carrying on with a new one")
 
 
 def check(sh, rel=""):
@@ -432,20 +493,24 @@ def update(sid, data):
 
 
 def delete(sid):
-    _drop_titles(sid)
-    db.run("DELETE FROM lib_shares WHERE id=?", (sid,))
+    # one transaction: a scan of it that's writing finishes first (and this removes what it wrote), or sees it gone
+    with db.conn() as c:
+        c.execute("DELETE FROM lib_shares WHERE id=?", (sid,))
+        _drop_titles(sid, c)
     _vod_changed()
 
 
-def _drop_titles(sid):
+def _drop_titles(sid, c=None):
     """A library's titles out of On Demand. Where you stopped and My List are kept (as for playlists)."""
-    with db.conn() as c:
-        c.execute("DELETE FROM lib_meta WHERE title_id IN (SELECT id FROM vod_titles WHERE source_id=?)", (-sid,))
-        c.execute("DELETE FROM lib_files WHERE share_id=?", (sid,))
-        c.execute("DELETE FROM lib_missing WHERE share_id=?", (sid,))
-        c.execute("DELETE FROM lib_dirs WHERE share_id=?", (sid,))
-        c.execute("DELETE FROM vod_episodes WHERE title_id IN (SELECT id FROM vod_titles WHERE source_id=?)", (-sid,))
-        c.execute("DELETE FROM vod_titles WHERE source_id=?", (-sid,))
+    if c is None:
+        with db.conn() as c:
+            return _drop_titles(sid, c)
+    c.execute("DELETE FROM lib_meta WHERE title_id IN (SELECT id FROM vod_titles WHERE source_id=?)", (-sid,))
+    c.execute("DELETE FROM lib_files WHERE share_id=?", (sid,))
+    c.execute("DELETE FROM lib_missing WHERE share_id=?", (sid,))
+    c.execute("DELETE FROM lib_dirs WHERE share_id=?", (sid,))
+    c.execute("DELETE FROM vod_episodes WHERE title_id IN (SELECT id FROM vod_titles WHERE source_id=?)", (-sid,))
+    c.execute("DELETE FROM vod_titles WHERE source_id=?", (-sid,))
 
 
 def _vod_changed():
@@ -656,11 +721,22 @@ def scan_share(sh, progress=None, quick=False):
     sid, kind, now = sh["id"], sh["kind"], int(time.time())
     fs = FS(sh)
     dirs = _Dirs(sid, quick, now)
+    checked = [time.time()]
+
+    def walked(n):              # every 50 files: still wanted? (removed or turned off: stop reading it)
+        if time.time() - checked[0] > 2:
+            checked[0] = time.time()
+            _check_on(sid)
+        if progress:
+            progress(f"Reading {sh['name']}: {n} videos")
     try:
-        files = _walk(fs, progress=(lambda n: progress(f"Reading {sh['name']}: {n} videos")) if progress else None, dirs=dirs)
+        files = _walk(fs, progress=walked, dirs=dirs)
+    except LibraryStopped:
+        raise
     except LibraryError as e:
         db.run("UPDATE lib_shares SET status=? WHERE id=?", (f"error: {e}", sid))
         raise
+    _check_on(sid)
     had = db.one("SELECT count(*) n FROM vod_titles WHERE source_id=?", (-sid,))["n"]
     if not files and had:
         e = LibraryError(f"Found no videos, so the {_n(had, 'title')} already here are kept "
@@ -690,12 +766,15 @@ def scan_share(sh, progress=None, quick=False):
     what = _n(n, "movie") if kind == "movie" else f"{_n(n, 'show')}, {_n(len(episodes), 'episode')}"
     if skipped:
         what += f" ({_n(skipped, 'file')} without an episode number left out)"
+    _check_on(sid)
     if quick and had and _unchanged(sid, on_disk, titles):
         db.run("UPDATE lib_shares SET status=?, scanned_at=? WHERE id=?", (f"ok: {what}; no changes", now, sid))
         return f"{what}; no changes"
     rows = [{**t, "source_id": -sid, "kind": kind, "category": sh["name"], "search": vod.fold(t["name"]),
              "added": t["mtime"] or now, "seen_at": now} for t in titles]
     with db.conn() as c:
+        c.execute("BEGIN IMMEDIATE")       # nobody removes the library between this check and the writes
+        _check_on(sid, c)
         old = {r[0] for r in c.execute("SELECT id FROM vod_titles WHERE source_id=?", (-sid,))}
         if had:
             # after the first scan, "added" is when it turned up here: new titles, and shows with a new episode
@@ -712,13 +791,21 @@ def scan_share(sh, progress=None, quick=False):
                          VALUES (:id,:source_id,:kind,:name,:category,:year,:url,:ext,:added,:seen_at,:search,0)
                          ON CONFLICT(id) DO UPDATE SET url=excluded.url, ext=excluded.ext, category=excluded.category,
                            seen_at=excluded.seen_at, added=MAX(vod_titles.added, excluded.added), hidden=0,
-                           duration=CASE WHEN vod_titles.url!=excluded.url THEN 0 ELSE vod_titles.duration END""", rows)
+                           duration=CASE WHEN vod_titles.url!=excluded.url THEN 0 ELSE vod_titles.duration END,
+                           av=CASE WHEN vod_titles.url!=excluded.url THEN '' ELSE vod_titles.av END,
+                           bitrate=CASE WHEN vod_titles.url!=excluded.url THEN 0 ELSE vod_titles.bitrate END""", rows)
         if kind == "series":
             c.executemany("""INSERT INTO vod_episodes(id, title_id, season, episode, name, url, ext)
                              VALUES (:id,:title_id,:season,:episode,:name,:url,:ext)
                              ON CONFLICT(id) DO UPDATE SET url=excluded.url, ext=excluded.ext,
                                duration=CASE WHEN vod_episodes.url!=excluded.url THEN 0 ELSE vod_episodes.duration END,
+                               av=CASE WHEN vod_episodes.url!=excluded.url THEN '' ELSE vod_episodes.av END,
                                name=CASE WHEN vod_episodes.name='' THEN excluded.name ELSE vod_episodes.name END""", episodes)
+        # a file replaced under the same name (a new size): what was read from the old one goes, to be read again
+        sizes = dict(c.execute("SELECT item_id, size FROM lib_files WHERE share_id=?", (sid,)).fetchall())
+        replaced = [(i,) for i, _, _, s, _ in on_disk if i in sizes and sizes[i] != s]
+        c.executemany("UPDATE vod_titles SET duration=0, av='', bitrate=0 WHERE id=?", replaced)
+        c.executemany("UPDATE vod_episodes SET duration=0, av='' WHERE id=?", replaced)
         # the moved files' old rows are still there: their sizes are compared with the new ones in _carry
         c.executemany("""INSERT INTO lib_files(item_id, title_id, share_id, path, size, mtime) VALUES (?,?,?,?,?,?)
                          ON CONFLICT(item_id) DO UPDATE SET title_id=excluded.title_id, path=excluded.path,
@@ -881,40 +968,222 @@ def remove_missing(days=None, now=None):
     return msg + (f"; {left} still missing, kept for now" if left else "")
 
 
-LENGTH_BUDGET = 10 * 60     # seconds one run of measure_lengths may take (the next run carries on)
+READ_TIMEOUT = 25           # seconds a file may take to answer (a NAS disk that's spun down can take longer:
+                            # that file is tried again at the next scan)
+RESET_WAIT = 10             # seconds reset_connections waits for a stuck NAS connection to close
+RESUME_AFTER = (60, 120, 300, 600)   # after the NAS stopped answering: seconds before grabbing details starts
+                                     # again (the 1st time, the 2nd in a row…, then the last each time)
+_resumes = []                        # times it stopped since a run last got through
+resume = None                        # set by jobs.py: starts a run of grabbing details (in its own job lane)
+resume_at = 0.0                      # when that next run starts (0: none waiting), for Setup's job bar
+# set by jobs.py: starts grabbing video details as a job of its own (`kw` as for measure_lengths), so a scan adds
+# and shows the new videos straight away and the next scan doesn't wait for hours of reading. None: scan_all
+# grabs them itself before it returns (tests, and anything run without the job lanes)
+measure_later = None
+MEASURE_WORKERS = None      # files read at once; None: the "read_at_once" setting (Automatic tasks › Find new and
+                            # changed videos), 2 unless changed. 1 is the gentlest, for a NAS that can't keep up
+READ_AT_ONCE = (1, 2, 3, 4)
+READ_PAUSE = 1.0            # at most this many seconds between one file and the next, so the NAS gets a breather
+READ_PAUSE_SHARE = 0.25     # (and anything playing from it isn't crowded out): a quarter of the time the last file
+                            # took, so a NAS that answers quickly hardly waits and a struggling one rests longer
 
 
-def measure_lengths(progress=None, budget=LENGTH_BUDGET, limit=1000):
+def _workers():
+    if MEASURE_WORKERS:
+        return MEASURE_WORKERS
+    default = DEFAULT_SETTINGS["read_at_once"]
+    try:
+        n = int(settings().get("read_at_once") or default)
+    except (TypeError, ValueError):
+        n = default
+    return n if n in READ_AT_ONCE else default
+
+
+def _pause(took):
+    """Seconds to rest before the next file after one that took `took` seconds."""
+    return min(READ_PAUSE, max(0.0, took) * READ_PAUSE_SHARE)
+
+
+# videos whose length (or, for a movie, picture and sound) isn't known, not tried in RETRY_DAYS: ? = that time
+_TO_MEASURE = """FROM lib_files f
+                 JOIN lib_shares s ON s.id=f.share_id AND s.enabled=1
+                 LEFT JOIN vod_titles t ON t.id=f.item_id LEFT JOIN vod_episodes e ON e.id=f.item_id
+                 WHERE (COALESCE(t.duration, e.duration, 1)=0 OR t.av='' OR e.av='') AND f.probed_at<?
+                   AND f.title_id NOT IN (SELECT title_id FROM lib_missing)"""
+
+
+def _to_measure(cols, retry_days=RETRY_DAYS, share_id=None, before=None, now=None):
+    """The videos measure_lengths reads, with `cols` ("f.item_id, …", or "count(*) n"): -> (sql, args)."""
+    now = now or int(time.time())
+    if share_id:
+        return (f"""SELECT {cols} FROM lib_files f LEFT JOIN vod_titles t ON t.id=f.item_id
+                    WHERE f.share_id=? AND f.title_id NOT IN (SELECT title_id FROM lib_missing) AND f.probed_at<?""",
+                (share_id, before or now + 1))
+    return f"SELECT {cols} {_TO_MEASURE}", (now - retry_days * 86400 + 1,)
+
+
+def _clock(secs):
+    return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
+
+
+def _log_measured(it, secs, text, why=""):
+    """Setup › Log: each video measured, and what was found ("Heat (1995): 2:50:12 · 4K HEVC HDR10 · 5.1 eac3 · 16.4 Mbps")."""
+    from . import tracks, vod
+    name = " ".join(str(x) for x in (it.get("title"), f"({it['sub']})" if it.get("sub") else "") if x)
+    if not secs and not text:
+        later = "tried again at the next scan" if why.startswith(vod.TIMED_OUT) else f"tried again in {RETRY_DAYS} days"
+        log.warning("Video details: couldn't read %s: %s (%s)", name, why or "no reason given", later)
+        return
+    av = tracks.av_summary(text or "")
+    res = "" if not av.get("w") else "4K" if av["w"] >= 3200 else "1080p" if av["w"] >= 1800 else "720p" if av["w"] >= 1200 else "SD"
+    parts = [_clock(secs) if secs else "length unknown",
+             " ".join(x for x in (res, (av.get("vcodec") or "").upper(), av.get("hdr") or "") if x),
+             " ".join(x for x in (av.get("layout") or "", av.get("acodec") or "") if x),
+             f"{av['kbps'] / 1000:.1f} Mbps" if av.get("kbps") else ""]
+    log.info("Video details for %s: %s", name, " · ".join(p for p in parts if p))
+
+
+def _store_measured(item_id, is_movie, secs, text, now, replace=False):
+    """What reading one file found: its length (`replace`: over one already known) and picture and sound
+    (nothing usable: '{}', not read again), and when it was read. -> whether anything was found."""
+    from . import vod
+    if secs:
+        db.run(f"""UPDATE {'vod_titles' if is_movie else 'vod_episodes'} SET duration=? WHERE id=?
+                   {'' if replace else 'AND duration=0'}""", (secs, item_id))
+    if text:
+        vod.save_av(item_id, text, empty=True, episode=not is_movie)
+    db.run("UPDATE lib_files SET probed_at=? WHERE item_id=?", (now, item_id))
+    return bool(secs or text)
+
+
+def measure_one(item_id):
+    """Read one of your own movies now (Pick a version opened before the library task got to it), as the task
+    would. A NAS that doesn't answer is left to the task (it isn't marked as read). -> whether anything was found."""
+    from . import vod
+    it = vod.item(item_id)
+    if not it or not db.one("SELECT 1 FROM lib_files WHERE item_id=?", (item_id,)):
+        return False
+    secs, text, why = vod.probe_why(it["url"], READ_TIMEOUT)
+    if why.startswith(vod.TIMED_OUT):
+        log.warning("Video details: %s didn't answer in time (%s)", it.get("title") or "a video", why)
+        return False
+    _log_measured(it, secs, text, why)
+    found = _store_measured(item_id, it["kind"] == "movie", secs, text, int(time.time()))
+    if secs:
+        _vod_changed()
+    return found
+
+
+def _resume_wait():
+    return RESUME_AFTER[min(max(len(_resumes) - 1, 0), len(RESUME_AFTER) - 1)]
+
+
+def _resume_later(**kw):
+    """Start grabbing details again in a while (the NAS stopped answering). -> seconds it waits."""
+    global resume_at
+    if resume_at > time.time():     # one is already waiting (the half-hourly scan found the NAS still stuck)
+        return int(resume_at - time.time())
+    _resumes.append(time.time())
+    wait_s = _resume_wait()
+    if resume:
+        def go():
+            global resume_at
+            resume_at = 0.0
+            resume(**kw)
+        resume_at = time.time() + wait_s
+        t = threading.Timer(wait_s, go)
+        t.daemon = True
+        t.start()
+    return wait_s
+
+
+def _span(secs):
+    return f"{secs // 60} minute{'s' * (secs >= 120)}" if secs >= 60 else f"{secs} s"
+
+
+def measure_lengths(progress=None, budget=float("inf"), retry_days=RETRY_DAYS, share_id=None, before=None):
     """Measure the length of videos that don't have one yet (newest first), so On Demand can show it before
-    a title is first played. A file that can't be read is tried again after RETRY_DAYS. -> message."""
+    a title is first played, and read each movie's picture and sound for Pick a version (the same ffmpeg
+    call). A file that can't be read is tried again after `retry_days` (0: now). `share_id` (a library's Full
+    rescan): every file in that library, measured or not; what a file that can't be read had is kept (`before`: those
+    not read since then: a rescan carrying on after the NAS stopped answering).
+
+    The first file that doesn't answer in time stops the run (a stuck NAS connection holds up every read after
+    it): the connection is dropped, and a new run starts after a minute (longer if it keeps happening). -> message."""
     from . import vod
     progress = progress or (lambda *a, **k: None)
     now = int(time.time())
-    todo = db.rows("""SELECT f.item_id, f.title_id, t.id IS NOT NULL is_movie FROM lib_files f
-                      JOIN lib_shares s ON s.id=f.share_id AND s.enabled=1
-                      LEFT JOIN vod_titles t ON t.id=f.item_id LEFT JOIN vod_episodes e ON e.id=f.item_id
-                      WHERE COALESCE(t.duration, e.duration, 1)=0 AND f.probed_at<?
-                        AND f.title_id NOT IN (SELECT title_id FROM lib_missing)
-                      ORDER BY f.mtime DESC LIMIT ?""", (now - RETRY_DAYS * 86400, limit))
+    sql, args = _to_measure("f.item_id, f.title_id, t.id IS NOT NULL is_movie", retry_days, share_id, before, now)
+    todo = db.rows(sql + " ORDER BY f.mtime DESC", args)
     done = failed = 0
     start = time.time()
-    for i, r in enumerate(todo):
-        if time.time() - start > budget:
-            break
-        progress("Measuring video lengths", i, len(todo))
+
+    workers = _workers()
+    last = threading.local()                # each worker rests after its own file, by how long that one took
+
+    def read(r):                            # in a worker: ffmpeg reads the file (the slow part, mostly waiting)
+        rest = _pause(getattr(last, "took", 0.0))
+        if rest > 0:
+            time.sleep(rest)
+        began = time.monotonic()
+        try:
+            return _read(r)
+        finally:
+            last.took = time.monotonic() - began
+
+    def _read(r):
         it = vod.item(r["item_id"])
-        secs = vod.probe_duration(it["url"]) if it else 0
-        if secs:
-            db.run(f"UPDATE {'vod_titles' if r['is_movie'] else 'vod_episodes'} SET duration=? WHERE id=?", (secs, r["item_id"]))
-        db.run("UPDATE lib_files SET probed_at=? WHERE item_id=?", (now, r["item_id"]))
-        done += bool(secs)
-        failed += not secs
+        if not it or not db.one("SELECT 1 FROM lib_files WHERE item_id=?", (r["item_id"],)):
+            return r, None                  # its library was removed meanwhile
+        secs, text, why = vod.probe_why(it["url"], READ_TIMEOUT)
+        return r, (secs, text, why, it)
+
+    # `workers` files at once; what they found is written here, one at a time
+    rows, pending, stopped = iter(todo), set(), [False]
+    with ThreadPoolExecutor(workers, thread_name_prefix="measure") as pool:
+        def more():
+            while not stopped[0] and len(pending) < workers and time.time() - start <= budget:
+                r = next(rows, None)
+                if r is None:
+                    break
+                pending.add(pool.submit(read, r))
+        more()
+        while pending:
+            finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in finished:
+                pending.discard(fut)
+                r, got = fut.result()
+                progress("Grabbing video details", done + failed, len(todo))
+                if got is None:
+                    more()
+                    continue
+                secs, text, why, it = got
+                if why.startswith(vod.TIMED_OUT):
+                    # the NAS stopped answering: stop here (what's being read finishes), drop the connection, and
+                    # start again in a while. This file isn't counted: it's read again then
+                    if not stopped[0]:
+                        stopped[0] = True
+                        wait_s = _resume_later(share_id=share_id, before=(before or now) if share_id else None,
+                                               retry_days=retry_days)
+                        log.warning("Video details: the NAS stopped answering at %s; stopping, reconnecting, and "
+                                    "starting again in %s", it.get("title") or "a video", _span(wait_s))
+                        reset_connections()     # wakes every read waiting on the stuck connection
+                    continue
+                _log_measured(it, secs, text, why)
+                more()
+                ok = _store_measured(r["item_id"], r["is_movie"], secs, text, now, replace=bool(share_id))
+                done += ok
+                failed += not ok
+    if not stopped[0] and todo:
+        _resumes.clear()                # got through: the next time the NAS stops answering, a minute's wait again
     if done:
         _vod_changed()
     if not todo:
-        return "Every video's length is known"
-    msg = f"Measured {_n(done, 'video')}" + (f", {failed} couldn't be read" if failed else "")
+        return "Every video's details are in"
+    msg = f"Grabbed details for {_n(done, 'video')}" + (f", {failed} couldn't be read" if failed else "")
     left = len(todo) - done - failed
+    if stopped[0]:
+        msg += f"; stopped: the NAS stopped answering, starting again in {_span(_resume_wait())}"
     return msg + (f"; {left} left for next time" if left else "")
 
 
@@ -962,16 +1231,28 @@ def tidy(now=None):
     return ("Removed " + ", ".join(parts)) if parts else "Nothing to clean up"
 
 
-def scan_all(progress=None, share_id=None, full_refresh=False, only_new=False, quick=False):
+def scan_all(progress=None, share_id=None, full_refresh=False, only_new=False, quick=False, measure=None):
     """Scan every enabled library (or one), then look up details for titles that need them (`only_new`: just
-    titles never looked up; the "details" task does the rest). -> message."""
+    titles never looked up; the "details" task does the rest), then grab the details of every video that needs
+    them, however many and however long. A library's Full rescan (`share_id` and `full_refresh`): its details
+    downloaded again and every file read again.
+
+    `measure` (default: measure_later, set by jobs.py): grabbing the videos' details is handed to it and runs as
+    its own job, so the new videos are in On Demand as soon as the folders are read, and the next scan isn't held
+    up by a long run of reading files. None: grabbed here, before this returns."""
     progress = progress or (lambda *a, **k: None)
+    measure = measure or measure_later
     todo = [s for s in db.rows("SELECT * FROM lib_shares WHERE enabled=1 ORDER BY id") if share_id in (None, s["id"])]
     done, errors = [], []
     for i, sh in enumerate(todo):
         progress(f"Reading {sh['name']}", i, len(todo))
+        if not quick:           # the half-hourly quick scan would fill the log; its result is logged when it found something
+            log.info("My Library: reading every folder of %s%s", sh["name"], " (Full rescan)" if full_refresh else "")
         try:
-            done.append(f"{sh['name']}: {scan_share(sh, progress, quick)}")
+            what = scan_share(sh, progress, quick)
+            if not what.endswith("no changes"):
+                log.info("My Library: %s: %s", sh["name"], what)
+            done.append(f"{sh['name']}: {what}")
         except LibraryError as e:
             errors.append(f"{sh['name']}: {e}")
             log.warning("Library %s: %s", sh["name"], e)
@@ -982,8 +1263,25 @@ def scan_all(progress=None, share_id=None, full_refresh=False, only_new=False, q
             looked = fetch_details(progress, share_id, full_refresh, only_new)
         except LibraryError as e:
             errors.append(str(e))
+    measured = ""
+    if done:
+        if quick:                               # Scan now, the scheduled scan, Download all again: all that need it
+            kw = {}
+        elif share_id and full_refresh:         # a library's Full rescan: every file, again
+            kw = {"share_id": share_id}
+        else:                                   # a library just added or moved: all it still needs, now
+            kw = {"retry_days": 0}
+        if measure:
+            sql, args = _to_measure("count(*) n", **kw)
+            n = db.one(sql, args)["n"]
+            if n:
+                measure(**kw)
+                measured = f"grabbing the details of {_n(n, 'video')} next"
+        else:
+            measured = measure_lengths(progress, **kw)
+            measured = "" if measured == "Every video's details are in" else measured
     msg = "; ".join(done + errors) or "No libraries to scan"
-    return msg + (f". {looked}" if looked else "")
+    return msg + (f". {looked}" if looked else "") + (f". {measured}" if measured else "")
 
 
 # ---------------------------------------------------------------- TMDB
@@ -1084,6 +1382,7 @@ def _apply(t, tmdb_id, score, state):
         crew = [c.get("name") for c in d.get("created_by") or [] if c.get("name")]
     name = d.get("title") or d.get("name") or t["name"]
     votes = d.get("vote_count") or 0
+    log.info("TMDB: details and poster for %s (%s)", name, _year_of(d) or t["year"] or "?")
     from .vod import fold
     # the length isn't taken from TMDB: your copy may be a different cut, and the player's seek bar needs the
     # real one (measured from the file the first time it plays)
@@ -1130,9 +1429,12 @@ def lookup(t):
     query = json.dumps({"name": name, "year": year})
     tmdb_id, score = _best(t["kind"], name, year)
     now = int(time.time())
+    what = f"{name} ({year})" if year else name
     if tmdb_id and _apply(t, tmdb_id, score, "ok" if score >= GOOD_MATCH else "weak"):
         db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (query, t["id"]))
+        log.info("TMDB: %s matched (%d%% sure%s)", what, score, "" if score >= GOOD_MATCH else ", needs review")
         return "ok" if score >= GOOD_MATCH else "weak"
+    log.info("TMDB: no match for %s (looked up again in %d days)", what, RETRY_DAYS)
     db.run("""INSERT INTO lib_meta(title_id, state, query, tried_at) VALUES (?, 'none', ?, ?)
               ON CONFLICT(title_id) DO UPDATE SET state=CASE WHEN lib_meta.state IN ('pinned','ignored') THEN lib_meta.state
                 ELSE 'none' END, query=excluded.query, tried_at=excluded.tried_at""", (t["id"], query, now))
@@ -1164,21 +1466,50 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
         elif st in ("ok", "weak", "pinned") and (full_refresh or now - r["fetched_at"] > REFRESH_DAYS * 86400):
             todo.append(r)
     found = missed = 0
-    with _meta_lock:
-        for i, t in enumerate(todo):
-            progress("Downloading details from TMDB", i, len(todo))
+
+    def one(t):                             # in a worker: -> True / False (TMDB had it), None (skipped)
+        with _title_lock(t["id"]):
+            if not db.one("""SELECT 1 FROM vod_titles t JOIN lib_shares s ON -s.id=t.source_id AND s.enabled=1
+                             WHERE t.id=?""", (t["id"],)):
+                return None                 # its library was removed or turned off meanwhile
+            # as it is now: Fix may have picked a title (or Leave out) since the list was read
+            m = db.one("SELECT state, tmdb_id, score FROM lib_meta WHERE title_id=?", (t["id"],)) or {}
+            st = m.get("state") or ""
+            if st == "ignored":
+                return None
             try:
-                if t["state"] in ("ok", "weak", "pinned") and t["tmdb_id"]:
-                    ok = _apply(t, t["tmdb_id"], t["score"], t["state"])
-                else:
-                    ok = lookup(t) != "none"
+                if st in ("ok", "weak", "pinned") and m.get("tmdb_id"):
+                    return _apply(t, m["tmdb_id"], m["score"], st)
+                return lookup(t) != "none"
             except LibraryError as e:
                 if "API key" in str(e) or "reach" in str(e):
                     raise
                 log.warning("TMDB %s: %s", t["name"], e)
-                ok = False
-            found += ok
-            missed += not ok
+                return False
+
+    # a few titles at once (DETAIL_WORKERS): most of the time is waiting for TMDB to answer
+    rows, pending = iter(todo), set()
+    with ThreadPoolExecutor(DETAIL_WORKERS, thread_name_prefix="tmdb") as pool:
+        def more():
+            if (t := next(rows, None)) is not None:
+                pending.add(pool.submit(one, t))
+        for _ in range(DETAIL_WORKERS):
+            more()
+        try:
+            while pending:
+                finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    pending.discard(fut)
+                    ok = fut.result()       # a wrong key or no internet: stops the lot (below)
+                    more()
+                    progress("Downloading details from TMDB", found + missed, len(todo))
+                    if ok is not None:
+                        found += ok
+                        missed += not ok
+        except LibraryError:
+            for fut in pending:
+                fut.cancel()
+            raise
     _vod_changed()
     if not todo:
         return ""
@@ -1186,8 +1517,13 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
 
 
 # ---------------------------------------------------------------- Setup: review and fix matches
-def review(share_id=None, flt="review", q="", limit=300):
+def review(share_id=None, flt="review", q="", limit=300, kind=""):
+    """Setup › My Library › Matches. `kind`: just movies ("movie") or TV shows ("series")."""
+    from . import tracks, vod
     w, a = ["1=1"], []
+    if kind:
+        w.append("t.kind=?")
+        a.append(kind)
     if share_id:
         w.append("t.source_id=?")
         a.append(-share_id)
@@ -1199,6 +1535,11 @@ def review(share_id=None, flt="review", q="", limit=300):
         w.append("COALESCE(m.state,'')=''")
     elif flt == "missing":
         w.append("x.since IS NOT NULL")
+    elif flt == "nodetails":        # no video details yet, or none could be read: a movie's picture and sound,
+        # or for a show an episode without its length or picture and sound
+        w.append("""x.since IS NULL AND ((t.kind='movie' AND (t.av IN ('','{}') OR t.duration=0))
+                    OR (t.kind='series' AND EXISTS (SELECT 1 FROM vod_episodes e WHERE e.title_id=t.id
+                                                    AND (e.duration=0 OR e.av IN ('','{}')))))""")
     if q:
         from .vod import fold
         w.append("(t.search LIKE ? OR t.url LIKE ?)")
@@ -1207,7 +1548,8 @@ def review(share_id=None, flt="review", q="", limit=300):
                               COALESCE(m.state,'') state, COALESCE(m.score,0) score, COALESCE(m.tmdb_id,0) tmdb_id,
                               COALESCE(m.query,'') query, COALESCE(x.since,0) missing_since,
                               (SELECT url FROM vod_episodes e WHERE e.title_id=t.id ORDER BY season, episode LIMIT 1) ep_url,
-                              (SELECT count(*) FROM vod_episodes e WHERE e.title_id=t.id) eps
+                              (SELECT count(*) FROM vod_episodes e WHERE e.title_id=t.id) eps,
+                              t.av, t.bitrate, (SELECT sum(size) FROM lib_files f WHERE f.title_id=t.id) size
                        FROM vod_titles t JOIN lib_shares s ON -s.id=t.source_id
                        LEFT JOIN lib_meta m ON m.title_id=t.id LEFT JOIN lib_missing x ON x.title_id=t.id
                        WHERE {' AND '.join(w)}
@@ -1223,6 +1565,11 @@ def review(share_id=None, flt="review", q="", limit=300):
         r.pop("ep_url", None)
         r["file"] = p.rsplit("/", 1)[0] + "/" if r["kind"] == "series" and "/" in p else p
         r["share_id"] = -r.pop("source_id")
+        # the file as the last measure read it (a show: just its episodes' total size)
+        r["ext"] = p.rsplit(".", 1)[-1].lower() if r["kind"] == "movie" and "." in p.rsplit("/", 1)[-1] else ""
+        r["av"], r["size"] = vod._av(r["av"]), r["size"] or 0
+        # not read yet: what the file name says (a movie's; a show's is its folder)
+        r["hint"] = None if r["av"] or r["kind"] != "movie" else (tracks.name_summary(p.rsplit("/", 1)[-1]) or None)
     return rows
 
 
@@ -1247,7 +1594,7 @@ def pin(tid, tmdb_id):
     if not t:
         raise KeyError(tid)
     name, year = _original(t)
-    with _meta_lock:
+    with _title_lock(tid):
         if not _apply(t, int(tmdb_id), 100, "pinned"):
             raise LibraryError("TMDB doesn't have that title any more")
     db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (json.dumps({"name": name, "year": year}), tid))
@@ -1291,7 +1638,7 @@ def relookup(tid):
     t = _lib_title(tid)
     if not t:
         raise KeyError(tid)
-    with _meta_lock:
+    with _title_lock(tid):
         st = lookup(t)
     _vod_changed()
     return {"state": st}
@@ -1347,19 +1694,39 @@ def open_range(item_id, range_header=""):
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
     f = fs.open(path)
 
-    def body():
+    return status, headers, _FileBody(f, start, end - start + 1)
+
+
+class _FileBody:
+    """A file's bytes in chunks, for /api/library/file. close() closes the file on the NAS whether or not
+    reading started or finished: a reader that hangs up early (ffmpeg reads a few MB and goes) or a HEAD
+    request mustn't leave it open there, where open files pile up until the NAS stops answering."""
+
+    def __init__(self, f, start, size):
+        self.f, self.start, self.left, self.closed = f, start, size, False
+
+    def read(self):
+        """The next chunk, or b'' at the end."""
+        if self.closed or self.left <= 0:
+            return b""
+        if self.start is not None:
+            self.f.seek(self.start)
+            self.start = None
+        data = self.f.read(min(CHUNK, self.left))
+        self.left -= len(data)
+        return data
+
+    def __iter__(self):         # read it through (tests, and anything that doesn't stream)
         try:
-            f.seek(start)
-            left = end - start + 1
-            while left > 0:
-                data = f.read(min(CHUNK, left))
-                if not data:
-                    break
-                left -= len(data)
+            while data := self.read():
                 yield data
         finally:
+            self.close()
+
+    def close(self):
+        if not self.closed:
+            self.closed = True
             try:
-                f.close()
+                self.f.close()
             except Exception:  # noqa: BLE001
                 pass
-    return status, headers, body()

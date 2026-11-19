@@ -102,3 +102,119 @@ def test_a_queued_job_runs_after_the_running_one():
             break
         threading.Event().wait(0.05)
     assert ran == ["first", "second"] and not jobs._queue
+
+
+def _wait_idle():
+    import threading
+    for _ in range(100):
+        if not jobs.state["running"] and not jobs.lib_state["running"] and not jobs.vid_state["running"]:
+            return
+        threading.Event().wait(0.05)
+
+
+def test_my_library_runs_beside_the_playlists():
+    import threading
+    gate, ran = threading.Event(), []
+    assert jobs._run("library:7", lambda: (gate.wait(5), ran.append("rescan"))[1])       # a long Full rescan
+    assert jobs._run("scan", lambda: ran.append("scan")) is True                         # not held up by it
+    for _ in range(100):
+        if "scan" in ran:
+            break
+        threading.Event().wait(0.05)
+    assert ran == ["scan"] and jobs.lib_state["running"] and not jobs.state["running"]
+    assert jobs._run("library:task:remove", lambda: ran.append("remove"), queue=True) == "queued"   # its own lane: waits
+    assert jobs.running_what(library=True) == "another My Library job" and jobs.running_what() == ""
+    gate.set()
+    _wait_idle()
+    assert ran == ["scan", "rescan", "remove"] and not jobs._lib_queue
+    assert jobs.lib_state["message"] == "Done" and jobs.state["message"] == "Done"
+
+
+def test_a_playlist_scan_waits_its_turn_instead_of_being_dropped(monkeypatch):
+    import threading
+    gate, ran = threading.Event(), []
+    assert jobs._run("epg", lambda: (gate.wait(5), ran.append("epg"))[1])
+    real = jobs._run
+    monkeypatch.setattr(jobs, "_run", lambda name, fn, queue=False: real(name, lambda: ran.append(name), queue))
+    assert jobs.scan() is False                          # Scan playlists while the guide updates: refused, as before…
+    assert jobs.scan(queue=True) == "queued"             # …unless asked to wait (a playlist added or changed)
+    gate.set()
+    _wait_idle()
+    assert ran == ["epg", "scan"]
+
+
+def test_scan_now_in_setup_queues_and_says_after_what(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tunerbox import api
+    monkeypatch.setattr(jobs, "scan", lambda force=False, queue=False, source_id=None: "queued" if queue else False)
+    monkeypatch.setattr(jobs, "running_what", lambda library=False: "the guide update")
+    assert TestClient(api.app).post("/api/jobs/scan").json() == {"started": "queued", "after": "the guide update"}
+    j = TestClient(api.app).get("/api/jobs").json()
+    assert j["library"]["running"] is False and "running" in j
+
+
+def _run_scan_now(monkeypatch, **kw):
+    """Run jobs.scan's job here, with the network stubbed: -> (playlists read, On Demand asked for, streams checked)."""
+    read, od, checked = [], [], []
+    monkeypatch.setattr(jobs, "_run", lambda name, fn, queue=False: fn())
+    monkeypatch.setattr(jobs.sources, "refresh_source", lambda s: read.append(s["id"]))
+    monkeypatch.setattr(jobs.vod, "enabled", lambda: True)
+    monkeypatch.setattr(jobs.vod, "refresh_all", lambda p=None, source_id=None, kinds=None: od.append(source_id) or "")
+    monkeypatch.setattr(jobs.probe, "probe_streams", lambda todo, cb: checked.extend(r["key"] for r in todo) or (0, len(todo)))
+    monkeypatch.setattr(jobs.matcher, "match_all", lambda *a, **k: (0, 0))
+    monkeypatch.setattr(jobs.epg, "fetch_xmltv", lambda *a, **k: None)
+    monkeypatch.setattr(jobs.dvr, "apply_rules", lambda: 0)
+    db.set_meta("epg_updated", 1)
+    jobs.scan(**kw)
+    return read, od, checked
+
+
+def test_a_new_playlist_is_read_on_its_own(monkeypatch):
+    old = sources.add_source("old", "m3u", "http://x/old.m3u")
+    new = sources.add_source("new", "m3u", "http://x/new.m3u")
+    db.run("INSERT INTO streams(key, source_id, name, url, checked_at) VALUES ('o1', ?, 'Old 1', 'http://s/o1', 0)", (old,))
+    db.run("INSERT INTO streams(key, source_id, name, url, checked_at) VALUES ('n1', ?, 'New 1', 'http://s/n1', 0)", (new,))
+    db.set_meta("scan_updated", 5)
+    assert _run_scan_now(monkeypatch, source_id=new) == ([new], [new], ["n1"])     # the old one left alone
+    assert db.get_meta("scan_updated") == "5"                                      # not counted as the full scan
+    read, od, checked = _run_scan_now(monkeypatch)                                 # Scan playlists: all of them
+    assert read == [old, new] and od == [None] and sorted(checked) == ["n1", "o1"]
+    assert db.get_meta("scan_updated") != "5"
+
+
+def test_the_job_bar_learns_when_grabbing_video_details_starts_again(monkeypatch):
+    from fastapi.testclient import TestClient
+    from tunerbox import api, library
+    monkeypatch.setattr(library, "resume_at", 0.0)
+    assert TestClient(api.app).get("/api/jobs").json()["videos"]["resume_at"] == 0
+    monkeypatch.setattr(library, "resume_at", 2_000_000_000.4)
+    assert TestClient(api.app).get("/api/jobs").json()["videos"]["resume_at"] == 2_000_000_000
+
+
+def test_grabbing_video_details_doesnt_hold_up_finding_new_videos():
+    import threading
+    gate, ran = threading.Event(), []
+    assert jobs._run("library:videos", lambda: (gate.wait(5), ran.append("details"))[1])   # hours of reading files
+    assert jobs._run("library:task:scan", lambda: ran.append("scan")) is True            # the half-hourly scan runs
+    for _ in range(100):
+        if "scan" in ran:
+            break
+        threading.Event().wait(0.05)
+    assert ran == ["scan"] and jobs.vid_state["running"] and not jobs.lib_state["running"]
+    assert jobs.running_what(videos=True) == "grabbing video details" and jobs.running_what(library=True) == ""
+    # the scan found new videos: their details are grabbed after the run that's going, once
+    assert jobs._run("library:videos", lambda: ran.append("new"), queue=True) == "queued"
+    assert jobs._run("library:videos", lambda: ran.append("twice"), queue=True) == "queued"
+    gate.set()
+    _wait_idle()
+    assert ran == ["scan", "details", "new"] and not jobs._vid_queue
+
+
+def test_each_scope_of_video_details_gets_its_own_place_in_the_queue(monkeypatch):
+    names = []
+    monkeypatch.setattr(jobs, "_run", lambda name, fn, queue=False: names.append(name) or "queued")
+    jobs.library_measure()
+    jobs.library_measure(retry_days=0)
+    jobs.library_measure(share_id=3, before=5)
+    assert names == ["library:videos", "library:videos:new", "library:videos:3"]
+    assert jobs.library.measure_later is None           # the tests' own (conftest); jobs.py sets library_measure

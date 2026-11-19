@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -143,14 +144,16 @@ def buffer_seconds(value=None):
     return max(0, min(v, 120))
 
 
-def input_args(raw_url, buffer=0):
+def input_args(raw_url, buffer=0, reconnect=True):
+    """`reconnect`: keep trying a stream that drops (live TV, a movie playing); off for a one-off read, where
+    retrying an error only hides it until the read is given up on."""
     url, headers = split_url(raw_url)
     args = []
     if url.lower().startswith("http"):               # newer ffmpeg refuses these options for files and udp://
         args = ["-user_agent", headers.pop("User-Agent")]
         if headers:
             args += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
-    if url.lower().startswith("http"):
+    if url.lower().startswith("http") and reconnect:
         args += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_on_network_error", "1",
                  "-reconnect_delay_max", "4", "-rw_timeout", "15000000"]
         if buffer and ".m3u8" in url.lower().split("?")[0]:
@@ -278,6 +281,15 @@ def stop_id(pid):
     return True
 
 
+def _host(raw_url):
+    """Where a stream comes from, for the log: just the server (the rest of an address can hold a login)."""
+    from urllib.parse import urlsplit
+    try:
+        return urlsplit(split_url(raw_url)[0]).hostname or "a stream"
+    except ValueError:
+        return "a stream"
+
+
 def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
     """Start a ready-made ffmpeg command (On Demand) for a screen, after taking it off whatever it was
     playing. Raises connections.Full (leaving what it plays alone) when `source_id`'s playlist has no connection left; checking and
@@ -293,7 +305,7 @@ def start_cmd(cmd, client_id=None, raw_url="", label="", source_id=None):
     with connections.admit:
         if source_id is not None:
             connections.check(source_id, client=client_id or "")
-        log.info("Stream start for %s: %s", client_id or "-", split_url(raw_url)[0][-60:])
+        log.info("Stream start for %s: %s", client_id or "-", label or _host(raw_url))
         proc = track(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0))
         with _lock:
@@ -315,12 +327,45 @@ def release(proc, client_id=None):
     threading.Thread(target=_finish, args=(proc,), daemon=True).start()
 
 
+# ffmpeg's description of its input and output (at -loglevel info): not errors, and "Input #0 … from '<address>'"
+# holds the provider login, so none of it goes into the log
+_HEADER_LINE = re.compile(r"^(\s|Input #|Output #|Stream mapping|Press \[q\])")
+
+
+def _call_header(on_header, text):
+    try:
+        on_header(text)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Couldn't keep the stream's description: %s", e)
+
+
+def _read_err(proc, err, on_header=None):
+    """Keep the last lines ffmpeg wrote (for the log when a stream gives nothing), never its description of
+    the input or output. With `on_header`, that description (which comes first) is handed to it."""
+    head, done = [], on_header is None
+    for raw in iter(proc.stderr.readline, b""):
+        line = raw.decode("utf-8", "ignore").rstrip()
+        if not done:
+            head.append(line)
+            if line.startswith(("Output #", "Stream mapping")) or len(head) > 400:
+                done = True
+                # its own thread: saving may wait for the database, and ffmpeg stalls if stderr isn't read
+                threading.Thread(target=_call_header, args=(on_header, "\n".join(head)), daemon=True).start()
+            continue
+        if not _HEADER_LINE.match(line):
+            err.append(line)
+            del err[:-5]
+    if not done:                # it stopped before it started: what it said, less the description
+        err.extend([x for x in head if not _HEADER_LINE.match(x)][-5:])
+
+
 async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request=None, buffer=None, cmd=None, label="",
-                        source_id=None, proc=None, sub=None):
+                        source_id=None, proc=None, sub=None, on_header=None):
     """Async generator yielding MPEG-TS bytes. Kills ffmpeg when the viewer goes away.
     `cmd` runs a ready-made ffmpeg command instead (On Demand, local channel pieces); `label` names
     what it plays in Setup › Tuners. `source_id`: the playlist whose connection it uses. `proc` (from
-    start_cmd) or `sub` (from tuner.open_for): already started by the endpoint.
+    start_cmd) or `sub` (from tuner.open_for): already started by the endpoint. `on_header`: called once with
+    ffmpeg's description of the input (a command run at -loglevel info), from a background thread.
 
     Waiting for data never holds a worker thread: the reader thread wakes this coroutine through an
     asyncio.Event, so many viewers can't starve the thread pool the rest of the API runs on.
@@ -340,8 +385,7 @@ async def ffmpeg_stream(raw_url, client_id=None, mode=None, audio="aac", request
     if proc is None:    # off the event loop: it stops this viewer's previous stream first
         proc = await anyio.to_thread.run_sync(lambda: start_cmd(cmd, client_id, raw_url, label, source_id))
     err = []
-    threading.Thread(target=lambda: err.extend(proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:]),
-                     daemon=True).start()
+    threading.Thread(target=_read_err, args=(proc, err, on_header), daemon=True).start()
     # read-ahead cache: about 2 MB normally, up to ~80 MB with the extra cache turned on
     q = queue.Queue(maxsize=32 + buffer * 40)
     stop = threading.Event()

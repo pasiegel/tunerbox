@@ -14,6 +14,21 @@ from tunerbox import config, db, guide  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def no_pause_between_files(monkeypatch):
+    """Grabbing video details waits a second between files for the NAS: not in tests."""
+    from tunerbox import library
+    monkeypatch.setattr(library, "READ_PAUSE", 0)
+
+
+@pytest.fixture(autouse=True)
+def details_grabbed_in_the_scan(monkeypatch):
+    """Importing jobs.py hands grabbing video details to its own job lane (a background thread): in tests,
+    library.scan_all grabs them itself unless a test hands them off on purpose."""
+    from tunerbox import library
+    monkeypatch.setattr(library, "measure_later", None)
+
+
+@pytest.fixture(autouse=True)
 def fresh_data():
     """Empty data folder, default settings and a new database for each test."""
     for p in _DATA.iterdir():

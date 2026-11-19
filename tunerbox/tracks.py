@@ -96,6 +96,134 @@ def parse_streams(text):
     return out
 
 
+SIZE = re.compile(r"\b(\d{3,5})x(\d{3,5})\b")
+FPS = re.compile(r"([\d.]+) fps")
+KBPS = re.compile(r"Duration:.*?bitrate:\s*(\d+) kb/s")
+PICTURE = {"mjpeg", "png", "bmp", "gif"}       # cover art, not the film
+
+
+def av_summary(text):
+    """ffmpeg's description of an input -> what Pick a version shows about it:
+    {w, h, vcodec, bits, hdr, fps, acodec, layout, kbps} ({} when it has no picture).
+    Only the input part counts: what's after "Output #" is what TunerBox makes of it."""
+    head = text.split("Output #", 1)[0].split("Stream mapping:", 1)[0]
+    video = audio = None
+    for line in head.splitlines():
+        m = STREAM.match(line)
+        if not m:
+            continue
+        kind, codec, rest = m.group(3), m.group(4).lower(), m.group(5)
+        if kind == "Video" and video is None and codec not in PICTURE and "attached pic" not in rest:
+            video = (codec, rest)
+        elif kind == "Audio" and audio is None:          # the first one: what plays unless another is picked
+            audio = (codec, rest)
+    if not video:
+        return {}
+    codec, rest = video
+    size, fps, kbps = SIZE.search(rest), FPS.search(rest), KBPS.search(head)
+    hdr = ("Dolby Vision" if "DOVI configuration" in head else "HDR10" if "smpte2084" in rest
+           else "HLG" if "arib-std-b67" in rest else "")
+    out = {"w": int(size.group(1)) if size else 0, "h": int(size.group(2)) if size else 0, "vcodec": codec,
+           "bits": 12 if "p12" in rest else 10 if "p10" in rest else 8, "hdr": hdr,
+           "fps": float(fps.group(1)) if fps else 0, "kbps": int(kbps.group(1)) if kbps else 0}
+    if audio:
+        layout = next((w for w in ("7.1", "5.1(side)", "5.1", "stereo", "mono") if f" {w}" in audio[1]), "")
+        out.update(acodec=audio[0], layout=layout.replace("(side)", ""))
+    return out
+
+
+_LAYOUTS = {8: "7.1", 7: "6.1", 6: "5.1", 2: "stereo", 1: "mono"}
+
+
+def _layout(text, channels=0):
+    """"5.1(side)" / "stereo" / 6 channels -> "5.1"."""
+    text = str(text or "").lower()
+    found = next((w for w in ("7.1", "6.1", "5.1", "stereo", "mono") if w in text), "")
+    return found or _LAYOUTS.get(channels, "")
+
+
+def xtream_summary(info):
+    """An Xtream panel's own reading of a movie (get_vod_info's info.video / info.audio, ffprobe's fields)
+    -> the same {w, h, vcodec, bits, hdr, fps, acodec, layout} as av_summary, or {} when it has none."""
+    v = info.get("video") if isinstance(info.get("video"), dict) else {}
+    a = info.get("audio") if isinstance(info.get("audio"), dict) else {}
+    try:
+        w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+    except (TypeError, ValueError):
+        return {}
+    if not (w and h):
+        return {}
+    pix, trc = str(v.get("pix_fmt") or ""), str(v.get("color_transfer") or "")
+    side = str(v.get("side_data_list") or "").lower()
+    hdr = ("Dolby Vision" if "dovi" in side or "dolby vision" in side else "HDR10" if trc == "smpte2084"
+           else "HLG" if trc == "arib-std-b67" else "")
+    fps = 0.0
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        num, _, den = str(v.get(key) or "").partition("/")
+        try:
+            fps = round(float(num) / float(den or 1), 3)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if fps:
+            break
+    out = {"w": w, "h": h, "vcodec": str(v.get("codec_name") or "").lower(),
+           "bits": 12 if "p12" in pix else 10 if "p10" in pix else 8, "hdr": hdr, "fps": fps}
+    if a.get("codec_name"):
+        try:
+            ch = int(a.get("channels") or 0)
+        except (TypeError, ValueError):
+            ch = 0
+        out.update(acodec=str(a["codec_name"]).lower(), layout=_layout(a.get("channel_layout"), ch))
+    return out
+
+
+# what a release name says ("Heat.1995.2160p.UHD.BluRay.DV.HDR.x265.TrueHD.Atmos.7.1-GRP"). Separators are dots,
+# spaces, dashes, underscores or brackets; (?<![a-z0-9]) / (?![a-z0-9]) stand in for word edges between them
+_E, _F = r"(?<![a-z0-9])", r"(?![a-z0-9])"
+_N_RES = [(re.compile(_E + r"(2160p|4k|uhd)" + _F), 3840, 2160), (re.compile(_E + r"1080[pi]" + _F), 1920, 1080),
+          (re.compile(_E + r"720p" + _F), 1280, 720), (re.compile(_E + r"(576p|480p|dvdrip|dvd)" + _F), 720, 480)]
+_N_VIDEO = [(re.compile(_E + r"([xh]\.?265|hevc)" + _F), "hevc"), (re.compile(_E + r"([xh]\.?264|avc)" + _F), "h264"),
+            (re.compile(_E + r"av1" + _F), "av1"), (re.compile(_E + r"(xvid|divx)" + _F), "mpeg4")]
+_N_HDR = [(re.compile(_E + r"(dolby[ ._-]?vision|dovi|dv)" + _F), "Dolby Vision"),
+          (re.compile(_E + r"hdr10(\+|plus)"), "HDR10+"), (re.compile(_E + r"hdr(10)?" + _F), "HDR10"),
+          (re.compile(_E + r"hlg" + _F), "HLG")]
+# audio: the codec can run into the channels ("DDP5.1", "DTS-HD.MA.7.1", "AAC2.0")
+_N_AUDIO = [(re.compile(_E + r"truehd"), "truehd"), (re.compile(_E + r"(ddp|dd\+|e-?ac-?3)"), "eac3"),
+            (re.compile(_E + r"dts"), "dts"), (re.compile(_E + r"(ac-?3|dd)(?=[ ._-]?\d|[^a-z0-9]|$)"), "ac3"),
+            (re.compile(_E + r"aac"), "aac"), (re.compile(_E + r"flac" + _F), "flac"),
+            (re.compile(_E + r"opus" + _F), "opus")]
+_N_CH = re.compile(r"(?<!\d)(?<!\d\.)([1-7])[ .]([01])(?!\d)")
+
+
+def name_summary(name):
+    """What a file or release name says about the picture and sound, as av_summary's fields (those it can tell),
+    or {} when it says nothing about the picture. A guess until the file itself is read."""
+    s = str(name or "").lower()
+    out = {}
+    for rx, w, h in _N_RES:
+        if rx.search(s):
+            out.update(w=w, h=h)
+            break
+    for rx, codec in _N_VIDEO:
+        if rx.search(s):
+            out["vcodec"] = codec
+            break
+    hdr = [label for rx, label in _N_HDR if rx.search(s)]
+    if hdr:
+        out["hdr"] = hdr[0]
+    if not out:
+        return {}
+    for rx, codec in _N_AUDIO:
+        if rx.search(s):
+            out["acodec"] = codec
+            break
+    ch = _N_CH.search(s)
+    if ch and "acodec" in out:
+        n = int(ch.group(1)) + int(ch.group(2))
+        out["layout"] = _LAYOUTS.get(n, f"{ch.group(1)}.{ch.group(2)}")
+    return out
+
+
 def _probe(url):
     try:
         r = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-i", url], capture_output=True, timeout=40,

@@ -114,12 +114,12 @@ def xtream_base(src):
     return src["url"].rstrip("/")
 
 
-def xtream_api(src, action=None, **params):
+def xtream_api(src, action=None, timeout=120, **params):
     p = {"username": src["username"], "password": src["password"]}
     if action:
         p["action"] = action
     p.update(params)
-    with client(120) as c:
+    with client(timeout) as c:
         r = c.get(f"{xtream_base(src)}/player_api.php", params=p)
         r.raise_for_status()
         return r.json()
