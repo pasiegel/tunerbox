@@ -33,13 +33,14 @@ DEFAULT_AT = 4
 TASKS = [
     ("scan", "Find new and changed videos",
      "Reads every library: adds new videos, follows files that were renamed or moved (keeping where you stopped, "
-     "My List and the match) and hides ones that are gone. New titles get their details and posters straight away. "
-     "Folders that haven't changed are skipped; each is read in full at least once a day.", 0.5, -1),
+     "My List and the match) and hides ones that are gone. New titles show up at once and get their details and "
+     "posters straight away; every video that needs its details (length, resolution, HDR, audio) then gets them in "
+     "a job of its own, so a long run of those never holds up the next scan (a library's Full rescan grabs them "
+     "all again). Folders that haven't "
+     "changed are skipped; each is read in full at least once a day.", 0.5, -1),
     ("details", "Update details and posters",
      "Looks up again titles TMDB didn't know (after a week), and downloads matched titles' details again "
      "after a month.", 24, DEFAULT_AT),
-    ("lengths", "Measure video lengths",
-     "Reads how long each new video is, so On Demand shows it before it's first played. Up to 10 minutes a run.", 24, DEFAULT_AT),
     ("remove", "Remove missing videos",
      "Takes titles out of On Demand once their files have been missing this long (until then they're hidden, and "
      "come back as they were if the files do), then deletes what they leave behind: cached subtitles and old "
@@ -246,7 +247,6 @@ def _remove(progress):
 RUN = {
     "scan": lambda progress: library.scan_all(progress, only_new=True, quick=True),
     "details": _details,
-    "lengths": lambda progress: library.measure_lengths(progress),
     "remove": lambda progress: _remove(progress),
 }
 
@@ -297,5 +297,5 @@ def reset():
     with db.conn() as c:
         for key, _, _, hours, at in TASKS:
             c.execute("UPDATE lib_tasks SET enabled=1, every_hours=?, at_hour=?, on_day=-1 WHERE key=?", (hours, at, key))
-    library.save_settings({"remove_after_days": library.DEFAULT_SETTINGS["remove_after_days"]})
+    library.save_settings({k: library.DEFAULT_SETTINGS[k] for k in ("remove_after_days", "read_at_once")})
     return listing()

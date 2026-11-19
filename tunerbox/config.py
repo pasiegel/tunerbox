@@ -137,6 +137,13 @@ DEFAULTS = {
     # Continue Watching (Home and On Demand): every version you've started of a film or show (another
     # language, 4K, another playlist) gets its own tile. Off: one tile, the version played last.
     "vod_continue_versions": False,
+    # Pick a version: read each version's file not read yet (one at a time, only when its playlist has a
+    # connection free) for its resolution, HDR and sound. "auto": when Pick a version opens; "ask": only when
+    # Read details is pressed; "off": never (what the provider's details and the file names say is still shown)
+    "vod_details": "auto",
+    # ...and when the connection it needs is the one the screen asking is using, pause that screen's playback
+    # for the reading (it comes back by itself). Off: say there's no connection free instead
+    "vod_details_pause": True,
     # colour theme for every screen (web/theme.js); each TV screen can pick its own in Menu › Theme
     "theme": "midnight",
     "sleep_hours": 4,
@@ -256,6 +263,9 @@ def load():
                 # installs from before this setting already told Plex "12345678": changing it would
                 # make Plex see a new tuner and lose its DVR setup
                 _cache["hdhr_device_id"] = LEGACY_DEVICE_ID if user else new_device_id()
+            if user.get("vod_peek") is False and "vod_details" not in user:
+                _cache["vod_details"] = "off"       # the test builds' on/off switch, turned off
+            _cache.pop("vod_peek", None)
             if user and "welcome_done" not in user:
                 _cache["welcome_done"] = True       # set up before the wizard existed: never show it
             _write(_cache)
@@ -279,6 +289,7 @@ def update(changes: dict):
 # Settings that name a program to run, or a place on disk to read or write: only the PC itself can
 # change them, so another device on the network can't point TunerBox at its own program or folder.
 THEMES = ("midnight", "classic", "retro", "contrast", "light")     # same list as web/theme.js
+VOD_DETAILS = ("auto", "ask", "off")
 PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
            "https_enabled", "https_port", "https_hosts"}
 # Managed through their own API calls, never through /api/settings
@@ -346,6 +357,8 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "sports_teams":
             v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9]+:[a-z0-9-]+", str(x).strip().lower())})
+        elif k == "vod_details" and v not in VOD_DETAILS:
+            raise ValueError(f"vod_details: one of {', '.join(VOD_DETAILS)}")
         elif k == "theme" and v not in THEMES:
             raise ValueError(f"Unknown theme: {v}")
         elif k == "https_hosts":

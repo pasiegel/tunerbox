@@ -209,6 +209,37 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 #menu.two .list li { break-inside: avoid; }
 #menu.two .list li.hdr { break-after: avoid; }
 .list li.sel .r { color: #333; }
+/* Pick a version: name and tags, the details under them, resolution / HDR badges on the right */
+.panel.pv-dlg { min-width: min(44em, 92vw); }
+#dlg-list li.pv { gap: 1.2em; padding: .7em 1em; }
+#dlg-list li.pv + li.pv { margin-top: .15em; }
+.pv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .25em; }
+.pv-name { display: flex; align-items: center; gap: .55em; min-width: 0; }
+.pv-label { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-tag { flex: none; font-size: .58em; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: .25em .6em;
+  border-radius: 99em; background: var(--c-fg-22); color: var(--text); }
+.pv-tag.now { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--dim); }
+.pv-meta { font-size: .76em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-guess { font-style: italic; }
+.pv-reading { color: var(--text); animation: pv-pulse 1.2s ease-in-out infinite; }
+.pv-why { font-style: italic; }
+@keyframes pv-pulse { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .pv-reading { animation: none; } }
+#dlg-list li.pv-again { font-size: 1.05em; color: var(--dim); }
+.pv-dlg #dlg-list li { padding-left: 1em; padding-right: 1em; }      /* Read details again and Close line up with the versions */
+.list li.sel .pv-reading { color: var(--hl-text); }
+.pv-badges { flex: none; display: flex; gap: .4em; }
+.pv-b { font-size: .68em; font-weight: 800; letter-spacing: .03em; padding: .28em .6em; border-radius: .4em;
+  box-shadow: inset 0 0 0 1px var(--line); color: var(--text); background: var(--c-fg-0a); }
+.pv-b.k4 { background: var(--text); color: var(--navy); box-shadow: none; }
+.pv-b.hdr { background: var(--a-movie); color: var(--c-fg); box-shadow: none; }
+.pv-b.guess { background: transparent; color: var(--dim); box-shadow: none; outline: 1px dashed var(--dim); outline-offset: -1px; }
+.list li.sel .pv-meta { color: var(--hl-text); opacity: .72; }
+.list li.sel .pv-tag { background: #00000022; color: var(--hl-text); }
+.list li.sel .pv-tag.now { background: transparent; box-shadow: inset 0 0 0 1px #00000040; color: var(--hl-text); }
+.list li.sel .pv-b { background: transparent; box-shadow: inset 0 0 0 1px #00000045; color: var(--hl-text); }
+.list li.sel .pv-b.k4, .list li.sel .pv-b.hdr { background: var(--hl-text); color: var(--hl); box-shadow: none; }
+.list li.sel .pv-b.guess { background: transparent; outline-color: #00000060; color: var(--hl-text); }
 .list li .badge { font-size: .7em; padding: .1em .5em; border-radius: 3px; background: var(--c-fg-22); }
 .list li .badge.recording { background: var(--red); color: var(--c-fg); }
 .list li .badge.failed { background: #7a1520; }
@@ -352,6 +383,10 @@ html:not(.phone) #tv:has(#remote.live:not(.hidden)) #banner { display: none; }  
 .phone .p-foot { display: none; }
 .phone .panel .list li { font-size: 16px; padding: 12px 10px; }
 .phone .list li > span:not(.badge):not(.r) { white-space: normal; }
+.phone #dlg-list li { flex-wrap: wrap; row-gap: .15em; }      /* Pick a version: the details go under the name */
+.phone #dlg-list li .r { white-space: normal; }
+.phone #dlg-list li.pv { flex-wrap: nowrap; }
+.phone .pv-meta { white-space: normal; }
 /* a game on a phone: when + title on top, the matchup under it, then the channel and the score */
 .phone .list li.game { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 11px 10px; }
 .phone .list li.game + li.game { border-top: 1px solid var(--c-fg-14); border-radius: 0; }

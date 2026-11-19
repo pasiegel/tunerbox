@@ -92,3 +92,19 @@ def test_home_screen_setting():
     assert config.clean_changes({"home_screen": False}, from_pc=False) == {"home_screen": False}
     with pytest.raises(ValueError):
         config.clean_changes({"home_screen": "no"}, from_pc=False)
+
+
+def test_pick_a_version_details_setting(fresh_data):
+    assert config.get("vod_details") == "auto" and config.get("vod_details_pause") is True
+    assert config.clean_changes({"vod_details": "ask"}, from_pc=False) == {"vod_details": "ask"}
+    with pytest.raises(ValueError):
+        config.clean_changes({"vod_details": "sometimes"}, from_pc=True)
+
+
+def test_the_old_details_switch_turned_off_stays_off(fresh_data):
+    (config.DATA / "settings.json").write_text(json.dumps({"welcome_done": True, "vod_peek": False}), encoding="utf-8")
+    config._cache = None
+    assert config.get("vod_details") == "off" and config.get("vod_peek") is None
+    config._cache = None
+    (config.DATA / "settings.json").write_text(json.dumps({"welcome_done": True, "vod_peek": True}), encoding="utf-8")
+    assert config.get("vod_details") == "auto"

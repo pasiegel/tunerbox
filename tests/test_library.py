@@ -1,4 +1,5 @@
 """Local library: your own movies and shows (a network share or a folder) in On Demand, with TMDB details."""
+import json
 import os
 import time
 
@@ -432,16 +433,45 @@ def test_remove_at_once_when_set_to_zero(movies):
     assert not db.one("SELECT 1 FROM vod_titles WHERE name='Heat'") and library.counts()["missing"] == 0
 
 
+def _stub_probe(monkeypatch, fn):
+    """Grabbing video details reads files with vod.probe_why: (secs, text) from `fn`, and no reason."""
+    monkeypatch.setattr(vod, "probe_why", lambda url, timeout=None: (*fn(url), ""))
+
+
+FFMPEG_4K = """Input #0, matroska,webm, from '/media/Movies/Heat (1995).mkv':
+  Duration: 01:31:32.00, start: 0.000000, bitrate: 16436 kb/s
+  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/smpte2084), 3840x1600 [SAR 1:1 DAR 12:5], 23.98 fps
+  Stream #0:1(eng): Audio: eac3, 48000 Hz, 5.1(side), fltp, 640 kb/s (default)
+"""
+
+
 def test_measure_lengths(movies, monkeypatch):
     sid, _ = movies
     library.scan_share(library.share(sid))
-    monkeypatch.setattr(vod, "probe_duration", lambda url: 5400)
-    assert library.measure_lengths() == "Measured 5 videos"
-    assert {r["duration"] for r in db.rows("SELECT duration FROM vod_titles WHERE source_id=?", (-sid,))} == {5400}
-    assert library.measure_lengths() == "Every video's length is known"
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    assert library.measure_lengths() == "Grabbed details for 5 videos"
+    rows = db.rows("SELECT duration, bitrate, av FROM vod_titles WHERE source_id=?", (-sid,))
+    assert {r["duration"] for r in rows} == {5400} and {r["bitrate"] for r in rows} == {16436}
+    assert json.loads(rows[0]["av"])["hdr"] == "HDR10"                   # the picture and sound, in the same call
+    assert library.measure_lengths() == "Every video's details are in"
     db.run("UPDATE vod_titles SET duration=0")
-    monkeypatch.setattr(vod, "probe_duration", lambda url: 0)
-    assert library.measure_lengths() == "Every video's length is known"          # tried today: not again yet
+    _stub_probe(monkeypatch, lambda url: (0, ""))
+    assert library.measure_lengths() == "Every video's details are in"          # tried today: not again yet
+
+
+def test_pick_a_version_reads_one_of_your_movies_now_unless_the_nas_is_stuck(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+    calls = _nas_stops_after(monkeypatch, 0)
+    assert library.measure_one(heat) is False and len(calls) == 1
+    assert db.one("SELECT probed_at FROM lib_files WHERE item_id=?", (heat,))["probed_at"] == 0   # the task tries it
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    assert library.measure_one(heat) is True
+    r = db.one("SELECT duration, av FROM vod_titles WHERE id=?", (heat,))
+    assert r["duration"] == 5400 and json.loads(r["av"])["hdr"] == "HDR10"
+    assert db.one("SELECT probed_at FROM lib_files WHERE item_id=?", (heat,))["probed_at"] > 0
+    assert library.measure_one("L999:mgone") is False
 
 
 def test_tidy(movies):
@@ -466,22 +496,21 @@ def test_tidy(movies):
 # ---------------------------------------------------------------- automatic tasks
 def test_tasks_are_set_up_and_due_in_order(movies, monkeypatch):
     rows = {t["key"]: t for t in libtasks.listing()}
-    assert list(rows) == ["scan", "details", "lengths", "remove"]
+    assert list(rows) == ["scan", "details", "remove"]
     assert rows["scan"]["every_hours"] == 0.5 and all(t["enabled"] for t in rows.values())
     # all start at 4 am
-    assert [rows[k]["at_hour"] for k in rows] == [-1, 4, 4, 4]
+    assert [rows[k]["at_hour"] for k in rows] == [-1, 4, 4]
     db.run("UPDATE lib_tasks SET at_hour=-1")
     now = time.time()
     assert libtasks.due(now) == "scan"
-    monkeypatch.setattr(vod, "probe_duration", lambda url: 60)
-    assert libtasks.run("scan") == "NAS Movies: 5 movies"
+    _stub_probe(monkeypatch, lambda url: (60, ""))
+    assert libtasks.run("scan") == "NAS Movies: 5 movies. Grabbed details for 5 videos"      # new videos measured at once
     assert libtasks.due(now) == "details"
     assert libtasks.run("details") == "Skipped: no TMDB key"
-    assert libtasks.run("lengths") == "Measured 5 videos"
     assert libtasks.run("remove") == "Nothing to remove"
     assert libtasks.due(now) is None and libtasks.due(now + 6 * 3600 + 1) == "scan"
     t = {t["key"]: t for t in libtasks.listing()}["scan"]
-    assert t["status"] == "ok: NAS Movies: 5 movies" and t["next_run"] >= t["last_run"] + 1800 - 1
+    assert t["status"] == "ok: NAS Movies: 5 movies. Grabbed details for 5 videos" and t["next_run"] >= t["last_run"] + 1800 - 1
     libtasks.update("scan", {"enabled": False})
     assert libtasks.due(now + 7 * 3600) is None
     with pytest.raises(ValueError):
@@ -524,8 +553,8 @@ def test_api_tasks(movies, monkeypatch):
     assert c.put("/api/library/tasks/nope", json={}).status_code == 404
     assert c.post("/api/library/tasks/remove/run").json() == {"job": True} and started == ["remove"]
     monkeypatch.setattr(jobs, "library_task", lambda key: "queued")
-    monkeypatch.setattr(jobs, "running_what", lambda: "the guide update")
-    assert c.post("/api/library/tasks/remove/run").json() == {"job": True, "queued": True, "after": "the guide update"}
+    monkeypatch.setattr(jobs, "running_what", lambda library=False: "another My Library job" if library else "the guide update")
+    assert c.post("/api/library/tasks/remove/run").json() == {"job": True, "queued": True, "after": "another My Library job"}
     assert c.post("/api/library/tasks/nope/run").status_code == 404
 
 
@@ -692,12 +721,12 @@ def test_run_all(movies, monkeypatch):
         monkeypatch.setitem(libtasks.RUN, k, lambda p, k=k: ran.append(k) or f"{k} done")
     def boom(p):
         raise RuntimeError("NAS asleep")
-    monkeypatch.setitem(libtasks.RUN, "lengths", boom)
+    monkeypatch.setitem(libtasks.RUN, "remove", boom)
     libtasks.update("details", {"enabled": False})
     msg = libtasks.run_all()
-    assert ran == ["scan", "remove"]                               # in order; the one that's off is left out
-    assert msg == "Ran 2 of 3 tasks. Failed: Measure video lengths: NAS asleep"
-    assert libtasks._row("lengths")["status"] == "error: NAS asleep"
+    assert ran == ["scan"]                                         # in order; the one that's off is left out
+    assert msg == "Ran 1 of 2 tasks. Failed: Remove missing videos: NAS asleep"
+    assert libtasks._row("remove")["status"] == "error: NAS asleep"
     assert libtasks._row("scan")["status"] == "ok: scan done"
 
 
@@ -784,7 +813,7 @@ def test_any_time_tasks_move_to_4am_once(movies):
     db.run("DELETE FROM meta WHERE k='lib_tasks_at_default'")
     libtasks.init()
     rows = {t["key"]: t["at_hour"] for t in libtasks.listing()}
-    assert rows == {"scan": 4, "details": 7, "lengths": 4, "remove": 4}          # a time you picked is kept
+    assert rows == {"scan": 4, "details": 7, "remove": 4}          # a time you picked is kept
     libtasks.update("scan", {"at_hour": -1})
     libtasks.init()
     assert {t["key"]: t["at_hour"] for t in libtasks.listing()}["scan"] == -1    # only once
@@ -806,7 +835,7 @@ def test_reset_tasks_to_defaults(movies):
     assert r.status_code == 200
     rows = {t["key"]: t for t in r.json()}
     assert [(t["enabled"], t["every_hours"], t["at_hour"], t["on_day"]) for t in rows.values()] == \
-        [(1, 0.5, -1, -1), (1, 24, 4, -1), (1, 24, 4, -1), (1, 24, 4, -1)]
+        [(1, 0.5, -1, -1), (1, 24, 4, -1), (1, 24, 4, -1)]
     assert library.settings()["remove_after_days"] == 30 and rows["remove"]["last_run"] == 1234
 
 
@@ -856,3 +885,479 @@ def test_deleted_folder_leaves_the_folder_list(movies):
     library.scan_share(library.share(sid))
     assert not db.one("SELECT 1 FROM lib_dirs WHERE share_id=? AND rel='Heat (1995)'", (sid,))
     assert db.one("SELECT 1 FROM lib_dirs WHERE share_id=? AND rel='Collection'", (sid,))
+
+
+def test_a_full_rescan_reads_movies_measured_before_their_picture_was_kept(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    db.run("UPDATE vod_titles SET duration=5400 WHERE source_id=?", (-sid,))
+    db.run("UPDATE lib_files SET probed_at=?", (int(time.time()),))       # measured just now, by an older build
+    _stub_probe(monkeypatch, lambda url: (5300, FFMPEG_4K))
+    assert library.measure_lengths() == "Every video's details are in"  # the nightly task waits its week
+    assert library.scan_all().endswith("Grabbed details for 5 videos")              # a Full rescan doesn't
+    assert {r["duration"] for r in db.rows("SELECT duration FROM vod_titles WHERE source_id=?", (-sid,))} == {5400}
+    assert "Grabbed details" not in library.scan_all()                          # once read, not again
+
+
+def test_a_replaced_file_is_read_again_and_its_own_bitrate_wins(movies, monkeypatch):
+    sid, root = movies
+    library.scan_share(library.share(sid))
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.measure_lengths()
+    heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id=?", (heat,))["bitrate"] == 16436
+    _touch(root, "Heat (1995)/Heat.mp4", 9999)                 # a better copy under the same name
+    library.scan_share(library.share(sid))
+    assert db.one("SELECT duration, av, bitrate FROM vod_titles WHERE id=?", (heat,)) == {"duration": 0, "av": "", "bitrate": 0}
+    assert db.one("SELECT av FROM vod_titles WHERE name='Aliens'")["av"] != ""       # the others are kept
+    _stub_probe(monkeypatch, lambda url: (5500, FFMPEG_4K.replace("16436", "30000")))
+    assert library.measure_lengths() == "Grabbed details for 1 video"
+    assert db.one("SELECT duration, bitrate FROM vod_titles WHERE id=?", (heat,)) == {"duration": 5500, "bitrate": 30000}
+
+
+def test_a_file_with_nothing_to_describe_is_not_read_every_week(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    db.run("UPDATE vod_titles SET duration=5400 WHERE source_id=?", (-sid,))
+    _stub_probe(monkeypatch, lambda url: (5400, "Input #0, mp3, from 'x':\n  Stream #0:0: Audio: mp3, 44100 Hz\n"))
+    assert library.measure_lengths() == "Grabbed details for 5 videos"
+    db.run("UPDATE lib_files SET probed_at=1")                 # long ago
+    assert library.measure_lengths() == "Every video's details are in"
+    assert vod.title(db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"])["av"] is None
+
+
+def test_find_new_and_changed_videos_grabs_every_videos_details(movies, monkeypatch):
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    assert library.scan_all(quick=True).endswith("Grabbed details for 5 videos")       # all of them, at once
+    assert library.measure_lengths() == "Every video's details are in"
+    assert "Grabbed details" not in library.scan_all(quick=True)                       # nothing new: nothing to add
+
+
+def test_a_run_out_of_time_says_how_many_are_left(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    assert library.measure_lengths(budget=-1) == "Grabbed details for 0 videos; 5 left for next time"
+
+
+def test_matches_show_each_file_as_it_was_read(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    rows = {r["name"]: r for r in library.review(sid, "all")}
+    assert rows["Heat"]["av"] is None and rows["Heat"]["bitrate"] == 0          # not measured yet
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.measure_lengths()
+    heat = {r["name"]: r for r in library.review(sid, "all")}["Heat"]
+    size = db.one("SELECT size FROM lib_files WHERE item_id=?", (heat["id"],))["size"]
+    assert heat["size"] == size and heat["ext"] == heat["file"].rsplit(".", 1)[-1].lower()
+    assert heat["av"]["w"] == 3840 and heat["bitrate"] == 16436
+
+
+def test_a_librarys_full_rescan_measures_every_file_again(movies, monkeypatch):
+    sid, _ = movies
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.scan_all(share_id=sid)
+    assert library.measure_lengths() == "Every video's details are in"
+    _stub_probe(monkeypatch, lambda url: (5500, FFMPEG_4K.replace("16436", "30000")))
+    assert library.scan_all(quick=True).endswith("no changes")           # Scan now: nothing to measure
+    assert library.scan_all(share_id=sid, full_refresh=True).endswith("Grabbed details for 5 videos")     # Full rescan: all again
+    assert {(r["duration"], r["bitrate"]) for r in
+            db.rows("SELECT duration, bitrate FROM vod_titles WHERE source_id=?", (-sid,))} == {(5500, 30000)}
+    _stub_probe(monkeypatch, lambda url: (0, ""))                # the NAS asleep: what was read is kept
+    assert library.scan_all(share_id=sid, full_refresh=True).endswith("Grabbed details for 0 videos, 5 couldn't be read")
+    assert db.one("SELECT min(duration) n FROM vod_titles WHERE source_id=?", (-sid,))["n"] == 5500
+
+
+def test_removing_a_library_mid_scan_adds_nothing(movies, monkeypatch):
+    sid, _ = movies
+    real = library._walk
+
+    def walk_then_removed(*a, **k):
+        found = real(*a, **k)
+        library.delete(sid)                     # pressed Remove while its folders were being read
+        return found
+    monkeypatch.setattr(library, "_walk", walk_then_removed)
+    msg = library.scan_all(share_id=sid)
+    assert "Stopped: removed or turned off" in msg
+    assert db.one("SELECT count(*) n FROM vod_titles WHERE source_id=?", (-sid,))["n"] == 0
+    assert db.one("SELECT count(*) n FROM lib_files WHERE share_id=?", (sid,))["n"] == 0
+
+
+def test_turning_a_library_off_mid_scan_stops_reading_it_and_keeps_what_it_had(movies, monkeypatch):
+    sid, root = movies
+    library.scan_share(library.share(sid))
+    _touch(root, "Brand New (2026)/Brand New.mkv", 1234)
+    real = library._walk
+
+    def walk_then_off(*a, **k):
+        found = real(*a, **k)
+        db.run("UPDATE lib_shares SET enabled=0 WHERE id=?", (sid,))
+        return found
+    monkeypatch.setattr(library, "_walk", walk_then_off)
+    with pytest.raises(library.LibraryStopped):
+        library.scan_share(library.share(sid))
+    assert db.one("SELECT count(*) n FROM vod_titles WHERE source_id=?", (-sid,))["n"] == 5      # not the new one
+
+
+def test_removing_a_library_while_it_is_measured_stops_measuring_it(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    monkeypatch.setattr(library, "MEASURE_WORKERS", 1)        # one at a time: the next file sees it gone
+    probed = []
+
+    def probe(url):
+        probed.append(url)
+        library.delete(sid)
+        return 5400, FFMPEG_4K
+    _stub_probe(monkeypatch, probe)
+    library.measure_lengths(budget=float("inf"), share_id=sid)
+    assert len(probed) == 1                                                  # the rest skipped
+    assert db.one("SELECT count(*) n FROM vod_titles WHERE source_id=?", (-sid,))["n"] == 0
+
+
+def test_videos_are_measured_a_few_at_a_time(movies, monkeypatch):
+    import threading
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    lock, now, most = threading.Lock(), [0], [0]
+
+    def probe(url):
+        with lock:
+            now[0] += 1
+            most[0] = max(most[0], now[0])
+        time.sleep(0.2)                     # the NAS taking its time
+        with lock:
+            now[0] -= 1
+        return 5400, FFMPEG_4K
+    _stub_probe(monkeypatch, probe)
+    monkeypatch.setattr(library, "MEASURE_WORKERS", 4)              # a NAS that keeps up
+    t = time.time()
+    assert library.measure_lengths() == "Grabbed details for 5 videos"
+    assert most[0] == library.MEASURE_WORKERS and time.time() - t < 0.8     # one at a time would take 1 s
+
+
+def test_details_are_looked_up_a_few_at_a_time_and_a_fix_meanwhile_is_kept(movies, monkeypatch):
+    import threading
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    library.save_settings({"tmdb_key": "abc123"})
+    heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+    db.run("INSERT INTO lib_meta(title_id, tmdb_id, score, state) VALUES (?, 949, 100, 'pinned')", (heat,))  # Fixed by hand
+    lock, now, most, did = threading.Lock(), [0], [0], []
+
+    def busy(what):
+        with lock:
+            now[0] += 1
+            most[0] = max(most[0], now[0])
+        time.sleep(0.2)
+        with lock:
+            now[0] -= 1
+        did.append(what)
+    monkeypatch.setattr(library, "lookup", lambda t: busy(("lookup", t["name"])) or "ok")
+    monkeypatch.setattr(library, "_apply", lambda t, i, sc, st: busy(("apply", t["name"], i, st)) or True)
+    t = time.time()
+    assert library.fetch_details(full_refresh=True) == "Details for 5 titles"
+    assert most[0] == library.DETAIL_WORKERS and time.time() - t < 0.8
+    assert ("apply", "Heat", 949, "pinned") in did                  # its own pick, not looked up again
+
+
+def test_a_wrong_tmdb_key_stops_every_lookup(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    library.save_settings({"tmdb_key": "abc123"})
+    calls = []
+
+    def bad(t):
+        calls.append(t["name"])
+        raise library.LibraryError("TMDB didn't accept the API key")
+    monkeypatch.setattr(library, "lookup", bad)
+    with pytest.raises(library.LibraryError, match="API key"):
+        library.fetch_details()
+    assert len(calls) <= library.DETAIL_WORKERS                   # the ones already started; no more after
+
+
+def test_each_video_measured_and_looked_up_shows_in_the_log(movies, monkeypatch, caplog):
+    import logging
+    sid, _ = movies
+    with caplog.at_level(logging.INFO, logger="tunerbox.library"):
+        library.scan_all(share_id=sid)                       # not quick: says what it reads
+        assert "My Library: reading every folder of NAS Movies" in caplog.text
+        assert "My Library: NAS Movies: 5 movies" in caplog.text
+        heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+        _stub_probe(monkeypatch, lambda url: (10212, FFMPEG_4K) if url.endswith(heat) else (0, ""))
+        db.run("UPDATE lib_files SET probed_at=0")
+        db.run("UPDATE vod_titles SET duration=0, av=''")
+        library.measure_lengths()
+    assert "Video details for Heat (1995): 2:50:12 · 4K HEVC" in caplog.text and "16.4 Mbps" in caplog.text
+    assert "Video details: couldn't read Aliens (1986)" in caplog.text
+
+
+def test_matches_can_list_the_videos_without_details(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    assert len(library.review(sid, "nodetails")) == 5                  # nothing grabbed yet
+    heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K) if url.endswith(heat) else (0, ""))
+    library.measure_lengths()
+    assert "Heat" not in [r["name"] for r in library.review(sid, "nodetails")]
+    assert len(library.review(sid, "nodetails")) == 4                  # the ones that couldn't be read stay listed
+
+
+def test_a_file_is_closed_on_the_nas_however_the_reader_leaves(movies, monkeypatch):
+    sid, root = movies
+    library.scan_share(library.share(sid))
+    (root / "Heat (1995)/Heat.mp4").write_bytes(b"x" * (3 * library.CHUNK))
+    heat = db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]
+    opened = []
+    real = library.FS.open
+    monkeypatch.setattr(library.FS, "open", lambda self, rel: opened.append(real(self, rel)) or opened[-1])
+    _, _, body = library.open_range(heat, "")
+    body.close()                                    # never read (a HEAD request, or hung up at once)
+    _, _, body = library.open_range(heat, "")
+    assert len(body.read()) == library.CHUNK         # read a little, then hung up
+    body.close()
+    _, _, body = library.open_range(heat, "bytes=0-")
+    assert len(b"".join(body)) == 3 * library.CHUNK  # read to the end
+    assert len(opened) == 3 and all(f.closed for f in opened)
+
+
+def test_dropping_a_stuck_nas_connection_never_waits_on_the_nas(monkeypatch):
+    import threading
+    from smbclient import _pool
+    asked, hang = [], threading.Event()
+
+    class Conn:
+        def __init__(self, stuck):
+            self.stuck = stuck
+
+        def disconnect(self, close=True, timeout=None):
+            asked.append(close)
+            if self.stuck:
+                hang.wait(5)                # a NAS that never answers
+    monkeypatch.setattr(_pool, "_SMB_CONNECTIONS", {"a": Conn(False), "b": Conn(True)})
+    monkeypatch.setattr(library, "RESET_WAIT", 0.2)
+    t = time.time()
+    library.reset_connections()
+    hang.set()
+    assert time.time() - t < 1 and asked == [False, False]        # the socket only: no log off, no waiting on it
+    assert _pool._SMB_CONNECTIONS == {}                           # the next read connects again
+
+
+def test_an_smbprotocol_without_its_connection_list_falls_back_to_its_own_reset(monkeypatch):
+    import threading
+    import smbclient
+    from smbclient import _pool
+    hang, asked = threading.Event(), []
+    monkeypatch.delattr(_pool, "_SMB_CONNECTIONS")                 # a newer smbprotocol, kept elsewhere
+    monkeypatch.setattr(smbclient, "reset_connection_cache", lambda **kw: (asked.append(kw), hang.wait(5)))
+    monkeypatch.setattr(library, "RESET_WAIT", 0.2)
+    t = time.time()
+    library.reset_connections()                                    # no AttributeError
+    hang.set()
+    assert time.time() - t < 1 and asked == [{"fail_on_error": False}]   # and a stuck NAS still isn't waited on
+
+
+def _nas_stops_after(monkeypatch, n):
+    """vod.probe_why answering for `n` reads, then timing out; -> the urls asked for."""
+    calls = []
+
+    def probe(url, timeout=None):
+        calls.append(url)
+        return (0, "", f"{vod.TIMED_OUT} {timeout} s") if len(calls) > n else (5400, FFMPEG_4K, "")
+    monkeypatch.setattr(vod, "probe_why", probe)
+    return calls
+
+
+def test_the_nas_stopping_answering_stops_the_run_then_it_starts_again_by_itself(movies, monkeypatch, caplog):
+    import logging
+    import threading
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    resets, started = [], threading.Event()
+    kws = []
+    monkeypatch.setattr(library, "reset_connections", lambda: resets.append(1))
+    monkeypatch.setattr(library, "MEASURE_WORKERS", 1)
+    monkeypatch.setattr(library, "RESUME_AFTER", (0.05,))
+    monkeypatch.setattr(library, "resume", lambda **kw: kws.append(kw) or started.set())
+    monkeypatch.setattr(library, "_resumes", [])
+    _nas_stops_after(monkeypatch, 1)
+    with caplog.at_level(logging.INFO, logger="tunerbox.library"):
+        assert library.measure_lengths() == \
+            "Grabbed details for 1 video; stopped: the NAS stopped answering, starting again in 0.05 s; 4 left for next time"
+    assert "stopping, reconnecting, and starting again" in caplog.text and resets == [1]
+    assert started.wait(2) and kws == [{"share_id": None, "before": None, "retry_days": library.RETRY_DAYS}]
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))               # answering again
+    assert library.measure_lengths(**kws[0]) == "Grabbed details for 4 videos"   # the rest, the stuck one too
+    assert library._resumes == []                                          # got through: back to a minute's wait
+
+
+def test_the_wait_grows_while_the_nas_keeps_not_answering(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    monkeypatch.setattr(library, "reset_connections", lambda: None)
+    monkeypatch.setattr(library, "resume", None)
+    monkeypatch.setattr(library, "_resumes", [])
+    monkeypatch.setattr(vod, "probe_why", lambda url, timeout=None: (0, "", f"{vod.TIMED_OUT} {timeout} s"))
+    said = [library.measure_lengths().split("starting again in ")[1].split(";")[0] for _ in range(5)]
+    assert said == ["1 minute", "2 minutes", "5 minutes", "10 minutes", "10 minutes"]
+
+
+def test_a_full_rescan_carries_on_with_the_same_files_after_the_nas_stopped_answering(movies, monkeypatch):
+    sid, _ = movies
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.scan_all(share_id=sid)                                         # every video has its details
+    kws = []
+    monkeypatch.setattr(library, "reset_connections", lambda: None)
+    monkeypatch.setattr(library, "MEASURE_WORKERS", 1)
+    monkeypatch.setattr(library, "resume", lambda **kw: kws.append(kw))
+    monkeypatch.setattr(library, "RESUME_AFTER", (0.01,))
+    db.run("UPDATE lib_files SET probed_at=1")
+    calls = _nas_stops_after(monkeypatch, 2)
+    assert "stopped" in library.scan_all(share_id=sid, full_refresh=True)  # a Full rescan: 2 read again, then stuck
+    time.sleep(0.2)
+    assert kws and kws[0]["share_id"] == sid and kws[0]["before"]
+    _stub_probe(monkeypatch, lambda url: (5500, FFMPEG_4K))
+    assert library.measure_lengths(**kws[0]) == "Grabbed details for 3 videos"    # the other 3, not all 5 again
+
+
+def test_matches_can_show_just_movies_or_just_shows(movies):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    db.run("UPDATE vod_titles SET kind='series' WHERE name='Heat'")      # one show among the movies
+    c = TestClient(api.app)
+    assert [r["name"] for r in c.get("/api/library/titles?filter=all&kind=series").json()] == ["Heat"]
+    assert "Heat" not in [r["name"] for r in c.get("/api/library/titles?filter=all&kind=movie").json()]
+    assert len(c.get("/api/library/titles?filter=all&kind=nonsense").json()) == 5                     # ignored
+
+
+def test_only_one_restart_waits_at_a_time(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    started = []
+    monkeypatch.setattr(library, "reset_connections", lambda: None)
+    monkeypatch.setattr(library, "resume", lambda **kw: started.append(kw))
+    monkeypatch.setattr(library, "_resumes", [])
+    monkeypatch.setattr(library, "resume_at", 0.0)
+    monkeypatch.setattr(library, "RESUME_AFTER", (0.3,))
+    monkeypatch.setattr(vod, "probe_why", lambda url, timeout=None: (0, "", f"{vod.TIMED_OUT} {timeout} s"))
+    library.measure_lengths()
+    library.measure_lengths()                       # the half-hourly scan, while the restart still waits
+    time.sleep(0.6)
+    assert len(started) == 1 and len(library._resumes) == 1
+
+
+def test_on_demand_shows_each_movies_and_episodes_picture_sound_and_file(movies, shows, monkeypatch):
+    msid, _ = movies
+    tsid, _ = shows
+    library.scan_share(library.share(msid))
+    library.scan_share(library.share(tsid))
+    _stub_probe(monkeypatch, lambda url: (3000, FFMPEG_4K))
+    library.measure_lengths()
+    heat = vod.title(db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"])
+    assert heat["av"]["w"] == 3840 and heat["bitrate"] == 16436 and heat["ext"] == "mp4" and heat["size"] > 0
+    sev = vod.title(db.one("SELECT id FROM vod_titles WHERE name='Severance'")["id"])
+    e = sev["episodes"][0]
+    assert e["av"]["w"] == 3840 and e["av"]["kbps"] == 16436 and e["ext"] == "mkv" and e["size"] > 0 and e["duration"] == 3000
+    assert library.review(tsid, "nodetails") == []                     # every episode has its details now
+    assert library.measure_lengths() == "Every video's details are in"
+
+
+def test_episodes_measured_before_their_picture_was_kept_are_read_again(shows, monkeypatch):
+    sid, _ = shows
+    library.scan_share(library.share(sid))
+    db.run("UPDATE vod_episodes SET duration=2400")                    # lengths known, nothing else (an older build)
+    _stub_probe(monkeypatch, lambda url: (2400, FFMPEG_4K))
+    assert library.measure_lengths().startswith("Grabbed details for 4 videos")
+
+
+
+def test_one_file_at_a_time_with_a_breather_between(movies, monkeypatch):
+    import threading
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    library.save_settings({"read_at_once": 1})                 # the gentlest setting
+    monkeypatch.setattr(library, "READ_PAUSE", 0.1)
+    lock, now, most, at = threading.Lock(), [0], [0], []
+
+    def probe(url):
+        with lock:
+            now[0] += 1
+            most[0] = max(most[0], now[0])
+            at.append(time.time())
+        time.sleep(0.02)
+        with lock:
+            now[0] -= 1
+        return 5400, FFMPEG_4K
+    _stub_probe(monkeypatch, probe)
+    monkeypatch.setattr(library, "READ_PAUSE_SHARE", 10)        # a rest of 10× the read (0.2 s), up to READ_PAUSE
+    assert library.measure_lengths() == "Grabbed details for 5 videos"
+    # never two at once, and a rest between: 0.1 s, the most it waits
+    assert most[0] == 1 and all(b - a >= 0.1 for a, b in zip(at, at[1:]))
+
+
+def test_the_rest_between_files_follows_how_long_the_last_one_took(monkeypatch):
+    monkeypatch.setattr(library, "READ_PAUSE", 1.0)
+    assert library._pause(0.4) == pytest.approx(0.1)       # a quick NAS hardly waits
+    assert library._pause(2.0) == pytest.approx(0.5)
+    assert library._pause(30) == 1.0                       # a slow one rests, but never more than READ_PAUSE
+    assert library._pause(0) == 0
+
+
+def test_files_read_at_once_is_a_setting(movies, monkeypatch):
+    import threading
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    assert library.settings()["read_at_once"] == 2 and library._workers() == 2    # two at once, unless changed
+    library.save_settings({"read_at_once": 1})
+    assert library._workers() == 1
+    library.save_settings({"read_at_once": 2})
+    for bad in (0, 5, "lots"):
+        with pytest.raises(ValueError):
+            library.save_settings({"read_at_once": bad})
+    lock, now, most = threading.Lock(), [0], [0]
+
+    def probe(url):
+        with lock:
+            now[0] += 1
+            most[0] = max(most[0], now[0])
+        time.sleep(0.05)
+        with lock:
+            now[0] -= 1
+        return 5400, FFMPEG_4K
+    _stub_probe(monkeypatch, probe)
+    assert library.measure_lengths() == "Grabbed details for 5 videos" and most[0] == 2
+    library.save_settings({"read_at_once": 4})
+    libtasks.reset()
+    assert library.settings()["read_at_once"] == 2                                # Reset puts it back
+
+
+# ---------------------------------------------------------------- new videos aren't held up by grabbing details
+def test_a_scan_shows_new_videos_and_hands_their_details_to_their_own_job(movies, monkeypatch):
+    sid, _ = movies
+    handed = []
+    monkeypatch.setattr(vod, "probe_why", lambda *a, **k: pytest.fail("the scan itself mustn't read the files"))
+    msg = library.scan_all(quick=True, measure=lambda **kw: handed.append(kw))
+    assert msg.endswith("grabbing the details of 5 videos next") and handed == [{}]
+    assert db.one("SELECT count(*) n FROM vod_titles WHERE source_id=?", (-sid,))["n"] == 5    # in On Demand now
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.measure_lengths(**handed[0])
+    handed.clear()
+    assert library.scan_all(quick=True, measure=lambda **kw: handed.append(kw)).endswith("no changes")
+    assert handed == []                                   # nothing needs reading: no job started
+
+
+def test_a_full_rescan_hands_off_every_file_of_that_library(movies, monkeypatch):
+    sid, _ = movies
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.scan_all(share_id=sid)                        # read once, here (no hand-off)
+    handed = []
+    msg = library.scan_all(share_id=sid, full_refresh=True, measure=lambda **kw: handed.append(kw))
+    assert msg.endswith("grabbing the details of 5 videos next")
+    assert handed == [{"share_id": sid}]
+    assert library.measure_lengths(**handed[0]) == "Grabbed details for 5 videos"
+
+
+def test_the_half_hourly_task_uses_the_hand_off(movies, monkeypatch):
+    handed = []
+    monkeypatch.setattr(library, "measure_later", lambda **kw: handed.append(kw))
+    assert libtasks.run("scan") == "NAS Movies: 5 movies. grabbing the details of 5 videos next" and handed == [{}]

@@ -103,28 +103,45 @@ badges();
 async function startJob(name, q = "") {
   try {
     const r = await api(`/api/jobs/${name}${q}`, { method: "POST" });
-    if (!r.started) toast("Another job is already running");
+    if (r.started === "queued") toast(`Queued: starts after ${r.after || "the job that's running"}`);
+    else if (!r.started) toast("Another job is already running");
     pollJob();
   } catch (e) { toast(e.message); }
 }
 let polling = false;
+// two lanes run side by side: playlists, On Demand and the guide (the top of /api/jobs), and My Library ("library").
+// Each has its row in the job bar; each one's result is shown when it finishes
+function jobRow(row, text, bar, j, prefix = "") {
+  $(row).classList.toggle("hidden", !j.running);
+  if (!j.running) return;
+  $(text).textContent = `${prefix}${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
+  $(bar).style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
+}
 async function pollJob() {
   if (polling) return; polling = true;
-  let wasRunning = false, ticks = 0;
+  const was = { main: false, lib: false, vid: false };
+  let ticks = 0;
+  const reload = () => { badges(); const cur = location.hash.slice(1) || "overview"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); };
   for (;;) {
     let j; try { j = await api("/api/jobs"); } catch (_) { break; }
-    if (j.running) {
-      wasRunning = true;
-      // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
-      if (j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "overview") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
-      $("job").classList.remove("hidden");
-      $("job-text").textContent = `${j.stage}${j.total ? ` (${j.done}/${j.total})` : ""}`;
-      $("job-bar").style.width = j.total ? `${j.done / j.total * 100}%` : "15%";
-    } else {
-      $("job").classList.add("hidden");
-      if (wasRunning) { toast(j.message); badges(); const cur = location.hash.slice(1) || "overview"; loaders[cur] && !(cur === "sources" && editing()) && loaders[cur](); }
-      break;
-    }
+    const lib = j.library || {}, vid = j.videos || {};
+    // reading On Demand: its categories arrive before the titles, so keep the playlist cards current
+    if (j.running && j.name.startsWith("vod") && ++ticks % 2 === 0 && (location.hash.slice(1) || "overview") === "sources" && $("groups").classList.contains("hidden") && !editing()) loaders.sources();
+    jobRow("job-main", "job-text", "job-bar", j);
+    jobRow("job-lib", "lib-job-text", "lib-job-bar", lib, "My Library: ");
+    // grabbing video details has its own row, so a scan finding new videos shows beside it.
+    // The NAS stopped answering: nothing runs until it starts again by itself
+    const resumeIn = !vid.running && vid.resume_at ? Math.max(0, Math.round(vid.resume_at - Date.now() / 1000)) : -1;
+    if (resumeIn >= 0) jobRow("job-vid", "vid-job-text", "vid-job-bar",
+      { running: true, stage: `the NAS stopped answering; grabbing video details starts again in ${resumeIn < 60 ? `${resumeIn} s` : `${Math.ceil(resumeIn / 60)} min`}`, total: 0 }, "My Library: ");
+    else jobRow("job-vid", "vid-job-text", "vid-job-bar", vid, "My Library: ");
+    const busy = j.running || lib.running || vid.running || resumeIn >= 0;
+    $("job").classList.toggle("hidden", !busy);
+    if (was.main && !j.running) { toast(j.message); reload(); }
+    if (was.lib && !lib.running) { toast(lib.message); reload(); }
+    if (was.vid && !vid.running) { toast(vid.message); reload(); }
+    was.main = !!j.running; was.lib = !!lib.running; was.vid = !!vid.running;
+    if (!busy) break;
     await new Promise((r) => setTimeout(r, 1500));
   }
   polling = false;
@@ -572,7 +589,7 @@ $("src-form").onsubmit = async (e) => {
     let r;
     try { r = await api("/api/sources", { method: "POST", body: { ...data, max_conn: undefined } }); } catch (err) { toast(err.message); return; }
     closeSrcDlg(); toast("Added - scanning…");
-    await startJob("scan");
+    await startJob("scan", `?source=${r.id}`);      // just this playlist: the others are left as they are
     // On Demand and connections are set once it exists: the On Demand list is read after the scan
     const extra = { ...(max_conn ? { max_conn } : {}), ...Object.fromEntries(Object.entries(vod).filter(([, on]) => on)) };
     if (Object.keys(extra).length) {
@@ -799,6 +816,66 @@ document.querySelector("#tab-dvr").addEventListener("click", async (e) => {
 
 // ---------------------------------------------------------------- tuners in use
 const TN_WHO = { tv: "📺", dvr: "⏺", app: "🔌", setup: "⚙", roku: "📺" };
+// ---------------------------------------------------------------- the log, followed live while its tab is open
+const LOG_KEEP = 3000;
+const LOG = { pos: -1, lines: [], waiting: [], timer: null, paused: false };
+const LOG_LINE = /^(\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d),\d+ (\S+) (DEBUG|INFO|WARNING|ERROR|CRITICAL) (.*)$/;
+const LOG_PLAY = /On Demand: playing|Stream start|Stream end|^Recording: |HLS (start|stop|end)/i;
+const LOG_LIB = /^(My Library:|Video details|TMDB)/;
+function logShow(stick) {
+  const q = $("log-q").value.trim().toLowerCase(), lv = $("log-level").value;
+  const keep = LOG.lines.filter((l) => (!q || l.raw.toLowerCase().includes(q))
+    && (lv !== "warn" || l.level === "WARNING" || l.level === "ERROR" || l.level === "CRITICAL")
+    && (lv !== "play" || LOG_PLAY.test(l.msg)) && (lv !== "lib" || LOG_LIB.test(l.msg) || l.who === "library"));
+  const v = $("log-view");
+  // at the bottom (or asked to go there): stay at the bottom; scrolled up to read: stay put
+  stick = stick || v.scrollHeight - v.scrollTop - v.clientHeight < 30;
+  v.innerHTML = keep.map((l) => l.gap ? `<div class="gap">${esc(l.gap)}</div>`
+    : `<div class="ln ${l.cls}"><span class="t">${esc(l.time)}</span><span class="w">${esc(l.who)}</span><span class="m">${esc(l.msg)}</span></div>`).join("")
+    || `<div class="gap">${LOG.lines.length ? "Nothing matches." : "Nothing logged yet."}</div>`;
+  $("log-shown").textContent = q || lv ? `${keep.length} of ${LOG.lines.length} lines` : `${LOG.lines.length} lines`;
+  if (stick) v.scrollTop = v.scrollHeight;
+}
+// Paused: new lines wait (counted on the button) and the view stays as it is until Follow
+function logPaused() {
+  const b = $("log-follow");
+  b.textContent = LOG.paused ? `Follow${LOG.waiting.length ? ` (${LOG.waiting.length} new)` : ""}` : "Pause";
+  b.setAttribute("aria-pressed", String(!LOG.paused));
+}
+function logAdd(lines) {
+  LOG.lines.push(...lines);
+  if (LOG.lines.length > LOG_KEEP) LOG.lines.splice(0, LOG.lines.length - LOG_KEEP);
+}
+function logParse(raw) {
+  const m = LOG_LINE.exec(raw);
+  if (!m) return { raw, time: "", who: "", level: "INFO", msg: raw, cls: "" };   // a traceback's other lines
+  const [, , time, who, level, msg] = m;
+  const cls = level === "ERROR" || level === "CRITICAL" ? "err" : level === "WARNING" ? "warn" : LOG_PLAY.test(msg) ? "play" : "";
+  return { raw, time, who: who.replace(/^tunerbox\./, ""), level, msg, cls };
+}
+loaders.log = async () => {
+  clearTimeout(LOG.timer);
+  if ((location.hash.slice(1) || "overview") !== "log") return;
+  try {
+    const r = await api(`/api/log?after=${LOG.pos}`);
+    const first = LOG.pos < 0;
+    const fresh = [...(r.restarted && (LOG.lines.length || LOG.waiting.length) ? [{ gap: "The log was started over (it's kept to about 5 MB)", raw: "" }] : []),
+                   ...r.lines.map(logParse)];
+    if (LOG.paused) { LOG.waiting.push(...fresh); logPaused(); }
+    else if (fresh.length || first) { logAdd(fresh); logShow(first); }
+    LOG.pos = r.pos;
+  } catch (e) { $("log-view").innerHTML = `<div class="gap">${esc(e.message)}</div>`; }
+  LOG.timer = setTimeout(loaders.log, 2000);
+};
+$("log-q").oninput = () => logShow();
+$("log-level").onchange = () => logShow();
+$("log-follow").onclick = () => {
+  LOG.paused = !LOG.paused;
+  if (!LOG.paused) { logAdd(LOG.waiting.splice(0)); logShow(true); }     // the lines that waited, then on as before
+  logPaused();
+};
+$("log-clear").onclick = () => { LOG.lines = []; LOG.waiting = []; logPaused(); logShow(true); };
+
 let tnTimer, tnRows = {};
 const tnTime = (s) => new Date(s * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 // the show on now (from the guide), under the channel: "Jeopardy! · S41E62 — until 7:30 PM"
@@ -1089,7 +1166,8 @@ function syncSettings() {
   $("set-nav").querySelectorAll("button").forEach((b) => b.classList.toggle("dirty", dirtyCats.has(b.dataset.cat)));
   const dirty = changed.length > 0;
   f.querySelectorAll("[data-needs]").forEach((row) => {
-    const on = f.elements[row.dataset.needs].checked;
+    const need = f.elements[row.dataset.needs];      // a switch that's on, or a choice that isn't "off"
+    const on = need.type === "checkbox" ? need.checked : need.value !== "off";
     row.classList.toggle("off", !on);
     row.querySelectorAll("input, select").forEach((el) => (el.disabled = !on));
   });
@@ -1225,6 +1303,8 @@ const libStatus = (s) => {
 };
 const LIB_STATE = { ok: ["ok", "Matched"], weak: ["weak", "Check this"], none: ["none", "Not found"], pinned: ["pinned", "Picked by you"],
                     ignored: ["none", "Left out"], "": ["pending", "Not looked up"] };
+// grabbing video details: files read from the NAS at once (2 unless changed; 1 is the gentlest, more is faster on a NAS that keeps up)
+const LIB_AT_ONCE = [[1, "1 file at a time"], [2, "2 files at once"], [3, "3 files at once"], [4, "4 files at once"]];
 const LIB_REMOVE = [[0, "the next scan"], [1, "1 day"], [7, "7 days"], [30, "30 days"], [90, "90 days"]];
 const LIB_EVERY = [[0.5, "30 minutes"], [1, "hour"], [3, "3 hours"], [6, "6 hours"], [12, "12 hours"], [24, "day"], [168, "week"]];
 const libEvery = (h) => (LIB_EVERY.find(([x]) => x === h) || [h, `${h} hours`])[1];
@@ -1273,7 +1353,7 @@ loaders.library = async () => {
       <div class="lib-card-tags"><span class="tag">${libKind(sh.kind)}</span>${sh.enabled ? "" : '<span class="tag none">Hidden from On Demand</span>'}
         ${sh.review ? `<a class="tag weak" data-a="review" href="#library">${sh.review} to review</a>` : ""}</div>
       <div class="row"><span class="muted small grow">${libStatus(sh)}${sh.scanned_at ? ` · ${ago(sh.scanned_at)}` : ""}</span>
-        <button class="btn small" data-a="scan" ${sh.enabled ? "" : "disabled"} title="Read every folder of this library again, including ones that look unchanged (a file replaced under the same name)">Full rescan</button></div></div>`).join("")
+        <button class="btn small" data-a="scan" ${sh.enabled ? "" : "disabled"} title="Read every folder of this library again, download every title's details and posters again (titles you picked by hand stay as they are) and grab every video's details again (length, resolution, HDR, audio). Takes a while on a big library.">Full rescan</button></div></div>`).join("")
     : `<div class="lib-empty"><b>No libraries yet</b><span class="muted">Add your Movies folder and your TV folder, on your NAS or this PC.</span>
         <button type="button" class="btn primary" data-a="add">+ Add library</button></div>`;
   $("lib-scan").disabled = !libOn();
@@ -1395,6 +1475,7 @@ function libTasks(keepEdits = false) {
     }
   }
   const removeAfter = $("lib-remove") && keepEdits ? +$("lib-remove").value : +libData.settings.remove_after_days;
+  const atOnce = $("lib-at-once") && keepEdits ? +$("lib-at-once").value : +(libData.settings.read_at_once || 2);
   const can = libOn();
   $("lib-tasks").innerHTML = (libData.tasks || []).map((t0) => {
     const t = { ...t0, ...(edits[t0.key] || {}) };
@@ -1406,7 +1487,8 @@ function libTasks(keepEdits = false) {
         <div class="muted small">${esc(t.about)}</div>
         <div class="lib-task-opts">Every <select data-a="every" aria-label="${esc(t.name)}: how often">${libOpts(LIB_EVERY, t.every_hours)}</select>
           <span class="lib-at">${libAtPick(t.every_hours, t.at_hour, t.on_day)}</span>
-          ${t.key === "remove" ? `<span>once missing for</span> <select id="lib-remove" aria-label="Remove missing videos after">${libOpts(LIB_REMOVE, removeAfter)}</select>` : ""}</div>
+          ${t.key === "remove" ? `<span>once missing for</span> <select id="lib-remove" aria-label="Remove missing videos after">${libOpts(LIB_REMOVE, removeAfter)}</select>` : ""}
+          ${t.key === "scan" ? `<span>video details: read</span> <select id="lib-at-once" aria-label="Video files read at once" title="More at once is faster on a NAS that keeps up. If the log says the NAS stopped answering, go back to 1.">${libOpts(LIB_AT_ONCE, atOnce)}</select>` : ""}</div>
         <div class="lib-task-last small muted">${last}</div></div>
       <button type="button" class="btn small" data-a="run" ${can ? "" : 'disabled title="Add a library first"'}>Run now</button></div>`;
   }).join("");
@@ -1422,7 +1504,7 @@ $("tasks-cancel").onclick = closeTasksDlg;
 libModal("tasks-dlg", closeTasksDlg);
 $("tasks-run-all").onclick = libRunAll;
 $("tasks-reset").onclick = async () => {
-  if (!confirm("Put every task back to its default: on, at its usual schedule, starting at 4 am, and missing videos removed after 30 days? This is saved straight away.")) return;
+  if (!confirm("Put every task back to its default: on, at its usual schedule, starting at 4 am, missing videos removed after 30 days, and video files read 2 at once? This is saved straight away.")) return;
   try {
     await api("/api/library/tasks/reset", { method: "POST" });
     await loaders.library(); libTasks(); toast("Back to the defaults");
@@ -1439,10 +1521,10 @@ $("lib-tasks").addEventListener("change", (e) => {
 $("tasks-form").onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const days = +$("lib-remove").value;
-    if (days !== +libData.settings.remove_after_days) {
-      await api("/api/library/settings", { method: "POST", body: { remove_after_days: days } });
-    }
+    const days = +$("lib-remove").value, atOnce = $("lib-at-once") ? +$("lib-at-once").value : +(libData.settings.read_at_once || 2);
+    const changed = { ...(days !== +libData.settings.remove_after_days ? { remove_after_days: days } : {}),
+                      ...(atOnce !== +(libData.settings.read_at_once || 2) ? { read_at_once: atOnce } : {}) };
+    if (Object.keys(changed).length) await api("/api/library/settings", { method: "POST", body: changed });
     for (const row of $("lib-tasks").querySelectorAll(".lib-task")) {
       const t = libData.tasks.find((x) => x.key === row.dataset.key);
       const on = row.querySelector("[data-a=on]").checked, every = +row.querySelector("[data-a=every]").value;
@@ -1461,10 +1543,30 @@ $("lib-tasks").addEventListener("click", async (e) => {
   try { libStarted(await api(`/api/library/tasks/${t.key}/run`, { method: "POST" }), `${t.name}…`); }
   catch (err) { toast(err.message); }
 });
+// a title's file under Matches, in its own Quality column: badges for resolution and HDR, then the codecs and
+// sound, then the file (type, size, bitrate). A show: its episodes' total size
+function libQuality(t) {
+  const size = !t.size ? "" : t.size >= 1e9 ? `${(t.size / 1e9).toFixed(1)} GB` : `${Math.round(t.size / 1e6)} MB`;
+  const rate = !t.bitrate ? "" : t.bitrate >= 1000 ? `${(t.bitrate / 1000).toFixed(1)} Mbps` : `${t.bitrate} kbps`;
+  const file = [(t.ext || "").toUpperCase(), size, rate].filter(Boolean).join(" · ");
+  const av = t.av || t.hint;      // not read yet: what the file name says, marked as such
+  if (!av) {
+    const note = t.kind === "movie" ? '<div class="lq-note">No video details yet</div>' : "";
+    return file ? `${note}<div class="lq-line">${esc(file)}</div>` : '<span class="muted">—</span>';
+  }
+  const guess = t.av ? "" : '<div class="lq-note">From the file name; not read yet</div>';
+  const res = av.w >= 3200 ? "4K" : av.w >= 1800 ? "1080p" : av.w >= 1200 ? "720p" : av.w ? "SD" : "";
+  const vc = { hevc: "HEVC", h264: "H.264", av1: "AV1", vp9: "VP9", mpeg2video: "MPEG-2", mpeg4: "MPEG-4" }[av.vcodec] || av.vcodec || "";
+  const ac = { eac3: "DD+", ac3: "DD", truehd: "TrueHD", dts: "DTS", aac: "AAC", mp3: "MP3", opus: "Opus", flac: "FLAC" }[av.acodec] || av.acodec || "";
+  const badges = (res ? `<span class="lq-res">${res}</span>` : "") + (av.hdr ? `<span class="lq-hdr">${esc(av.hdr)}</span>` : "");
+  const codecs = [vc, [av.layout, ac].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  return (badges ? `<div class="lq-badges">${badges}</div>` : "")
+    + (codecs ? `<div class="lq-line">${esc(codecs)}</div>` : "") + (file ? `<div class="lq-line">${esc(file)}</div>` : "") + guess;
+}
 async function libTitles() {
-  const q = $("lib-q").value.trim(), f = $("lib-filter").value;
+  const q = $("lib-q").value.trim(), f = $("lib-filter").value, kind = $("lib-kind").value;
   let rows;
-  try { rows = await api(`/api/library/titles?filter=${f}&q=${encodeURIComponent(q)}`); } catch (e) { toast(e.message); return; }
+  try { rows = await api(`/api/library/titles?filter=${f}&kind=${kind}&q=${encodeURIComponent(q)}`); } catch (e) { toast(e.message); return; }
   $("lib-shown").textContent = rows.length >= 300 ? "first 300 shown" : `${rows.length} title${rows.length === 1 ? "" : "s"}`;
   $("lib-body").innerHTML = rows.length ? rows.map((t) => {
     const [cls, label] = LIB_STATE[t.state] || LIB_STATE[""];
@@ -1474,13 +1576,15 @@ async function libTitles() {
       <td><b>${esc(t.name)}</b>${t.year ? ` <span class="muted">(${esc(t.year)})</span>` : ""}
         <div class="muted small">${t.kind === "movie" ? "Movie" : `TV · ${t.eps} episode${t.eps === 1 ? "" : "s"}`} · ${esc(t.category)}</div></td>
       <td class="file">${esc(t.file)}</td>
+      <td class="lq">${libQuality(t)}</td>
       <td><span class="tag ${cls}">${label}${pct}</span>${t.missing_since ? `<div class="small bad-text">File missing since ${fmt(t.missing_since)}</div>` : ""}</td>
       <td class="acts"><button class="btn small" data-a="fix">Fix</button>
         <button class="btn small" data-a="${t.state === "ignored" ? "unignore" : "ignore"}">${t.state === "ignored" ? "Bring back" : "Leave out"}</button></td></tr>`;
-  }).join("") : `<tr><td colspan="5" class="muted">${f === "review" ? "Nothing to review." : "No titles."}</td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="muted">${f === "review" ? "Nothing to review." : f === "nodetails" ? "Every video's details are in." : "No titles."}</td></tr>`;
   libTitles.rows = rows;
 }
 $("lib-filter").onchange = libTitles;
+$("lib-kind").onchange = libTitles;
 $("lib-q").oninput = () => { clearTimeout(libQT); libQT = setTimeout(libTitles, 300); };
 
 function libForm() {
@@ -1523,7 +1627,7 @@ $("lib-list").addEventListener("click", async (e) => {
   if (b.dataset.a === "edit") openLibDlg(sh);
   else if (b.dataset.a === "review") libShow("review", sh.name);
   else if (b.dataset.a === "scan") {
-    try { libStarted(await api("/api/library/scan", { method: "POST", body: { share_id: sh.id } }), `Reading all of ${sh.name}…`); }
+    try { libStarted(await api("/api/library/scan", { method: "POST", body: { share_id: sh.id, refresh: true } }), `Reading all of ${sh.name} again…`); }
     catch (err) { toast(err.message); }
   }
 });
@@ -1696,4 +1800,6 @@ $("lock-setup").onchange = async (e) => {
 // ---------------------------------------------------------------- start
 showTab(location.hash.slice(1) || "overview");
 pollJob();
+// jobs this page didn't start (a scheduled scan, grabbing video details starting again by itself): shown as they begin
+setInterval(() => { if (!polling && !document.hidden) pollJob(); }, 5000);
 })();

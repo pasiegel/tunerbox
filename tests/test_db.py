@@ -81,3 +81,44 @@ def test_migrations_repair_a_database_numbered_by_another_build():
     cols = {r["name"] for r in db.rows("PRAGMA table_info(sources)")}
     assert {"hidden_groups", "video_mode", "vod_movies", "vod_series", "vod_hidden", "user_agent"} <= cols
     db.init()                       # and again: nothing breaks on a second start
+
+
+def test_old_on_demand_titles_get_the_version_columns(fresh_data):
+    path = config.DATA / "tunerbox.db"
+    path.unlink()
+    for ext in ("-wal", "-shm"):
+        (config.DATA / f"tunerbox.db{ext}").unlink(missing_ok=True)
+    from tunerbox import vod
+    # On Demand's table as it was before bitrate / tmdb / o_search: today's, cut off before them
+    table = vod.SCHEMA.split("CREATE TABLE IF NOT EXISTS vod_titles")[1].split("\n    bitrate ")[0]
+    table = table.replace("country TEXT DEFAULT '',", "country TEXT DEFAULT ''") + "\n)"
+    eps = vod.SCHEMA.split("CREATE TABLE IF NOT EXISTS vod_episodes")[1].split(",\n    av ")[0] + "\n)"
+    con = sqlite3.connect(path)
+    con.execute(f"CREATE TABLE vod_titles {table}")
+    con.execute(f"CREATE TABLE vod_episodes {eps}")             # and its episodes before they kept picture and sound
+    assert "bitrate" not in {r[1] for r in con.execute("PRAGMA table_info(vod_titles)")}
+    assert "av" not in {r[1] for r in con.execute("PRAGMA table_info(vod_episodes)")}
+    con.execute("INSERT INTO vod_titles(id, source_id, kind, name, search) VALUES ('1:m1', 1, 'movie', 'Old', 'old')")
+    con.commit()
+    con.close()
+    db.init()
+    assert {"bitrate", "tmdb", "o_search", "av"} <= _cols("vod_titles")
+    assert "av" in _cols("vod_episodes")
+    assert db.one("SELECT bitrate, tmdb, o_search, av FROM vod_titles") == {"bitrate": 0, "tmdb": "", "o_search": "", "av": ""}
+    db.init()                         # running again changes nothing
+
+
+def test_versions_are_found_through_indexes_not_a_scan():
+    from tunerbox import vod
+    t = {"kind": "movie", "search": "film", "year": "2020", "tmdb": "585083"}
+    with db.conn() as c:
+        captured = []
+        orig = db.rows
+        db.rows = lambda q, a=(): captured.append((q, a)) or []
+        try:
+            vod._version_rows(t)
+        finally:
+            db.rows = orig
+        q, a = captured[0]
+        plan = " ".join(r[3] for r in c.execute(f"EXPLAIN QUERY PLAN {q}", a))
+    assert "ix_vod_same" in plan and "ix_vod_tmdb" in plan and "ix_vod_browse" not in plan

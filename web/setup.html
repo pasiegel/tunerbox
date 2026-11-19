@@ -28,13 +28,18 @@
     <button data-tab="dvr">DVR</button>
     <button data-tab="phones">Phones</button>
     <button data-tab="settings">Settings</button>
+    <button data-tab="log">Log</button>
   </nav>
   <div class="side-foot">
     <a class="btn" href="/remote" title="Phone remote">&#128241; Remote</a>
     <a class="btn primary" href="/?on">&#9654; Watch TV</a>
   </div>
 </header>
-<div id="job" class="hidden"><span id="job-text"></span><div class="bar"><div id="job-bar"></div></div></div>
+<div id="job" class="hidden">
+  <div class="job-row hidden" id="job-main"><span id="job-text"></span><div class="bar"><div id="job-bar"></div></div></div>
+  <div class="job-row hidden" id="job-lib"><span id="lib-job-text"></span><div class="bar"><div id="lib-job-bar"></div></div></div>
+  <div class="job-row hidden" id="job-vid"><span id="vid-job-text"></span><div class="bar"><div id="vid-job-bar"></div></div></div>
+</div>
 
 <main>
   <!-- overview: is everything working? -->
@@ -152,10 +157,11 @@
     <p class="muted small">Check the titles under <b>Needs review</b>: <b>Fix</b> picks the right title on TMDB (kept through rescans), <b>Leave out</b> hides a file from On Demand.</p>
     <div class="toolbar">
       <input id="lib-q" placeholder="Search titles or files…">
-      <select id="lib-filter"><option value="review">Needs review</option><option value="all">All titles</option><option value="pending">Not looked up yet</option><option value="ignored">Left out</option><option value="missing">Missing files</option></select>
+      <select id="lib-kind" aria-label="Movies or TV shows"><option value="">Movies and TV shows</option><option value="movie">Movies</option><option value="series">TV shows</option></select>
+      <select id="lib-filter"><option value="review">Needs review</option><option value="all">All titles</option><option value="pending">Not looked up yet</option><option value="ignored">Left out</option><option value="missing">Missing files</option><option value="nodetails">No video details</option></select>
       <span id="lib-shown" class="muted"></span>
     </div>
-    <table class="grid lib-grid"><thead><tr><th></th><th>Title</th><th>Folder / file</th><th>Match</th><th></th></tr></thead><tbody id="lib-body"></tbody></table>
+    <table class="grid lib-grid"><thead><tr><th></th><th>Title</th><th>Folder / file</th><th>Quality</th><th>Match</th><th></th></tr></thead><tbody id="lib-body"></tbody></table>
   </section>
 
   <!-- guide -->
@@ -191,6 +197,20 @@
     <h3>In use now</h3>
     <table class="grid"><thead><tr><th>Playing</th><th>Playlist</th><th>Watching</th><th>Since</th><th></th></tr></thead><tbody id="tn-body"></tbody></table>
     <p class="muted small">Updates every few seconds while this tab is open. <b>Stop</b> ends a stream for everyone on it and frees its connection: TV screens show “Stopped from Setup” until a channel is picked, and apps like Roku or Plex can't reopen it for 30 seconds.</p>
+  </section>
+
+  <!-- the log, followed live -->
+  <section id="tab-log" class="hidden">
+    <h3>Log</h3>
+    <p class="muted">What TunerBox is doing, as it happens: channels and movies starting and stopping, scans, guide updates, problems. Logins, passwords and keys are hidden.</p>
+    <div class="toolbar">
+      <input id="log-q" placeholder="Filter, e.g. On Demand or a channel name">
+      <select id="log-level"><option value="">Everything</option><option value="warn">Warnings and errors</option><option value="play">Playing (channels and On Demand)</option><option value="lib">My Library (scans, video details, TMDB)</option></select>
+      <button class="btn small" id="log-follow" aria-pressed="true">Pause</button>
+      <button class="btn small" id="log-clear">Clear</button>
+      <span id="log-shown" class="muted small"></span>
+    </div>
+    <div id="log-view" class="log-view" tabindex="0" aria-live="off"></div>
   </section>
 
   <!-- phones -->
@@ -244,6 +264,8 @@
         <h4>On Demand</h4>
         <label class="set-row"><span class="set-text"><b>Show adult titles</b><small>Movies and shows your provider marks as adult. Off: they're left out the next time the lists are read (that starts when you change this).</small></span><input type="checkbox" class="toggle" name="vod_show_adult"></label>
         <label class="set-row"><span class="set-text"><b>List these languages first in search</b><small>When a title comes in several languages ("EN - Dune", "ES - Dune"), the ones tagged with these codes come first. EN, or EN,FR.</small></span><input name="vod_search_first" placeholder="EN"></label>
+        <label class="set-row"><span class="set-text"><b>Pick a version: movie details from the files</b><small>To show each version's resolution, HDR and sound, TunerBox reads a little of its file (one at a time, only when its playlist has a connection free). <b>Automatically</b>: when Pick a version opens. <b>Only when I ask</b>: when you press Read details. What the provider lists and what the file names say are shown either way.</small></span><select name="vod_details"><option value="auto">Automatically</option><option value="ask">Only when I ask</option><option value="off">Off</option></select></label>
+        <label class="set-row" data-needs="vod_details"><span class="set-text"><b>Pause what's playing to read them</b><small>When the only connection free is the one that screen is using (live TV behind On Demand, or a movie), pause it for the reading. It comes back on by itself. Another screen is never paused.</small></span><input type="checkbox" class="toggle" name="vod_details_pause"></label>
       </div>
 
       <div class="set-group" data-cat="sports" data-label="Sports">
