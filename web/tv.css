@@ -107,6 +107,13 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .saver-logo span { color: var(--hl); }
 #buffering { position: absolute; right: 3vw; top: 4vh; z-index: 55; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); padding: .6em 1.2em; border-radius: .9em; font-size: 1.15em; display: flex; align-items: center; gap: .6em; }
 #buffering .spin { width: 1em; height: 1em; border: .18em solid var(--c-t4-55); border-top-color: var(--hl); border-radius: 50%; animation: tbspin .8s linear infinite; }
+/* Menu › Stream stats: a box over the picture, top left, under the guide / Home / On Demand screens */
+#sstats { position: absolute; left: 1.6em; top: 1.6em; z-index: 25; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: .9em; padding: .7em 1em; font-size: .9em; max-width: min(30em, calc(100vw - 3.2em)); pointer-events: none; }
+#sstats .ss-head { font-weight: 800; color: var(--hl); margin-bottom: .35em; }
+#sstats .ss-grid { display: grid; grid-template-columns: auto 1fr; gap: .15em .9em; font-variant-numeric: tabular-nums; }
+#sstats .ss-k { color: var(--dim); }
+#sstats .ss-v { color: var(--text); overflow-wrap: anywhere; }
+#sstats .ss-bad { color: var(--red); }
 @keyframes tbspin { to { transform: rotate(360deg); } }
 #dlg-img { display: block; width: min(38vh, 70vw); height: auto; margin: .6em auto; background: var(--c-fg); border-radius: 10px; padding: .6em; }
 /* show pictures from the guide */
@@ -374,15 +381,46 @@ html:not(.phone) #tv:has(#remote.live:not(.hidden)) #banner { display: none; }  
 .phone #gi-desc { font-size: 13px; line-height: 1.3; max-height: none; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; }
 .phone .g-head { height: 34px; font-size: 13px; }
 .phone .g-day { padding-left: 8px; }
-.phone .g-ch { flex-wrap: wrap; align-content: center; gap: 0 4px; padding: 0 6px; }
+/* channel cell: the star on the left, the number with the name lined up under it */
+.phone .g-ch { display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: center; gap: 0 4px; padding: 0 6px; }
 .phone .g-ch img { display: none; }
-.phone .g-ch .n { min-width: 0; font-size: 17px; }
-.phone .g-ch .l { flex-basis: 100%; font-size: 11px; font-weight: 400; color: var(--dim); }
+.phone .g-fav { grid-row: 1 / span 2; align-self: center; margin: 0; }
+.phone .g-ch .n { grid-column: 2; min-width: 0; font-size: 17px; line-height: 1.1; }
+.phone .g-ch .l { grid-column: 2; font-size: 11px; font-weight: 400; color: var(--dim); }
 .phone .g-row.sel .g-ch .l { color: var(--c-fg); }
 .phone .g-p { white-space: normal; padding: 0 6px; font-size: 13px; line-height: 1.2; }
 .phone .g-p .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-aspect-ratio: 1/1) {
   .phone .g-top { height: 26vh; }
+}
+/* phone on its side (like On Demand): a short info strip, Close in the top-right corner instead of eating the
+   bottom, clear of the notch, no key hints, and fewer rows (20-guide.js) so the cells stay readable */
+@media (min-aspect-ratio: 1/1) {
+  .phone #guide { padding: calc(env(safe-area-inset-top, 0px) + 6px) calc(env(safe-area-inset-right, 0px) + 8px)
+                             calc(env(safe-area-inset-bottom, 0px) + 6px) calc(env(safe-area-inset-left, 0px) + 8px); }
+  .phone:has(#guide:not(.hidden)) #video.pip { top: calc(env(safe-area-inset-top, 0px) + 6px); left: calc(env(safe-area-inset-left, 0px) + 8px);
+    height: 24vh; width: 42.7vh; max-height: none; }
+  .phone .g-top { height: 24vh; padding-bottom: 6px; }
+  .phone #g-pip { flex-basis: 42.7vh; }
+  .phone #g-info { padding-right: 104px; }          /* room for Close */
+  .phone #gi-title { font-size: 16px; display: block; white-space: nowrap; text-overflow: ellipsis; }
+  .phone #gi-sub, .phone #gi-meta { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phone #gi-meta { margin-top: 2px; }
+  .phone #gi-desc { font-size: 12px; margin-top: 2px; -webkit-line-clamp: 1; }
+  .phone #g-filters { margin-bottom: 5px; gap: 6px; }
+  .phone .g-pill { font-size: 13px; padding: 3px 11px; }
+  .phone .g-foot { display: none; }
+  .phone:has(#guide:not(.hidden)) #back { top: calc(env(safe-area-inset-top, 0px) + 6px); bottom: auto; right: calc(env(safe-area-inset-right, 0px) + 8px);
+                 padding: 7px 14px; font-size: 14px; }
+  .phone .g-head { height: 30px; }
+  /* plenty of width, little height: one line per channel and per show */
+  .phone .g-ch, .phone .g-day { width: 20%; }
+  .phone .g-ch { grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 0 6px; }
+  .phone .g-fav { grid-row: 1; }
+  .phone .g-ch .n { grid-column: 2; font-size: 15px; }
+  .phone .g-ch .l { grid-column: 3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .phone .g-p { white-space: nowrap; }
+  .phone .g-p .t { display: block; white-space: nowrap; text-overflow: ellipsis; }
 }
 
 /* on demand: movies and shows from the playlists (laid out like the guide) */

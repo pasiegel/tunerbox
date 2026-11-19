@@ -211,6 +211,8 @@ const MENU = [
     act: () => { closeMenu(); sleepDialog(); } },
   { get label() { const b = bufSecs(); return `Stream cache: ${b ? b + " seconds" : "Off"}${localStorage.getItem("tb.buffer") === null ? " (default)" : " (this screen)"}`; },
     act: () => { closeMenu(); bufferDialog(); } },
+  { id: "sstats", get label() { return `Stream stats: ${ssOn() ? "On" : "Off"} (this screen)`; },
+    act: () => { toggleStreamStats(); renderMenu(menuShown.indexOf(MENU_SSTATS)); } },
   { id: "homestart", needsHome: true, get label() { return `Start on Home: ${homeAtStart() ? "On" : "Off"} (this screen)`; },
     act: () => { try { localStorage.setItem("tb.homeStart", homeAtStart() ? "0" : "1"); } catch (_) {} renderMenu(menuShown.indexOf(MENU_HOMESTART)); } },
   { get label() { const own = tbTheme.own(); return `Theme: ${tbTheme.label(own || S.settings.theme)}${own ? " (this screen)" : " (default)"}`; },
@@ -226,6 +228,7 @@ const MENU = [
   { label: "Turn off", act: () => { closeMenu(); powerOff(); } },
 ];
 const MENU_HOMESTART = MENU.find((e) => e.id === "homestart");
+const MENU_SSTATS = MENU.find((e) => e.id === "sstats");
 // Android app: switch to another TunerBox PC (in place of Full screen)
 if (window.TunerBoxApp) MENU.splice(MENU.findIndex((e) => e.id === "full"), 1, { label: "Change TunerBox server", act: () => window.TunerBoxApp.changeServer() });
 // the entries shown right now: phones leave out the ones that only make sense on a TV / PC, and a
