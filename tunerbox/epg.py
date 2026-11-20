@@ -465,16 +465,34 @@ def _store(rows, windows, channels=None):
     """Replace these channels' programs starting inside each (lo, hi) window (hi None = open-ended)."""
     rows = list(rows)
     chans = channels or sorted({r[0] for r in rows})
+    by_ch = {}
+    for r in rows:
+        by_ch.setdefault(r[0], []).append(r)
+    from . import catchup
     with db.conn() as c:
-        from . import catchup
         catchup.prune(c)                # ended shows: kept for the archive on channels with catch-up
-        for ch in chans:
-            for lo, hi in windows:
-                if hi is None:
-                    c.execute("DELETE FROM programs WHERE channel=? AND start>=?", (ch, lo))
-                else:
-                    c.execute("DELETE FROM programs WHERE channel=? AND start>=? AND start<?", (ch, lo, hi))
-        c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    # a few channels at a time, each replaced whole in one transaction (so a channel's guide is never half
+    # there), keeping every transaction short so other writers aren't left waiting out the lock
+    group, size = [], 0
+    for i, ch in enumerate(chans):
+        group.append(ch); size += len(by_ch.get(ch, ())) + 1
+        if size < db.BATCH and i < len(chans) - 1:
+            continue
+        with db.conn() as c:
+            for g in group:
+                for lo, hi in windows:
+                    if hi is None:
+                        c.execute("DELETE FROM programs WHERE channel=? AND start>=?", (g, lo))
+                    else:
+                        c.execute("DELETE FROM programs WHERE channel=? AND start>=? AND start<?", (g, lo, hi))
+                c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", by_ch.get(g, ()))
+        group, size = [], 0
+    # rows for a channel that wasn't listed in `channels` (shouldn't happen): stored as before
+    listed = set(chans)
+    extra = [r for ch, rs in by_ch.items() if ch not in listed for r in rs]
+    if extra:
+        with db.conn() as c:
+            c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", extra)
 
 
 def refresh_all(progress=None):

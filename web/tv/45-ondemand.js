@@ -34,6 +34,13 @@ const fmtAv = (av) => {
 // it underneath, and the resolution and HDR as badges on the right (dashed: only what the file name says)
 // a version's name: its label ("EN", "4K-AMZ"), else "Your copy" for one of your own files, else where it is
 const pvName = (v, none = "No label") => v.tag || (v.mine ? "Your copy" : v.where) || none;
+// a version's own progress (the server sends it per version): { text, pct, watched }, or null when it has none
+function pvProgress(v) {
+  if (v.watched) return { text: "Watched", pct: 0, watched: true };
+  if (!(v.position > RESUME_MIN)) return null;
+  const dur = v.duration || v.pdur;
+  return { text: `Stopped at ${fmtDur(v.position)}`, pct: dur ? Math.min(1, v.position / dur) : 0, watched: false };
+}
 function pvRow(v, label, lenDiffers) {
   const av = v.av || v.hint, guess = !v.av && !!v.hint;
   const res = !av ? "" : av.w >= 3200 ? "4K" : av.w >= 1800 ? "1080p" : av.w >= 1200 ? "720p" : av.w ? "SD" : "";
@@ -44,14 +51,18 @@ function pvRow(v, label, lenDiffers) {
     fmtRate(v.bitrate), v.len_unknown ? "length unknown" : lenDiffers && fmtLen(v.duration), fmtFile(v),
     v.where && `from ${v.where}`].filter(Boolean);
   // "Your copy" as a tag only when the name is a label (otherwise the name already says it)
-  const tags = (v.mine && v.tag ? '<span class="pv-tag">Your copy</span>' : "") + (v.current ? '<span class="pv-tag now">Current</span>' : "");
+  const prog = pvProgress(v);
+  const tags = (v.mine && v.tag ? '<span class="pv-tag">Your copy</span>' : "") + (v.current ? '<span class="pv-tag now">Current</span>' : "")
+    + (prog ? `<span class="pv-tag ${prog.watched ? "seen" : "prog"}">${esc(prog.text)}</span>` : "");
+  // where this version was stopped: a bar along the row's foot
+  const bar = prog && prog.pct > 0 ? `<span class="pv-bar"><i style="width:${(prog.pct * 100).toFixed(1)}%"></i></span>` : "";
   const badge = (text, cls) => `<span class="pv-b ${cls}${guess ? " guess" : ""}">${esc(text)}</span>`;
   const badges = (res ? badge(res, res === "4K" ? "k4" : "") : "") + (av && av.hdr ? badge(av.hdr, "hdr") : "");
   return `<div class="pv-main"><div class="pv-name"><span class="pv-label">${esc(label)}</span>${tags}</div>`
     + `<div class="pv-meta">${esc(meta.join("  ·  ")) || (v.checking ? "" : esc(v.why || "No details yet"))}`
     + `${v.checking ? `<span class="pv-reading">${meta.length ? " · " : ""}Reading…</span>` : ""}`
     + `${!v.checking && v.why && meta.length ? `<span class="pv-why"> · ${esc(v.why)}</span>` : ""}${guess ? `<span class="pv-guess"> · ${v.mine ? "from the file name" : "from its label"}</span>` : ""}</div></div>`
-    + (badges ? `<div class="pv-badges">${badges}</div>` : "");
+    + (badges ? `<div class="pv-badges">${badges}</div>` : "") + bar;
 }
 const odTabId = () => OD_TABS[OD.tab][0];
 const odHasCats = () => OD.tab < 2;                  // the Movies and TV Shows tabs
@@ -346,8 +357,12 @@ function odMovieDialog(d) {
   if (others.length) entries.push({ label: `Other versions (${others.map((v) => pvName(v, "no label")).join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
+  // not started in this copy, but in another one: say which (the most recent)
+  const other = resume || d.watched ? null : others.filter((v) => !v.watched && v.position > RESUME_MIN)
+    .sort((a, b) => (b.stopped || 0) - (a.stopped || 0))[0];
   openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), fmtAv(d.av || d.hint), fmtRate(d.bitrate), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
-    + (resume ? ` · You stopped at ${fmtDur(d.position)}` : d.watched ? " · Watched" : ""), entries);
+    + (resume ? ` · You stopped at ${fmtDur(d.position)}` : d.watched ? " · Watched"
+       : other ? ` · You stopped ${pvName(other, "another version")} at ${fmtDur(other.position)}` : ""), entries);
 }
 function odEpisodeDialog(show, e) {
   const resume = !e.watched && e.position > RESUME_MIN;
@@ -394,15 +409,57 @@ function pvHold() {
 // the same film or show under the playlist's other labels (languages, 4K…)
 function odVersions(d) {
   // a movie: straight into it, from where this version was stopped (else wherever that version was left)
-  const at = d.kind !== "series" && !d.watched && d.position > RESUME_MIN ? d.position : undefined;
-  const go = (v) => {
-    closeDialog();
-    if (d.kind === "series") { closePanels(); openOD("series", v.id); return; }
-    if (v.current || at === undefined) { playVod(v.id, v.current ? undefined : at); return; }
-    const here = (d.versions || []).find((x) => x.current);
-    playVod(v.id, odSamePoint(at, (here && here.duration) || d.duration, v.duration));
+  let at = d.kind !== "series" && !d.watched && d.position > RESUME_MIN ? d.position : undefined;
+  const here = () => (d.versions || []).find((x) => x.current);
+  // where the version you were watching stopped, as the same point in v (-1: none, or v is that version)
+  const carry = (v) => {
+    if (v.current || at === undefined) return -1;
+    const h = here();
+    return odSamePoint(at, (h && h.duration) || d.duration, v.duration);
+  };
+  // A version picked that was started (here, or in the one you were watching) or watched: ask where it
+  // starts. Its row stays on top (not selectable), the choices under it; Back goes back to the versions.
+  let ask = null, note = "Pick a version · checking each one…";
+  const setSub = (t) => { if (t) note = t; $("dlg-sub").textContent = ask ? "Where do you want to start?" : note; };
+  const go = (v, label) => {
+    if (d.kind === "series") { closeDialog(); closePanels(); openOD("series", v.id); return; }
+    if (pvProgress(v) || carry(v) >= 0) {
+      ask = { v, label }; dlg.back = askEnd; setSub();
+      redraw(d.versions || []);
+      return;
+    }
+    playVod(v.id, 0);
+  };
+  function askEnd() {
+    const id = ask && ask.v.id;
+    ask = null; dlg.back = null; setSub();
+    redraw(d.versions || [], id);
+  }
+  // "Mark this copy as not watched": only this version's progress goes, back to the versions
+  async function unwatch(v) {
+    try { await api("/api/vod/watched", { method: "POST", body: { id: v.id, watched: false } }); } catch (e) { toast(e.message); return; }
+    toast(`${pvName(v, "This copy")} marked as not watched`);
+    d.versions = (d.versions || []).map((x) => (x.id === v.id ? { ...x, position: 0, watched: false, stopped: 0 } : x));
+    if (v.current) { at = undefined; d.position = 0; d.watched = false; }
+    OD.details.delete(d.id);
+    if (open()) { if (ask) askEnd(); else redraw(d.versions); }      // Back pressed meanwhile: just the fresh tags
+    odRefresh();
+  }
+  const askRows = () => {
+    const v = (d.versions || []).find((x) => x.id === ask.v.id) || ask.v, own = pvProgress(v);
+    const rows = [{ label: ask.label, cls: "pv hdr pv-fixed", html: pvRow(v, ask.label, false), act: () => {} }];
+    const ownAt = own && !own.watched ? v.position : -1;
+    if (ownAt >= 0) rows.push({ label: `Resume from ${fmtDur(ownAt)}`, cls: "pv-act", act: () => playVod(v.id, ownAt) });
+    const c = carry(v);
+    if (c >= 0 && (ownAt < 0 || Math.abs(c - ownAt) > 60))
+      rows.push({ label: `Continue from ${fmtDur(c)} (where ${pvName(here() || {}, "this version")} stopped)`, cls: "pv-act", act: () => playVod(v.id, c) });
+    rows.push({ label: "Play from the beginning", cls: "pv-act", act: () => playVod(v.id, 0) });
+    if (own) rows.push({ label: "Mark this copy as not watched", cls: "pv-act", act: () => unwatch(v) });
+    rows.push({ label: "Back", cls: "pv-close", act: askEnd });
+    return rows;
   };
   const entries = (vs) => {
+    if (ask) return askRows();
     // lengths only when they differ (another cut, a PAL copy): otherwise they'd just repeat
     const lens = vs.map((v) => v.duration).filter(Boolean);
     const lenDiffers = lens.length > 1 && Math.max(...lens) - Math.min(...lens) > 120;
@@ -412,7 +469,8 @@ function odVersions(d) {
       const added = same.length > 1 && v.added
         ? `added ${new Date(v.added * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" })}` : "";
       return { label: [`${name(v)}${n}`, added].filter(Boolean).join(" · "), cls: "pv",
-               html: pvRow(v, [`${name(v)}${n}`, added].filter(Boolean).join(" · "), lenDiffers), act: () => go(v) };
+               html: pvRow(v, [`${name(v)}${n}`, added].filter(Boolean).join(" · "), lenDiffers),
+               act: () => go(v, [`${name(v)}${n}`, added].filter(Boolean).join(" · ")) };
     }),
     // Reading each version's picture and sound. "Only when I ask": always offered (read the ones not read yet,
     // else read them all again). Automatically: only when some couldn't be read (no connection free, slow provider)
@@ -427,16 +485,29 @@ function odVersions(d) {
     return peekMode() === "ask" ? [{ label: "Read video quality again", cls: "pv-again", act: () => readAll(true, true) }] : [];
   };
   let reading = true;
-  openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version · checking each one…", entries(d.versions || []));
+  openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, note, entries(d.versions || []));
   $("dialog").classList.add("pv-dlg");          // wider, for the details (openDialog takes it off again)
+  // start on the version playing (the one you opened)
+  const cur = (d.versions || []).findIndex((v) => v.current);
+  if (cur > 0) fillList($("dlg-list"), dlg.entries, cur);
   let shown = dlg.entries;
   const open = () => top() === "dialog" && dlg.entries === shown;      // not closed, no other dialog meanwhile
-  const redraw = (vs) => {
-    // the highlight stays on the same version when the list comes back in another order; on Close or
-    // Read details again, it stays that many rows from the end
+  // pick: the version to highlight (back from "where to start")
+  function redraw(vs, pick) {
     const rows = [...$("dlg-list").children];
     const sel = Math.max(0, rows.findIndex((li) => li.classList.contains("sel")));
-    const was = (d.versions || [])[sel];
+    if (ask) {
+      // where to start: the same choice stays highlighted (the version's row on top can't be)
+      const wasAsk = rows[0] && rows[0].classList.contains("pv-fixed");
+      d.versions = vs;
+      shown = dlg.entries = entries(vs);
+      fillList($("dlg-list"), dlg.entries, wasAsk ? Math.min(Math.max(1, sel), dlg.entries.length - 1) : 1);
+      return;
+    }
+    // the highlight stays on the same version when the list comes back in another order; on Close or
+    // Read details again, it stays that many rows from the end
+    const was = pick ? (d.versions || []).find((v) => v.id === pick)
+      : rows[0] && rows[0].classList.contains("pv-fixed") ? null : (d.versions || [])[sel];
     d.versions = vs;
     const at = was ? vs.findIndex((v) => v.id === was.id) : -1;
     shown = dlg.entries = entries(vs);
@@ -454,7 +525,7 @@ function odVersions(d) {
     let resume = null;
     const peek = (v) => api(`/api/vod/peek/${vodPath(v.id)}?client=${encodeURIComponent(CID)}${force ? "&force=1" : ""}${again ? "&again=1" : ""}`)
       .catch((e) => ({ id: v.id, why: e.message }));
-    $("dlg-sub").textContent = "Pick a version · reading each one…";
+    setSub("Pick a version · reading each one…");
     try {
       for (const v of (d.versions || []).filter((x) => again || !x.av)) {
         if (!open()) return;
@@ -463,7 +534,7 @@ function odVersions(d) {
         if (got && got.mine && !resume && open()) {
           resume = pvHold();
           if (resume) {
-            $("dlg-sub").textContent = "Pick a version · paused what's playing to read each one…";
+            setSub("Pick a version · paused what's playing to read each one…");
             await api("/api/stop", { method: "POST", body: { client: CID } }).catch(() => {});
             await new Promise((r) => setTimeout(r, 1500));      // some providers take a moment to see it closed
             if (!open()) return;
@@ -479,7 +550,7 @@ function odVersions(d) {
     }
     if (!open()) return;
     redraw(d.versions);
-    $("dlg-sub").textContent = "Pick a version";
+    setSub("Pick a version");
   }
   (async () => {
     // the provider's bitrate of each version: fetched once per version, then kept
@@ -487,7 +558,7 @@ function odVersions(d) {
     if (!open()) return;
     if (vs && vs.length) redraw(vs);
     if (d.kind !== "series" && peekMode() === "auto") await readAll(false);
-    else { reading = false; if (open()) { redraw(d.versions || []); $("dlg-sub").textContent = "Pick a version"; } }
+    else { reading = false; if (open()) { redraw(d.versions || []); setSub("Pick a version"); } }
   })();
 }
 // OK on a movie (from the grid or from Search): its options

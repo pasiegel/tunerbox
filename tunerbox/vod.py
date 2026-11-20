@@ -298,7 +298,13 @@ def _store(src, kinds, rows):
         c.execute(f"DELETE FROM vod_cats WHERE source_id=? AND kind IN ({q})", (src["id"], *kinds))
         c.executemany("INSERT OR REPLACE INTO vod_cats(source_id, kind, name, count) VALUES (?,?,?,?)",
                       [(src["id"], k, n, cnt) for (k, n), cnt in counts.items()])
-        c.executemany(_UPSERT, kept)
+    # a provider's catalogue can be a quarter of a million titles: written in batches so other writers (the
+    # scoreboard, watch progress, recordings) get a turn in between instead of waiting out the lock. Titles
+    # not seen this time (seen_at before now) go once all of them are in.
+    for i in range(0, len(kept), db.BATCH):
+        with db.conn() as c:
+            c.executemany(_UPSERT, kept[i:i + db.BATCH])
+    with db.conn() as c:
         c.execute(f"DELETE FROM vod_titles WHERE source_id=? AND kind IN ({q}) AND seen_at<?", (src["id"], *kinds, now))
         c.execute("DELETE FROM vod_episodes WHERE title_id NOT IN (SELECT id FROM vod_titles)")
     _changed()
@@ -831,7 +837,22 @@ def versions(t):
             "len_unknown": False}
            for r in rows]
     _unknown_lengths(out)
+    _version_progress(out)
     return out
+
+
+def _version_progress(vs):
+    """Each version's own progress (a movie's versions are each their own item): where it was stopped
+    (position, with the length it was played at in pdur and when in stopped), or watched. A show's versions
+    have none here: their progress is per episode."""
+    ids = [v["id"] for v in vs]
+    prog = {p["item_id"]: p for p in db.rows(
+        f"SELECT item_id, position, duration, watched, updated FROM vod_progress WHERE item_id IN ({','.join('?' * len(ids))})",
+        tuple(ids))}
+    for v in vs:
+        p = prog.get(v["id"]) or {}
+        v.update(position=p.get("position") or 0, pdur=p.get("duration") or 0, watched=bool(p.get("watched")),
+                 stopped=p.get("updated") or 0)
 
 
 PLACEHOLDER_SECS = 3600

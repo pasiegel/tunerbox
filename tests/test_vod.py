@@ -993,3 +993,13 @@ def test_a_placeholder_length_is_unknown_when_the_other_copies_disagree():
     vs = [v(3600), v(3610)]                     # an hour-long film: the copies agree, it's real
     vod._unknown_lengths(vs)
     assert vs[0]["duration"] == 3600 and not vs[0]["len_unknown"]
+
+
+def test_pick_a_version_gives_each_versions_own_progress(labelled):
+    vod.set_progress("1:m202", 1800, 5400)                  # DE: stopped half an hour in
+    vod.set_progress("1:m302", 5300, 5400)                  # 4K-EN: played to the end
+    by = {v["id"]: v for v in vod.title("1:m102")["versions"]}
+    assert (by["1:m202"]["position"], by["1:m202"]["pdur"], by["1:m202"]["watched"]) == (1800, 5400, False)
+    assert by["1:m202"]["stopped"] > 0
+    assert by["1:m302"]["watched"] and by["1:m302"]["position"] == 0
+    assert (by["1:m102"]["position"], by["1:m102"]["watched"], by["1:m102"]["stopped"]) == (0, False, 0)

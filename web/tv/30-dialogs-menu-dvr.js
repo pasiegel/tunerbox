@@ -29,15 +29,15 @@ function fillList(listEl, entries, sel = 0) {
   listEl.innerHTML = entries.map((e, i) => `<li class="${i === sel ? "sel" : ""}${e.cls ? ` ${e.cls}` : ""}" data-i="${i}">${e.html ?? esc(e.label)}${e.right ? `<span class="r">${e.right}</span>` : ""}</li>`).join("");
 }
 
-let dlg = { entries: [] };
+let dlg = { entries: [], back: null };       // back: what Back does instead of closing (a step inside the dialog)
 function openDialog(title, sub, entries) {
-  dlg.entries = entries; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
+  dlg.entries = entries; dlg.back = null; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
   $("dlg-title").textContent = title; $("dlg-sub").textContent = sub || "";
   fillList($("dlg-list"), entries);
   if (top() !== "dialog") S.layer.push("dialog");
   $("dialog").classList.remove("hidden");
 }
-function closeDialog() { S.layer = S.layer.filter((l) => l !== "dialog"); $("dialog").classList.add("hidden"); $("dlg-img").classList.add("hidden"); clearInterval(S.pairPoll); }
+function closeDialog() { dlg.back = null; S.layer = S.layer.filter((l) => l !== "dialog"); $("dialog").classList.add("hidden"); $("dlg-img").classList.add("hidden"); clearInterval(S.pairPoll); }
 
 // this screen's colours: follow Setup's theme, or pick one just for this screen (kept in this browser)
 function themeDialog() {
@@ -211,7 +211,7 @@ const MENU = [
     act: () => { closeMenu(); sleepDialog(); } },
   { get label() { const b = bufSecs(); return `Stream cache: ${b ? b + " seconds" : "Off"}${localStorage.getItem("tb.buffer") === null ? " (default)" : " (this screen)"}`; },
     act: () => { closeMenu(); bufferDialog(); } },
-  { id: "sstats", get label() { return `Stream stats: ${ssOn() ? "On" : "Off"} (this screen)`; },
+  { id: "sstats", get label() { return `Stream stats: ${ssOn() ? ssWhere() : "Off"} (this screen)`; },
     act: () => { toggleStreamStats(); renderMenu(menuShown.indexOf(MENU_SSTATS)); } },
   { id: "homestart", needsHome: true, get label() { return `Start on Home: ${homeAtStart() ? "On" : "Off"} (this screen)`; },
     act: () => { try { localStorage.setItem("tb.homeStart", homeAtStart() ? "0" : "1"); } catch (_) {} renderMenu(menuShown.indexOf(MENU_HOMESTART)); } },

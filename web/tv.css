@@ -108,8 +108,14 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 #buffering { position: absolute; right: 3vw; top: 4vh; z-index: 55; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); padding: .6em 1.2em; border-radius: .9em; font-size: 1.15em; display: flex; align-items: center; gap: .6em; }
 #buffering .spin { width: 1em; height: 1em; border: .18em solid var(--c-t4-55); border-top-color: var(--hl); border-radius: 50%; animation: tbspin .8s linear infinite; }
 /* Menu › Stream stats: a box over the picture, top left, under the guide / Home / On Demand screens */
-#sstats { position: absolute; left: 1.6em; top: 1.6em; z-index: 25; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: .9em; padding: .7em 1em; font-size: .9em; max-width: min(30em, calc(100vw - 3.2em)); pointer-events: none; }
-#sstats .ss-head { font-weight: 800; color: var(--hl); margin-bottom: .35em; }
+#sstats { position: absolute; left: 1.6em; top: 1.6em; z-index: 25; background: var(--surface); backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: .9em; padding: .7em 1em; font-size: .9em; max-width: min(30em, calc(100vw - 3.2em)); cursor: grab; touch-action: none; user-select: none; }
+#sstats.drag { cursor: grabbing; box-shadow: 0 .8em 2.4em #0009; }
+#sstats .ss-head { display: flex; align-items: center; gap: .45em; font-weight: 800; color: var(--hl); margin-bottom: .35em; }
+#sstats .ss-grip { color: var(--dim); font-weight: 400; letter-spacing: -.1em; }
+#sstats .ss-move { margin-left: auto; font: inherit; font-size: .8em; font-weight: 600; color: var(--dim); background: var(--cell); border: 1px solid var(--line); border-radius: 2em; padding: .15em .7em; cursor: pointer; }
+#sstats .ss-move:hover { color: var(--text); border-color: var(--hl); }
+#sstats .ss-close { font: inherit; font-size: .8em; line-height: 1; color: var(--dim); background: var(--cell); border: 1px solid var(--line); border-radius: 50%; width: 1.8em; height: 1.8em; padding: 0; cursor: pointer; flex: none; }
+#sstats .ss-close:hover { color: var(--text); border-color: var(--red); }
 #sstats .ss-grid { display: grid; grid-template-columns: auto 1fr; gap: .15em .9em; font-variant-numeric: tabular-nums; }
 #sstats .ss-k { color: var(--dim); }
 #sstats .ss-v { color: var(--text); overflow-wrap: anywhere; }
@@ -225,7 +231,23 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 .pv-why { font-style: italic; }
 @keyframes pv-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .pv-reading { animation: none; } }
-#dlg-list li.pv-again { font-size: 1.05em; color: var(--dim); }
+#dlg-list li.pv-again { font-size: 1.05em; }
+/* Close (and Read details) as buttons under the versions, not a stray line */
+#dlg-list li.pv-close, #dlg-list li.pv-again, #dlg-list li.pv-act { justify-content: center; margin-top: .5em; border-radius: .5em;
+  box-shadow: inset 0 0 0 2px var(--line); }
+#dlg-list li.pv-close.sel, #dlg-list li.pv-again.sel, #dlg-list li.pv-act.sel { box-shadow: none; }
+/* each version's progress: a tag (stopped at / watched) and a bar along the row's foot */
+#dlg-list li.pv { position: relative; }
+.pv-tag.prog { background: var(--red); color: var(--c-fg); }
+.pv-tag.seen { background: #2b9348; color: var(--c-fg); }
+.pv-bar { position: absolute; left: 1em; right: 1em; bottom: .3em; height: 3px; border-radius: 2px; background: var(--c-fg-22); overflow: hidden; }
+.pv-bar i { display: block; height: 100%; background: var(--red); }
+.list li.sel .pv-bar { background: #00000022; }
+.list li.sel .pv-tag.prog { background: var(--red); color: var(--c-fg); }
+.list li.sel .pv-tag.seen { background: #2b9348; color: var(--c-fg); }
+/* where to start: the version picked stays on top as a card, not a choice */
+#dlg-list li.pv.pv-fixed { cursor: default; text-transform: none; letter-spacing: normal; font-size: 1em; font-weight: inherit;
+  color: var(--text); padding: .7em 1em; border-radius: .5em; box-shadow: inset 0 0 0 1px var(--line); }
 .pv-dlg #dlg-list li { padding-left: 1em; padding-right: 1em; }      /* Read details again and Close line up with the versions */
 .list li.sel .pv-reading { color: var(--hl-text); }
 .pv-badges { flex: none; display: flex; gap: .4em; }
@@ -730,9 +752,31 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 #gstats.scores { background: var(--c-bg-b3); }   /* as tall as its tiles: one game, a short card; many, down to the bottom and scrolling */
 :root[data-theme="contrast"] #gstats { background: var(--surface); }
 .gs-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: .9em; }
-#gs-league { letter-spacing: .08em; color: var(--a-sports); }
-#gs-clock { font-variant-numeric: tabular-nums; }
-.gs-head:has(#gs-league:empty) { display: none; }
+#gs-league { letter-spacing: .08em; color: var(--a-sports); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#gs-clock { font-variant-numeric: tabular-nums; margin-left: auto; white-space: nowrap; flex: none; }
+/* move it: the Move button steps round the corners, or drag it by the top line, the score or the key hints */
+.gs-head { gap: .5em; align-items: center; }
+.gs-grip { color: var(--dim); font-weight: 400; letter-spacing: -.1em; }
+#gs-move, .gs-snap { font: inherit; font-size: .8em; font-weight: 600; color: var(--dim); background: var(--cell); border: 1px solid var(--line); border-radius: 2em; padding: .15em .7em; cursor: pointer; flex: none; }
+#gs-move:hover, .gs-snap:hover { color: var(--text); border-color: var(--hl); }
+.gs-snap, #gs-move { padding: .15em .45em; line-height: 1.1; }
+.gs-snap + .gs-snap, .gs-snap + #gs-move { margin-left: -.25em; }
+/* dragging close to a side lights that edge */
+#gstats.snap-l { box-shadow: inset .3em 0 0 var(--hl), 0 1em 3em #0009; }
+#gstats.snap-r { box-shadow: inset -.3em 0 0 var(--hl), 0 1em 3em #0009; }
+html:not(.phone) #gstats .gs-head, html:not(.phone) #gs-teams, html:not(.phone) #gstats .gs-foot { cursor: grab; touch-action: none; user-select: none; }
+#gstats.drag, #gstats.drag * { cursor: grabbing !important; }
+/* resized: a fixed size, the stats filling it and scrolling; the handle sits on the corner facing the middle of the screen */
+#gstats.sized #gs-body { flex: 1 1 auto; }
+#gs-resize { position: absolute; right: .2em; bottom: .2em; width: 1.05em; height: 1.05em; cursor: nwse-resize; touch-action: none; opacity: .55;
+  background: linear-gradient(135deg, transparent 0 52%, var(--dim) 52% 58%, transparent 58% 68%, var(--dim) 68% 74%, transparent 74%); }
+#gs-resize:hover, #gstats.resizing #gs-resize { opacity: 1; }
+#gstats.rz-t #gs-resize { bottom: auto; top: .2em; transform: scaleY(-1); cursor: nesw-resize; }
+#gstats.rz-l #gs-resize { right: auto; left: .2em; transform: scaleX(-1); cursor: nesw-resize; }
+#gstats.rz-t.rz-l #gs-resize { transform: scale(-1); cursor: nwse-resize; }
+#gstats.resizing, #gstats.resizing * { user-select: none; }
+.phone .gs-grip, .phone #gs-move, .phone .gs-snap, .phone #gs-resize { display: none; }
+.phone .gs-head:has(#gs-league:empty) { display: none; }
 /* the score on one line: [bar logo name score] – [score name logo bar], the leader brighter */
 #gs-teams { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: .5em; }
 #gs-teams:empty { display: none; }
@@ -765,7 +809,13 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 .gs-tbl.team td:not(:first-child) { padding-left: 1em; }
 .gs-tbl.team td:nth-child(2) { font-weight: 400; }
 .gs-tbl.team td:first-child { color: var(--dim); }
-.gs-play { padding: .45em 0; border-bottom: 1px solid var(--line); font-size: .95em; }
+/* wide (made bigger): both teams' players side by side, the plays in two columns, the scores in a grid */
+.gs-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.6em; }
+.gs-colh { font-size: .8em; font-weight: 800; letter-spacing: .08em; color: var(--a-sports); margin-bottom: .2em; }
+#gstats.wide #gs-body[data-tab="plays"] { columns: 2; column-gap: 1.6em; }
+#gstats.wide #gs-body[data-tab="scores"] { display: grid; grid-template-columns: repeat(auto-fill, minmax(18em, 1fr)); gap: .7em; align-content: start; }
+#gstats.wide #gs-body[data-tab="scores"] .gs-game { margin-bottom: 0; }
+.gs-play { break-inside: avoid; padding: .45em 0; border-bottom: 1px solid var(--line); font-size: .95em; }
 .gs-play small { display: block; color: var(--dim); margin-bottom: .15em; }
 .gs-play.score { color: var(--hl); }
 /* Live scores: a tile per game like Home's (hmMatchup draws the teams), the matchup and where to watch under it */
@@ -778,20 +828,35 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 .gs-gx span { font-size: .8em; color: var(--c-fg-cc); }
 .gs-gx em { font-style: normal; font-weight: 700; color: var(--a-sports); }
 .gs-empty { color: var(--dim); padding: 1.5em 0; text-align: center; }
-.gs-foot { margin-top: 0; font-size: .85em; }
-#gs-upd { float: right; }
-/* phones: a sheet along the bottom with the score at its top, the picture above it; the Back button
-   (bottom right) closes it, so the last line leaves room for it. Sideways, the panel stays beside the picture. */
-.phone #gstats, .phone #gstats.scores { top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-width: none; max-height: none; height: 58%; gap: 10px;
-  font-size: 1em; background: var(--surface); border: 0; border-top: 1px solid var(--line);
-  border-radius: 14px 14px 0 0; box-shadow: 0 -1em 3em #0008; padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 64px); }
-.phone #gstats #gs-body { flex: 1 1 auto; }
-.phone #tv.gs-open #video:not(.pip) { height: 42%; }
-.phone .gs-team em { font-size: 1.6em; }
+.gs-foot { margin-top: 0; font-size: .85em; display: flex; gap: .8em; white-space: nowrap; }
+#gs-keys { min-width: 0; overflow: hidden; display: flex; gap: .9em; }
+#gs-keys span[hidden] { display: none; }
+/* tabs that don't all fit: closer together, then a little smaller (gsFit) */
+#gs-tabs.tight { gap: .25em; }
+#gs-tabs.tight .tab { padding: .3em .55em; }
+#gs-tabs.tighter .tab { font-size: .82em; padding: .3em .45em; }
+#gs-upd { margin-left: auto; flex: none; }
+/* phones, upright: the picture keeps its shape at the top and the panel sits under it, as tall as what the tab
+   shows (a short team stats card, a longer list of scores), never under the Back button (bottom right), which
+   closes it. Sideways: the picture on the left and the stats in a column on the right. */
+.phone #gstats, .phone #gstats.scores {
+  top: calc(env(safe-area-inset-top, 0px) + 56.25vw); bottom: auto; left: 0; right: 0; width: auto; max-width: none; height: auto;
+  max-height: calc(100% - env(safe-area-inset-top, 0px) - 56.25vw - env(safe-area-inset-bottom, 0px) - 68px);
+  gap: 8px; font-size: 1em; background: var(--surface); border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0 0 14px 14px; box-shadow: 0 1em 3em #0008; padding: 12px 14px 10px; }
+.phone #tv.gs-open #video:not(.pip) { top: env(safe-area-inset-top, 0px); height: 56.25vw; bottom: auto; }
+.phone .gs-team em { font-size: 1.5em; }
+.phone #gs-keys { display: none; }                 /* key hints: no keys on a phone */
 @media (orientation: landscape) {
-  .phone #gstats, .phone #gstats.scores { top: 0; left: auto; width: 46%; height: auto; border-top: 0; border-left: 1px solid var(--line); border-radius: 0;
-    padding: calc(env(safe-area-inset-top, 0px) + 10px) calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 64px) 12px; }
-  .phone #tv.gs-open #video:not(.pip) { height: 100%; width: 54%; }
+  /* sideways: side by side, the picture on the left (scaled to fit, nothing covered) and the stats in a column
+     on the right, down to the Back button at its foot */
+  .phone #gstats, .phone #gstats.scores {
+    top: 0; bottom: 0; left: auto; right: 0; width: min(40%, 340px); height: auto; max-height: none; font-size: .9em;
+    border: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none;
+    padding: calc(env(safe-area-inset-top, 0px) + 10px) calc(env(safe-area-inset-right, 0px) + 12px)
+             calc(env(safe-area-inset-bottom, 0px) + 64px) 12px; }
+  .phone #gstats #gs-body { flex: 1 1 auto; }
+  .phone #tv.gs-open #video:not(.pip) { top: 0; height: 100%; width: calc(100% - min(40%, 340px)); }
 }
 
 /* catch-up: the archive length in the Menu's "This channel" heading */
