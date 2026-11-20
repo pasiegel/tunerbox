@@ -186,6 +186,7 @@ input.numedit { width: 80px; }
 .set-nav button:focus-visible { outline: 2px solid var(--hl); outline-offset: -2px; }
 .set-nav button i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--hl); visibility: hidden; }
 .set-nav button.dirty i { visibility: visible; }   /* unsaved changes in this category */
+.set-nav button.set-jump { margin-top: 10px; border-top: 1px solid var(--line); border-radius: 0; font-weight: 500; }   /* a link to Phones, not a category */
 .set-main { min-width: 0; }
 .set-group { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 20px 8px; margin: 0 0 16px; display: block; }
 .set-group h4 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--hl); }
@@ -299,6 +300,7 @@ input.toggle:focus-visible, .set-row input:focus-visible, .set-row select:focus-
   .set-nav { position: static; flex-direction: row; overflow-x: auto; gap: 4px; padding: 0 0 2px; order: 0; border-bottom: 1px solid var(--line); }
   .set-nav button { flex: none; border-left: 0; border-bottom: 3px solid transparent; border-radius: 6px 6px 0 0; padding: 9px 12px; }
   .set-nav button.on { border-bottom-color: var(--hl); }
+  .set-nav button.set-jump { margin-top: 0; border-top: 0; }
   .set-group { padding: 4px 14px 6px; }
   .set-row { flex-wrap: wrap; gap: 8px 16px; margin: 0 -14px; padding: 12px 14px; }
   .set-row[data-needs] { padding-left: 30px; background-position: 18px 4px; }

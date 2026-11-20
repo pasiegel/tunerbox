@@ -929,14 +929,20 @@ $("tn-body").addEventListener("click", async (e) => {
 // categories on the left; one group of settings is shown at a time (the whole form still saves together)
 const setGroups = [...document.querySelectorAll("#tab-settings .set-group[data-cat]")];
 $("set-nav").innerHTML = setGroups.map((g) =>
-  `<button type="button" data-cat="${g.dataset.cat}">${esc(g.dataset.label)}<i title="Unsaved changes"></i></button>`).join("");
+  `<button type="button" data-cat="${g.dataset.cat}">${esc(g.dataset.label)}<i title="Unsaved changes"></i></button>`).join("") +
+  // the lock lives with pairing (you pair this browser before locking), so this one jumps there
+  '<button type="button" class="set-jump" data-jump="lock" title="Setup › Phones">Lock setup ›</button>';
 function showSetCat(cat) {
   if (!setGroups.some((g) => g.dataset.cat === cat)) cat = setGroups[0].dataset.cat;
   setGroups.forEach((g) => g.classList.toggle("hidden", g.dataset.cat !== cat));
   $("set-nav").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.cat === cat));
   try { localStorage.setItem("tb-set-cat", cat); } catch (_) {}
 }
-$("set-nav").onclick = (e) => { const b = e.target.closest("button"); if (b) showSetCat(b.dataset.cat); };
+$("set-nav").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.jump) { showTab("phones"); $(b.dataset.jump).scrollIntoView({ block: "start" }); return; }
+  showSetCat(b.dataset.cat);
+};
 let savedCat = null;
 try { savedCat = localStorage.getItem("tb-set-cat"); } catch (_) {}
 showSetCat(savedCat);
@@ -1163,7 +1169,7 @@ function syncSettings() {
   $("mt-val").innerHTML = `<b>${esc(mt.value)}</b> · ${matchWord(+mt.value)}`;
   const changed = setFields().filter((el) => fieldVal(el) !== setSavedVals[el.name]);
   const dirtyCats = new Set(changed.map((el) => el.closest(".set-group[data-cat]")?.dataset.cat));
-  $("set-nav").querySelectorAll("button").forEach((b) => b.classList.toggle("dirty", dirtyCats.has(b.dataset.cat)));
+  $("set-nav").querySelectorAll("button[data-cat]").forEach((b) => b.classList.toggle("dirty", dirtyCats.has(b.dataset.cat)));
   const dirty = changed.length > 0;
   f.querySelectorAll("[data-needs]").forEach((row) => {
     const need = f.elements[row.dataset.needs];      // a switch that's on, or a choice that isn't "off"
