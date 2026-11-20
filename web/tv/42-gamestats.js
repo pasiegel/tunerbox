@@ -11,12 +11,12 @@ const gsKey = (ch) => (ch ? (ch.feed ? `f:${ch.feed}` : `c:${ch.number}`) : "");
 function gsTabs() {
   const d = GS.data;
   // no game the scoreboard knows on this channel: just the live games, if there are any
-  if (!d) return GS.others.length ? [{ label: "Live scores", scores: true }] : [];
+  if (!d) return GS.others.length ? [{ label: "Scores", scores: true }] : [];
   // one tab per team's players, so the list stays short, then the team stats, the plays, and every
   // other game on now in the leagues you follow
   return [...d.players.map((p) => ({ label: p.abbr, team: p })),
-          d.team_stats.length && { label: "Team stats" }, d.plays.length && { label: "Plays" },
-          GS.others.length && { label: "Live scores", scores: true }].filter(Boolean);
+          d.team_stats.length && { label: "Team" }, d.plays.length && { label: "Plays" },
+          GS.others.length && { label: "Scores", scores: true }].filter(Boolean);
 }
 
 function openStats() {
@@ -110,7 +110,7 @@ function gsRender(msg) {
     }
   } else if (tab.scores) {
     html = GS.others.map(gsGame).join("");
-  } else if (tab.label === "Team stats") {
+  } else if (tab.label === "Team") {
     html = gsTable(["", ...d.teams.map((t) => t.abbr)], d.team_stats.map((s) => [esc(s.label), ...s.values.map(esc)]), "team");
   } else {
     html = d.plays.map((p) => `<div class="gs-play${p.score ? " score" : ""}"><small>${esc(p.when)}</small>${esc(p.text)}</div>`).join("");

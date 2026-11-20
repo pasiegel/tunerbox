@@ -727,7 +727,7 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 #gstats { position: absolute; z-index: 45; top: 1.6em; right: 1.6em; width: 24em; max-width: 92vw; max-height: calc(100% - 3.2em);
   display: flex; flex-direction: column; gap: .7em; font-size: .92em; background: var(--c-bg-cc); backdrop-filter: blur(16px);
   border: 1px solid var(--line); border-radius: 1em; box-shadow: 0 1em 3em #0009; padding: 1em 1.1em .9em; }
-#gstats.scores { bottom: 1.6em; max-height: none; background: var(--c-bg-b3); }
+#gstats.scores { background: var(--c-bg-b3); }   /* as tall as its tiles: one game, a short card; many, down to the bottom and scrolling */
 :root[data-theme="contrast"] #gstats { background: var(--surface); }
 .gs-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: .9em; }
 #gs-league { letter-spacing: .08em; color: var(--a-sports); }
@@ -748,10 +748,11 @@ html:not(.phone) #hmi-desc { font-size: 1.15em; -webkit-line-clamp: 3; max-width
 .gs-team em { font-style: normal; font-size: 1.7em; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dim); }
 .gs-team.lead em { color: var(--text); }
 .gs-dash { color: var(--dim); font-weight: 700; }
-#gstats .tabs { flex: none; flex-wrap: wrap; row-gap: .4em; margin: 0; }
-#gstats .tab { font-size: .9em; padding: .3em .8em; white-space: nowrap; }
+/* the tabs stay on one row (short labels so they fit: Team, Plays, Scores) */
+#gstats .tabs { flex: none; flex-wrap: nowrap; margin: 0; overflow: hidden; }
+#gstats .tab { flex: none; font-size: .9em; padding: .3em .8em; white-space: nowrap; }
 #gs-body { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-#gstats.scores #gs-body { flex: 1 1 auto; padding: .7em .7em .2em; margin: -.7em -.7em 0; }
+#gstats.scores #gs-body { padding: .7em .7em .2em; margin: -.7em -.7em 0; }
 .gs-tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-bottom: .9em; table-layout: fixed; }
 .gs-tbl th { font-size: .8em; letter-spacing: .06em; color: var(--dim); text-align: right; font-weight: 700; padding: .2em .3em .3em; width: 3.2em; }
 .gs-tbl th:first-child { text-align: left; width: auto; }
