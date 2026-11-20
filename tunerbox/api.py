@@ -1112,11 +1112,11 @@ def api_vod_versions(title_id: str):
 
 
 @app.get("/api/vod/peek/{version_id}")
-def api_vod_peek(version_id: str, force: int = 0, client: str = ""):
+def api_vod_peek(version_id: str, force: int = 0, client: str = "", again: int = 0):
     """Pick a version: one version's picture and sound, read from the start of its file (one at a time).
     `force` (Read details again): also one that couldn't be read earlier today. `client`: the screen asking
     ("mine" in the answer: only its own stream holds the connection, which it can let go of for the read)."""
-    v = vod.peek(version_id, force=bool(force), client=client[:64])
+    v = vod.peek(version_id, force=bool(force), client=client[:64], again=bool(again))
     if v is None:
         raise HTTPException(404, "That title is no longer in the playlist")
     return v

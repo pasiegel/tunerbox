@@ -136,6 +136,10 @@ def init():
                           WHERE source_id>0 AND kind='movie' AND duration BETWEEN 1 AND {MOVIE_MIN - 1}""")
             c.execute(f"UPDATE vod_titles SET bitrate=0 WHERE source_id>0 AND bitrate>{MAX_KBPS}")
             c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('vod_details_v4', '1')")
+        if not c.execute("SELECT 1 FROM meta WHERE k='vod_details_v5'").fetchone():
+            # a panel's own bitrate was kept as sent, even an impossible one (987 Mbps): cleared
+            c.execute(f"UPDATE vod_titles SET bitrate=0 WHERE source_id>0 AND bitrate>{MAX_KBPS}")
+            c.execute("INSERT OR REPLACE INTO meta(k, v) VALUES ('vod_details_v5', '1')")
     from . import library
     library.init()             # your own movies and shows: listed through the vod_sources view
     _changed()
@@ -423,7 +427,10 @@ def refresh_all(progress=None, source_id=None, kinds=KINDS):
 def _extra(info, t):
     """The details kept for Pick a version and Search: bitrate, TMDB id, the original title."""
     tmdb = _s(info.get("tmdb_id") or info.get("tmdb"))
-    return (_int(info.get("bitrate")) or t["bitrate"], tmdb if tmdb not in ("", "0") else t["tmdb"],
+    kbps = _int(info.get("bitrate"))
+    if kbps > MAX_KBPS:         # a panel's nonsense (987060 for a 1 GB film): not shown, and no size made from it
+        kbps = 0
+    return (kbps or t["bitrate"], tmdb if tmdb not in ("", "0") else t["tmdb"],
             fold(_s(info.get("o_name"))) or t["o_search"])
 
 
@@ -492,6 +499,21 @@ def ep_label(e):
     return f"S{e['season']} E{e['episode']}" + (f" · {e['name']}" if e["name"] else "")
 
 
+DESCRIBED = ("plot", "rating", "genre", "actors", "director", "poster")
+
+
+def _borrow_details(out, t):
+    """Your own copy (a library file) often has no plot, rating or poster while the playlist's copy of the same
+    film does: what this one lacks comes from its other versions (the ones with the most said first)."""
+    if all(out.get(k) for k in DESCRIBED):
+        return
+    others = [r for r in _version_rows(t) if r["id"] != t["id"]]
+    others.sort(key=lambda r: -sum(bool(r[k]) for k in DESCRIBED))
+    for k in DESCRIBED:
+        if not out.get(k):
+            out[k] = next((r[k] for r in others if r[k]), out.get(k) or "")
+
+
 def title(title_id):
     """Everything about one movie or show: details, where you stopped, and a show's episodes."""
     t = _row(title_id)
@@ -511,6 +533,7 @@ def title(title_id):
     out["size"] = f.get("size") or 0
     out["hint"] = None if out["av"] else _hint({"path": f.get("path"), "tag": t["tag"]})
     out["versions"] = versions(t)
+    _borrow_details(out, t)
     out["in_list"] = bool(db.one("SELECT 1 FROM vod_list WHERE title_id=?", (title_id,)))
     prog = {p["item_id"]: p for p in db.rows("SELECT * FROM vod_progress WHERE title_id=?", (title_id,))}
     if t["kind"] == "movie":
@@ -728,8 +751,25 @@ def _fuzzy(qf, limit):
     ids, names = _names
     # scored against the best-matching part of each name
     hits = process.extract(qf, names, scorer=fuzz.partial_ratio, score_cutoff=85, limit=limit * 3)
-    # partial_ratio finds "me" inside "oppenheimer": a name much shorter than what was typed isn't a typo of it
-    return [ids[i] for _, _, i in hits if len(names[i]) >= 0.6 * len(qf)][:limit]
+    # partial_ratio finds "me" inside "oppenheimer": a name much shorter than what was typed isn't a typo of it.
+    # And the score is for the words together: "hotel trans" is close to "hotel rwanda" (and "hostel") only
+    # because of "hotel", so every word typed has to be close to a word of the name on its own too.
+    words = qf.split()
+    return [ids[i] for _, _, i in hits
+            if len(names[i]) >= 0.6 * len(qf) and all(_word_close(w, names[i].split()) for w in words)][:limit]
+
+
+def _word_close(w, name_words):
+    """A word typed is in the name, or is a small typo of one of its words or of the start of one
+    ('samurai' ~ 'samourai', 'transylvnia' ~ 'transylvania', 'tranz' ~ 'transylvania' while still typing).
+    It has to be the start of a word ('t' is not in 'hotel rwanda' even though 'hotel' has a t), and short
+    words ('of', 'tr') have to be there as typed: too short to tell a typo from another word.
+    'hotels' ~ 'hotel' (91) but not 'hostel' (83)."""
+    if any(nw.startswith(w) for nw in name_words):
+        return True
+    if len(w) < 4:
+        return False
+    return any(fuzz.ratio(w, nw) >= 85 or fuzz.ratio(w, nw[:len(w)]) >= 85 for nw in name_words)
 
 
 def _mine(r):
@@ -785,10 +825,27 @@ def versions(t):
         return []
     rows = sorted(_by_preference(rows), key=lambda r: (-_mine(r), -_quality(r), -(r["bitrate"] or 0)))
     # "where": the playlist or library it's in, so copies with no label can be told apart ("Movies", "35mm")
-    return [{"id": r["id"], "tag": r["tag"], "where": r["place"] or "", "current": r["id"] == t["id"], "mine": r["source_id"] < 0,
-             "bitrate": r["bitrate"], "duration": r["duration"], "added": r["added"], "av": _av(r["av"]),
-             "hint": None if _av(r["av"]) else _hint(r), "ext": (r["ext"] or "").lower(), "size": r["size"] or 0}
-            for r in rows]
+    out = [{"id": r["id"], "tag": r["tag"], "where": r["place"] or "", "current": r["id"] == t["id"], "mine": r["source_id"] < 0,
+            "bitrate": r["bitrate"], "duration": r["duration"], "added": r["added"], "av": _av(r["av"]),
+            "hint": None if _av(r["av"]) else _hint(r), "ext": (r["ext"] or "").lower(), "size": r["size"] or 0,
+            "len_unknown": False}
+           for r in rows]
+    _unknown_lengths(out)
+    return out
+
+
+PLACEHOLDER_SECS = 3600
+
+
+def _unknown_lengths(vs):
+    """A panel that doesn't know a film's length often says exactly 1:00:00. When the other copies agree on
+    something else, that length is taken as unknown (len_unknown; duration 0, so no size is made from it)."""
+    real = [v["duration"] for v in vs if v["duration"] and v["duration"] != PLACEHOLDER_SECS]
+    if not real:
+        return
+    for v in vs:
+        if v["duration"] == PLACEHOLDER_SECS and not v["mine"] and all(abs(d - PLACEHOLDER_SECS) > 120 for d in real):
+            v["duration"], v["len_unknown"] = 0, True
 
 
 def _hint(r):
@@ -1027,7 +1084,7 @@ PEEK_PROBE_TIMEOUT = 20        # seconds ffmpeg may take reading a version itsel
 NO_CONNECTION = "No connection free on this playlist right now"
 
 
-def peek(version_id, force=False, client=""):
+def peek(version_id, force=False, client="", again=False):
     """Pick a version: what one version is, read without playing it (your own copy: as the library task would).
     First the start of its file (2 MB, one request); when that says nothing (an MP4 keeps its track list at the
     end, or the provider won't send part of a file) ffmpeg reads the file itself, only as far as it needs.
@@ -1035,6 +1092,8 @@ def peek(version_id, force=False, client=""):
     read already, it couldn't be read today (`force`: try anyway) or its playlist has no connection free. When the connection is taken only by `client`'s own stream (the screen
     asking: live TV in the corner, or a movie), nothing is read: "mine" says the screen can let go of it first
     (unless vod_details_pause is off).
+    `again` (Read again, with `force`): read a version that was read already too, and keep what the file says now
+    (a panel's own description of its copy can be wrong).
     -> the version's {id, bitrate, duration, av, why, mine} (`why`: why it wasn't read), or None when it isn't a movie."""
     from . import connections
     t = _row(version_id)
@@ -1050,7 +1109,8 @@ def peek(version_id, force=False, client=""):
         _peeked[version_id] = (time.time(), why)
         return out(why)
     mode = config.get("vod_details", "auto")
-    if t["av"] not in ("", "{}") or mode == "off" or (mode == "ask" and not force):
+    again = again and force
+    if (t["av"] not in ("", "{}") and not again) or mode == "off" or (mode == "ask" and not force):
         return out()
     when, why = _peeked.get(version_id, (0, ""))
     if not force and (t["av"] == "{}" or time.time() - when < PEEK_RETRY):
@@ -1213,8 +1273,16 @@ def poster_dir():
 
 
 def poster_url(title_id):
-    r = db.one("SELECT poster FROM vod_titles WHERE id=?", (title_id,))
-    return (r["poster"] or "").strip() if r else ""
+    """The title's poster, else (your own copy often has none) another version's: _borrow_details."""
+    r = db.one("SELECT kind, search, year, tmdb, poster FROM vod_titles WHERE id=?", (title_id,))
+    if not r:
+        return ""
+    if (r["poster"] or "").strip():
+        return r["poster"].strip()
+    o = db.one("""SELECT poster FROM vod_titles WHERE poster!='' AND
+                  ((kind=? AND search=? AND year=?) OR (kind=? AND tmdb!='' AND tmdb=?)) LIMIT 1""",
+               (r["kind"], r["search"], r["year"], r["kind"], r["tmdb"] or ""))
+    return (o["poster"] or "").strip() if o else ""
 
 
 def _shrink(data, width=POSTER_W):

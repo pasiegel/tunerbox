@@ -1361,3 +1361,17 @@ def test_the_half_hourly_task_uses_the_hand_off(movies, monkeypatch):
     handed = []
     monkeypatch.setattr(library, "measure_later", lambda **kw: handed.append(kw))
     assert libtasks.run("scan") == "NAS Movies: 5 movies. grabbing the details of 5 videos next" and handed == [{}]
+
+
+def test_own_copy_borrows_the_playlist_copys_details(movies):
+    """Your own file has no plot or poster: the details (and poster) come from another copy of the same film."""
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    heat = db.one("SELECT * FROM vod_titles WHERE source_id=? AND name='Heat'", (-sid,))
+    other = {**heat, "id": heat["id"] + "-pl", "plot": "A heist.", "rating": "8.3", "poster": "http://img/heat.jpg"}
+    cols = list(other)
+    db.run(f"INSERT INTO vod_titles ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", [other[c] for c in cols])
+    t = vod.title(heat["id"])
+    assert (t["plot"], t["rating"], t["poster"]) == ("A heist.", "8.3", "http://img/heat.jpg")
+    assert len(t["versions"]) == 2
+    assert vod.poster_url(heat["id"]) == "http://img/heat.jpg"

@@ -32,6 +32,8 @@ const fmtAv = (av) => {
 };
 // Pick a version: one row per version. Its name with small tags (your copy, the one you opened), what's known of
 // it underneath, and the resolution and HDR as badges on the right (dashed: only what the file name says)
+// a version's name: its label ("EN", "4K-AMZ"), else "Your copy" for one of your own files, else where it is
+const pvName = (v, none = "No label") => v.tag || (v.mine ? "Your copy" : v.where) || none;
 function pvRow(v, label, lenDiffers) {
   const av = v.av || v.hint, guess = !v.av && !!v.hint;
   const res = !av ? "" : av.w >= 3200 ? "4K" : av.w >= 1800 ? "1080p" : av.w >= 1200 ? "720p" : av.w ? "SD" : "";
@@ -39,8 +41,10 @@ function pvRow(v, label, lenDiffers) {
   const ac = av && ({ eac3: "DD+", ac3: "DD", truehd: "TrueHD", dts: "DTS", aac: "AAC", mp3: "MP3", opus: "Opus", flac: "FLAC" }[av.acodec] || "");
   const meta = [av && [vc, av.bits >= 10 && !av.hdr ? `${av.bits}-bit` : ""].filter(Boolean).join(" "),
     av && [av.layout === "stereo" ? "Stereo" : av.layout === "mono" ? "Mono" : av.layout, ac].filter(Boolean).join(" "),
-    fmtRate(v.bitrate), lenDiffers && fmtLen(v.duration), fmtFile(v)].filter(Boolean);
-  const tags = (v.mine ? '<span class="pv-tag">Your copy</span>' : "") + (v.current ? '<span class="pv-tag now">Current</span>' : "");
+    fmtRate(v.bitrate), v.len_unknown ? "length unknown" : lenDiffers && fmtLen(v.duration), fmtFile(v),
+    v.where && `from ${v.where}`].filter(Boolean);
+  // "Your copy" as a tag only when the name is a label (otherwise the name already says it)
+  const tags = (v.mine && v.tag ? '<span class="pv-tag">Your copy</span>' : "") + (v.current ? '<span class="pv-tag now">Current</span>' : "");
   const badge = (text, cls) => `<span class="pv-b ${cls}${guess ? " guess" : ""}">${esc(text)}</span>`;
   const badges = (res ? badge(res, res === "4K" ? "k4" : "") : "") + (av && av.hdr ? badge(av.hdr, "hdr") : "");
   return `<div class="pv-main"><div class="pv-name"><span class="pv-label">${esc(label)}</span>${tags}</div>`
@@ -339,7 +343,7 @@ function odMovieDialog(d) {
   entries.push({ label: d.watched ? "Mark as not watched" : "Mark as watched", act: () => odMark(d.id, !d.watched) });
   if (resume) entries.push(odForgetEntry(d.id));
   const others = (d.versions || []).filter((v) => !v.current);
-  if (others.length) entries.push({ label: `Other versions (${others.map((v) => v.tag || v.where || "no label").join(", ")})`, act: () => odVersions(d) });
+  if (others.length) entries.push({ label: `Other versions (${others.map((v) => pvName(v, "no label")).join(", ")})`, act: () => odVersions(d) });
   if (d.category && !here) entries.push({ label: `More in ${d.category}`, act: () => { closeDialog(); odGoCategory(d.category); } });
   entries.push({ label: "Close", act: closeDialog });
   openDialog(d.name, `${["Movie", odLabel(d), d.year, fmtLen(d.duration), fmtAv(d.av || d.hint), fmtRate(d.bitrate), d.genre || d.category].filter(Boolean).join(" · ")}\nFrom ${d.source_name}`
@@ -403,19 +407,25 @@ function odVersions(d) {
     const lens = vs.map((v) => v.duration).filter(Boolean);
     const lenDiffers = lens.length > 1 && Math.max(...lens) - Math.min(...lens) > 120;
     return [...vs.map((v, i, all) => {          // a provider can list the same label twice: number them, and say which is newer
-      const name = (x) => x.tag || x.where || "No label";
+      const name = (x) => pvName(x);
       const same = all.filter((x) => name(x) === name(v)), n = same.length > 1 ? ` (${same.indexOf(v) + 1})` : "";
       const added = same.length > 1 && v.added
         ? `added ${new Date(v.added * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" })}` : "";
       return { label: [`${name(v)}${n}`, added].filter(Boolean).join(" · "), cls: "pv",
                html: pvRow(v, [`${name(v)}${n}`, added].filter(Boolean).join(" · "), lenDiffers), act: () => go(v) };
     }),
-    // "Only when I ask": Read details. Some couldn't be read (no connection free, the provider was slow): try again
-    ...(!reading && d.kind !== "series" && peekMode() !== "off" && vs.some((v) => !v.av && (v.why || peekMode() === "ask"))
-      ? [{ label: vs.some((v) => !v.av && v.why) ? "Read details again" : "Read details", cls: "pv-again", act: () => readAll(true) }] : []),
-    { label: "Close", act: closeDialog }];
+    // Reading each version's picture and sound. "Only when I ask": always offered (read the ones not read yet,
+    // else read them all again). Automatically: only when some couldn't be read (no connection free, slow provider)
+    ...readEntry(vs),
+    { label: "Close", cls: "pv-close", act: closeDialog }];
   };
   const peekMode = () => (S.settings || {}).vod_details || "auto";       // auto | ask | off (Setup › Settings)
+  const readEntry = (vs) => {
+    if (reading || d.kind === "series" || peekMode() === "off") return [];
+    const failed = vs.some((v) => !v.av && v.why), unread = vs.some((v) => !v.av && (v.why || peekMode() === "ask"));
+    if (unread) return [{ label: failed ? "Read video quality again" : "Read video quality", cls: "pv-again", act: () => readAll(true) }];
+    return peekMode() === "ask" ? [{ label: "Read video quality again", cls: "pv-again", act: () => readAll(true, true) }] : [];
+  };
   let reading = true;
   openDialog(`${d.name}${d.year ? ` (${d.year})` : ""}`, "Pick a version · checking each one…", entries(d.versions || []));
   $("dialog").classList.add("pv-dlg");          // wider, for the details (openDialog takes it off again)
@@ -438,14 +448,15 @@ function odVersions(d) {
   // connections), each row saying "Reading…" until it comes back, or why it couldn't be read
   // When this screen's own playback holds the playlist's connection, it's paused for the reads and picked up
   // again once they're done (or the dialog is closed).
-  async function readAll(force) {
+  // again: every version, the ones read already too (what each file says now); else the ones not read yet
+  async function readAll(force, again = false) {
     reading = true;
     let resume = null;
-    const peek = (v) => api(`/api/vod/peek/${vodPath(v.id)}?client=${encodeURIComponent(CID)}${force ? "&force=1" : ""}`)
+    const peek = (v) => api(`/api/vod/peek/${vodPath(v.id)}?client=${encodeURIComponent(CID)}${force ? "&force=1" : ""}${again ? "&again=1" : ""}`)
       .catch((e) => ({ id: v.id, why: e.message }));
     $("dlg-sub").textContent = "Pick a version · reading each one…";
     try {
-      for (const v of (d.versions || []).filter((x) => !x.av)) {
+      for (const v of (d.versions || []).filter((x) => again || !x.av)) {
         if (!open()) return;
         redraw(mark(v.id, { checking: true, why: "" }));
         let got = await peek(v);
