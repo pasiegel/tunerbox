@@ -124,8 +124,8 @@ def test_show_pictures_come_from_the_guide_shrunk(client, monkeypatch, tmp_path)
 
 def test_nas_server_home_network_is_the_pc_until_locked(monkeypatch, tmp_path):
     """Docker on a NAS (TUNERBOX_TRUST_LAN): no browser is ever "this PC", so the home network counts as
-    the PC until the lock is on: pairing, PC-only settings and folders on the server. Exporting logins
-    and the lock itself need a paired device. The pairing link uses the address the browser used."""
+    the PC until the lock is on: pairing, PC-only settings, folders on the server and exporting the
+    playlists. The lock itself needs a paired device. The pairing link uses the address the browser used."""
     from fastapi.testclient import TestClient
     from tunerbox import jobs
     monkeypatch.setattr(jobs, "library_scan", lambda *a, **k: True)
@@ -140,7 +140,7 @@ def test_nas_server_home_network_is_the_pc_until_locked(monkeypatch, tmp_path):
     assert lan.post("/api/settings", json={"ffmpeg": "/usr/bin/ffmpeg"}).status_code == 200   # settings from the web UI
     assert lan.post("/api/settings", json={"https_port": 8647}).status_code == 200
     assert lan.post("/api/library/browse", json=folder).json()["ok"]                     # folders on the server
-    assert lan.get("/api/sources/export").status_code == 403                            # logins stay put
+    assert lan.get("/api/sources/export").status_code == 200                            # playlists from the web UI
     assert lan.post("/api/settings", json={"require_pairing": True}).status_code == 403  # would lock itself out
     r = lan.post("/api/pair/start")
     assert r.status_code == 200 and r.json()["address"] == "http://192.168.10.9:8642/pair"
@@ -152,6 +152,8 @@ def test_nas_server_home_network_is_the_pc_until_locked(monkeypatch, tmp_path):
     assert lan.post("/api/pair/start").status_code == 403
     assert lan.post("/api/settings", json={"ffmpeg": "/bin/sh"}).status_code == 403
     assert lan.post("/api/library/browse", json=folder).status_code == 403
+    assert lan.get("/api/sources/export").status_code == 403                            # locked: logins stay put
+    assert phone.get("/api/sources/export").status_code == 200
     assert phone.post("/api/pair/start").status_code == 200         # the paired phone still can
     assert phone.post("/api/settings", json={"ffmpeg": "ffmpeg"}).status_code == 200
     assert phone.post("/api/library/browse", json=folder).json()["ok"]
