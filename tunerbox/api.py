@@ -588,9 +588,10 @@ def api_add_source(request: Request, data: dict = Body(...)):
 
 @app.get("/api/sources/export")
 def api_export_sources(request: Request):
-    """Download every playlist (logins included) as a JSON file. Only this PC or a paired phone
-    may: the file holds passwords."""
-    if not remote.trusted(request):
+    """Download every playlist (logins included) as a JSON file. The file holds passwords, so the same devices
+    as pairing may: this PC and paired phones; on a server without a screen (Docker), also any
+    browser on the home network until Lock setup is on."""
+    if not remote.can_pair(request):
         raise HTTPException(403, "Export from the TunerBox PC or a paired phone (Setup › Phones)")
     body = json.dumps(sources.export_sources(), indent=2, ensure_ascii=False)
     name = f"tunerbox-playlists-{time.strftime('%Y-%m-%d')}.json"
