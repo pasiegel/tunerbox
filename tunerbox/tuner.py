@@ -72,9 +72,10 @@ class Subscriber:
         """Next chunk (b"" at the end); raises queue.Empty after `timeout` seconds."""
         return self.q.get(timeout=timeout)
 
-    def close(self, wait=True):
-        """Leave the tuner; the last one out stops it. wait=False stops ffmpeg in the background."""
-        self.tuner.leave(self, wait)
+    def close(self, wait=True, why=""):
+        """Leave the tuner; the last one out stops it. wait=False stops ffmpeg in the background.
+        `why`: for the log when this stops the tuner (default: the viewer disconnected)."""
+        self.tuner.leave(self, wait, why)
 
 
 class Tuner:
@@ -95,6 +96,7 @@ class Tuner:
         self.sent = 0
         self.started = time.time()
         self.err = []
+        self.why = ""                       # why TunerBox stopped it (the log); "" = the stream ended by itself
         cmd = live_cmd(url, mode, audio, buffer)
         self.proc = track(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                            stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0))
@@ -121,10 +123,12 @@ class Tuner:
             log.info("%s joined %s (%d on this tuner)", name or "viewer", split_url(self.url)[0][-40:], n)
         return sub
 
-    def stop(self):
+    def stop(self, why="stopped"):
         """Stop at once (a recording needs the connection): every reader gets the end of the stream."""
         with _lock:
             with self.lock:
+                if not self.ended:
+                    self.why = why
                 self.ended = True
             if self in _tuners:
                 _tuners.remove(self)
@@ -132,13 +136,14 @@ class Tuner:
         # recording holds connections.admit, and taskkill takes a moment, so no other tune waits for it
         threading.Thread(target=kill, args=(self.proc,), daemon=True).start()
 
-    def leave(self, sub, wait=True):
+    def leave(self, sub, wait=True, why=""):
         with _lock:
             with self.lock:
                 if sub in self.subs:
                     self.subs.remove(sub)
                 last = not self.subs and not self.ended
                 if last:                    # nobody can join a tuner that's stopping
+                    self.why = f"last viewer left: {_who(sub.name)} {why or 'disconnected'}"
                     self.ended = True
                     if self in _tuners:
                         _tuners.remove(self)
@@ -222,8 +227,8 @@ class Tuner:
         wait = ALONE_WAIT if len(subs) == 1 else 0
         for s in subs:
             if not s.put(buf, wait):
-                log.warning("%s fell too far behind on %s: dropped", s.name or "viewer", split_url(self.url)[0][-40:])
-                s.close()
+                log.warning("%s fell too far behind on %s: dropped", _who(s.name), split_url(self.url)[0][-40:])
+                s.close(why="fell too far behind (network too slow?)")
 
     def _trim(self, now):
         cutoff = now - self.retain
@@ -271,6 +276,12 @@ class Tuner:
                 i += 5 + (((pkt[i + 3] & 0x0F) << 8) | pkt[i + 4])
 
     def _end(self):
+        rc = None
+        if not self.why:                    # quit by itself: its own exit code, before kill() replaces it
+            try:
+                rc = self.proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
         with _lock:
             if self in _tuners:
                 _tuners.remove(self)
@@ -287,9 +298,25 @@ class Tuner:
         self._errt.join(2)          # readers (the DVR) report ffmpeg's last words
         for s in subs:
             s.end()
-        log.info("Tuner end after %.1f MB: %s", self.sent / 1e6, split_url(self.url)[0][-60:])
+        secs = int(time.time() - self.started)
+        what = (f"Tuner end after {self.sent / 1e6:.1f} MB, {secs // 60}m{secs % 60:02d}s: "
+                f"{split_url(self.url)[0][-60:]}")
+        if self.why:
+            log.info("%s (%s)", what, self.why)
+        elif self.sent:
+            # nobody stopped it: the provider ended the stream (or ffmpeg gave up reconnecting)
+            log.warning("%s (the provider's stream ended; ffmpeg exit %s: %s)", what, rc,
+                        self.error() or "no error given")
         if self.sent == 0:
             log.warning("No data from %s: %s", split_url(self.url)[0][:120], self.error())
+
+
+def _who(name):
+    """A reader's name for the log: the Roku's own name when it gave one, else its id."""
+    if not name:
+        return "viewer"
+    from . import connections
+    return connections.client_name(name) or name
 
 
 def _resync(data):
@@ -374,7 +401,7 @@ def evict(url, mode, audio):
     with _lock:
         ts = [t for t in _tuners if t.url == url and t.mode == mode and t.audio == audio and not t.ended]
     for t in ts:
-        t.stop()
+        t.stop("stopped to free the connection for a recording")
     return bool(ts)
 
 
@@ -398,7 +425,7 @@ def stop_id(tid):
     with _lock:
         ts = [t for t in _tuners if id(t) == tid and not t.ended]
     for t in ts:
-        t.stop()
+        t.stop("stopped in Setup › Tuners")
     return bool(ts)
 
 
@@ -406,7 +433,7 @@ def stop_client(client_id):
     """Take a screen off its channel (before it tunes another: Xtream allows few connections)."""
     sub = _clients.pop(client_id, None)
     if sub:
-        sub.close()
+        sub.close(why="started a new stream (another channel, or a retry)")
 
 
 async def watch(url, client_id=None, mode=None, audio="aac", request=None, buffer=None, source_id=None, sub=None):
