@@ -64,6 +64,7 @@
     </div>
   </div>
   <div id="saver" class="hidden"><div id="saver-box"><div id="saver-time"></div><div id="saver-date"></div><div class="saver-logo">Tuner<span>Box</span></div></div></div>
+  <div id="sstats" class="hidden" aria-live="off"></div>
   <div id="buffering" class="hidden"><span class="spin"></span> <span id="buf-text">Buffering…</span></div>
   <div id="tapplay" class="hidden"><div>&#9654;</div>Tap to watch</div>
 
@@ -132,11 +133,12 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
 
   <!-- game stats: a side panel over the picture for the game on this channel (X while watching) -->
   <div id="gstats" class="hidden" aria-live="polite">
-    <div class="gs-head"><span id="gs-league"></span><span id="gs-clock"></span></div>
+    <div class="gs-head" title="Drag to move"><span class="gs-grip">&#10303;</span><span id="gs-league"></span><span id="gs-clock"></span><button class="gs-snap" data-snap="l" type="button" title="Snap to the left side">&#8676;</button><button class="gs-snap" data-snap="r" type="button" title="Snap to the right side">&#8677;</button><button id="gs-move" type="button" title="Move: right side, bottom right, bottom left, left side" aria-label="Move">&#10530;</button></div>
     <div id="gs-teams"></div>
     <div class="tabs" id="gs-tabs"></div>
     <div id="gs-body"></div>
     <div class="p-foot gs-foot"><span id="gs-keys"><b>&#9664; &#9654;</b> Tabs &nbsp; <b>&#9650; &#9660;</b> Scroll &nbsp; <b>Esc</b> Close</span> <span id="gs-upd"></span></div>
+    <div id="gs-resize" title="Drag to resize · double-click for the usual size"></div>
   </div>
 
   <!-- on demand: movies and shows from the playlists -->

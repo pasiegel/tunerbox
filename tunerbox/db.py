@@ -1,6 +1,9 @@
 """SQLite storage. One short-lived connection per call keeps threads simple."""
 import logging
+import os
 import sqlite3
+import sys
+import time
 from contextlib import contextmanager
 
 from . import config
@@ -149,12 +152,36 @@ def _connect():
     return con
 
 
+# A write transaction blocks every other writer until it commits; they wait up to the 30 s timeout above
+# and then fail with "database is locked". Big jobs write in batches to stay well under that; one that
+# held the lock longer than this is logged with where it came from, so the next culprit is easy to find.
+SLOW_WRITE = 5.0
+BATCH = 5000            # rows per transaction for the big writers (On Demand catalogues, the guide)
+
+
+def _caller():
+    """'module.function:line' of the code that opened the connection (outside db.py and contextlib)."""
+    f = sys._getframe(2)
+    while f and os.path.basename(f.f_code.co_filename) in ("db.py", "contextlib.py"):
+        f = f.f_back
+    return f"{os.path.basename(f.f_code.co_filename)[:-3]}.{f.f_code.co_name}:{f.f_lineno}" if f else "?"
+
+
+def is_locked(e):
+    return isinstance(e, sqlite3.OperationalError) and "locked" in str(e)
+
+
 @contextmanager
 def conn():
     con = _connect()
+    t = time.monotonic()
     try:
         yield con
+        wrote = con.in_transaction
         con.commit()
+        held = time.monotonic() - t
+        if wrote and held > SLOW_WRITE:
+            log.warning("Database write took %.1f s (other writers wait meanwhile): %s", held, _caller())
     finally:
         con.close()
 

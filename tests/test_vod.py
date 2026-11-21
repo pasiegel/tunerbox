@@ -323,6 +323,18 @@ def test_search_words_accents_typos_and_years(monkeypatch):
     assert names("dragnet") == ["Dragnet"]                                # shows too
 
 
+def test_search_typos_need_every_word(monkeypatch):
+    _titles(monkeypatch, [("Hotel Transylvania", "KIDS"), ("Hotel Transylvania 2", "KIDS"), ("Hotel Rwanda", "DRAMA"),
+                          ("Hotel Artemis", "ACTION"), ("Hostel", "HORROR"), ("Hostel: Part II", "HORROR")])
+    names = lambda q: sorted(r["name"] for r in vod.search(q, limit=100))    # noqa: E731
+    hotel_t = ["Hotel Transylvania", "Hotel Transylvania 2"]
+    assert names("hotel trans") == hotel_t
+    for q in ("hotels trans", "Hotels Trans", "hotels t", "hotels tr", "hotels tran"):    # while still typing too
+        assert names(q) == hotel_t, q
+    assert names("hotel transylvnia") == ["Hotel Transylvania", "Hotel Transylvania 2"]     # a typo still finds it
+    assert "Hotel Rwanda" in names("hotel rwnda") and "Hostel" not in names("hotel rwnda")
+
+
 def test_api_search_and_kinds(monkeypatch, client):
     _titles(monkeypatch, MOVIES)
     assert [r["name"] for r in client.get("/api/vod/search?q=boot").json()] == ["DE - Das Boot"]
@@ -533,4 +545,461 @@ def test_your_own_copy_comes_first(labelled):
     assert hit["id"] == f"L{sid}:mfilm2" and len(hit["versions"]) == 4
     vs = vod.title(f"L{sid}:mfilm2")["versions"]
     assert vs[0]["id"] == f"L{sid}:mfilm2" and vs[0]["where"] == "35mm" and vs[0]["current"]
-    assert vs[1]["tag"] == "DE"                                      # then the preferred language, as before
+    assert vs[1]["tag"] == "4K-EN"         # then the best picture, ahead of a preferred language (Pick a version only)
+    assert hit["versions"][1]["tag"] == "DE"                         # Search still leads with the preferred language
+
+
+# ---------------------------------------------------------------- Pick a version: bitrate, TMDB id, original title
+def test_length_prefers_the_text_when_duration_secs_is_minutes():
+    assert vod._secs({"duration_secs": "92", "duration": "01:32:00"}) == 5520     # a panel that put minutes there
+    assert vod._secs({"duration_secs": 5492, "duration": "01:31:32"}) == 5492
+    assert vod._secs({"duration_secs": 5492}) == 5492
+    assert vod._secs({"duration": "00:01:30"}) == 90
+    assert vod._secs({"episode_run_time": "45"}) == 2700
+
+
+def _versions_api(monkeypatch, info_by_id, calls=None):
+    def fake(src, action=None, **p):
+        if action == "get_vod_info":
+            if calls is not None:
+                calls.append(p["vod_id"])
+            return info_by_id.get(p["vod_id"], {})
+        return LABELLED[action]
+    monkeypatch.setattr(sources, "xtream_api", fake)
+
+
+def test_pick_a_version_fetches_each_versions_bitrate_once(labelled, monkeypatch, client):
+    calls = []
+    _versions_api(monkeypatch, {
+        "102": {"info": {"bitrate": "2596", "duration_secs": 5251, "tmdb_id": "585083", "o_name": "Film Deux"},
+                "movie_data": {"container_extension": "mkv"}},
+        "202": {"info": {"bitrate": 4103, "duration": "01:27:31"}, "movie_data": {}},
+        "302": {"info": {"bitrate": 16436, "duration_secs": 5492}, "movie_data": {}},
+    }, calls)
+    vs = client.get("/api/vod/title/1:m102/versions").json()
+    by = {v["id"]: v for v in vs}
+    assert (by["1:m102"]["bitrate"], by["1:m202"]["bitrate"], by["1:m302"]["bitrate"]) == (2596, 4103, 16436)
+    assert by["1:m302"]["duration"] == 5492 and by["1:m102"]["current"]
+    assert sorted(calls) == ["102", "202", "302"]
+    client.get("/api/vod/title/1:m102/versions")
+    assert len(calls) == 3                                  # kept: not asked again
+    t = db.one("SELECT tmdb, o_search FROM vod_titles WHERE id='1:m102'")
+    assert (t["tmdb"], t["o_search"]) == ("585083", "film deux")
+    assert client.get("/api/vod/title/1:m102").json()["bitrate"] == 2596
+    assert client.get("/api/vod/title/nope/versions").status_code == 404
+
+
+def test_an_impossible_bitrate_from_the_panel_isnt_kept(labelled, monkeypatch):
+    _versions_api(monkeypatch, {"102": {"info": {"bitrate": 987060, "duration_secs": 5491}, "movie_data": {}}}, [])
+    vod.check_versions("1:m102")
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id='1:m102'")["bitrate"] == 0
+
+
+def test_an_empty_reply_is_tried_again(labelled, monkeypatch):
+    calls = []
+    _versions_api(monkeypatch, {}, calls)                   # the provider answers {} for everything
+    vod.check_versions("1:m102")
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m102'")["info_at"] == 0
+    vod.check_versions("1:m102")
+    assert calls.count("102") == 2
+
+
+def test_tmdb_id_ties_a_differently_named_copy_and_the_original_title_is_searchable(labelled, monkeypatch):
+    _versions_api(monkeypatch, {"102": {"info": {"tmdb_id": "585083", "o_name": "Le Film Deux"}, "movie_data": {}}})
+    db.run("""INSERT INTO vod_titles(id, source_id, kind, name, tag, search, year, tmdb)
+              VALUES ('1:m999', ?, 'movie', 'Film II', 'EN', 'film ii', '2020', '585083')""", (labelled,))
+    vod._changed()
+    vod.check_versions("1:m102")
+    assert "1:m999" in {v["id"] for v in vod.title("1:m102")["versions"]}
+    assert "1:m999" not in {v["id"] for v in vod.title("1:m101")["versions"]}
+    assert any(h["id"] == "1:m102" or "1:m102" in {v["id"] for v in h["versions"]} for h in vod.search("le film deux"))
+    # "0" is a panel's way of saying none: it doesn't tie every film together
+    _versions_api(monkeypatch, {"101": {"info": {"tmdb_id": "0"}, "movie_data": {}}})
+    vod.check_versions("1:m101")
+    assert db.one("SELECT tmdb FROM vod_titles WHERE id='1:m101'")["tmdb"] == ""
+
+
+def test_details_fetched_before_bitrate_existed_are_fetched_again_once(labelled, monkeypatch):
+    db.run("UPDATE vod_titles SET info_at=? WHERE id IN ('1:m102', '1:m202')", (NOW,))
+    db.run("UPDATE vod_titles SET bitrate=4103, tmdb='1' WHERE id='1:m202'")       # already has the new details
+    db.run("DELETE FROM meta WHERE k='vod_details_v2'")                            # a database from before
+    vod.init()
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m102'")["info_at"] == 0
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m202'")["info_at"] == NOW
+    calls = []
+    _versions_api(monkeypatch, {"102": {"info": {"bitrate": 2596}, "movie_data": {}}}, calls)
+    vod.check_versions("1:m102")
+    assert "102" in calls and "202" not in calls
+    db.run("UPDATE vod_titles SET info_at=?, bitrate=0 WHERE id='1:m102'", (NOW,))   # a provider that sends no bitrate
+    vod.init()                                                                     # not reset again on every start
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m102'")["info_at"] == NOW
+
+
+# ---------------------------------------------------------------- picture and sound, read while playing
+PLAYING = """Input #0, matroska,webm, from 'http://host:8080/movie/user/pass/640714.mkv':
+  Metadata:
+    title           : Hotel Transylvania
+  Duration: 01:31:32.00, start: 0.000000, bitrate: 15800 kb/s
+  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/smpte2084), 3840x2160 [SAR 1:1 DAR 16:9], 23.98 fps, 23.98 tbr
+      Side data:
+        DOVI configuration record: version: 1.0, profile: 8, level: 6
+  Stream #0:1(eng): Audio: eac3, 48000 Hz, 5.1(side), fltp, 768 kb/s (default)
+  Stream #0:2(spa): Audio: ac3, 48000 Hz, stereo, fltp, 192 kb/s
+  Stream #0:3: Video: mjpeg (Baseline), yuvj420p, 600x900, 90k tbr (attached pic)
+Stream mapping:
+  Stream #0:0 -> #0:0 (copy)
+Output #0, mpegts, to 'pipe:1':
+  Stream #0:0: Video: hevc (Main 10), yuv420p10le, 3840x2160, q=2-31, 23.98 fps
+"""
+
+
+def test_av_summary_reads_the_input_not_the_output():
+    from tunerbox import tracks
+    av = tracks.av_summary(PLAYING)
+    assert av == {"w": 3840, "h": 2160, "vcodec": "hevc", "bits": 10, "hdr": "Dolby Vision", "fps": 23.98, "kbps": 15800,
+                  "acodec": "eac3", "layout": "5.1"}
+    hlg = PLAYING.replace("smpte2084", "arib-std-b67").replace("DOVI configuration record", "x")
+    assert tracks.av_summary(hlg)["hdr"] == "HLG"
+    sd = "Input #0, mpegts, from 'x':\n  Stream #0:0[0x100]: Video: h264 (High), yuv420p(progressive), 720x576, 25 fps\n"
+    assert tracks.av_summary(sd) == {"w": 720, "h": 576, "vcodec": "h264", "bits": 8, "hdr": "", "fps": 25.0, "kbps": 0}
+    assert tracks.av_summary("Input #0, mp3, from 'x':\n  Stream #0:0: Audio: mp3, 44100 Hz, stereo\n") == {}
+    assert tracks.av_summary("") == {}
+
+
+class _Proc:
+    def __init__(self, text):
+        import io
+        self.stderr = io.BytesIO(text.encode())
+
+
+def test_the_stream_description_is_handed_over_and_kept_out_of_the_log():
+    seen, err = [], []
+    streaming._read_err(_Proc(PLAYING + "[mpegts @ 0x1] Packet corrupt\n"), err, seen.append)
+    for _ in range(100):                                     # handed over on its own thread
+        if seen:
+            break
+        time.sleep(0.01)
+    assert len(seen) == 1 and "3840x2160" in seen[0] and "Output #0" not in seen[0].split("Stream mapping")[0]
+    assert err == ["[mpegts @ 0x1] Packet corrupt"]
+    # it stopped before it started: the error is kept, the address with the login never is
+    err = []
+    streaming._read_err(_Proc("Input #0, matroska, from 'http://host/movie/user/pass/1.mkv':\n"
+                              "  Duration: N/A\nhttp: Connection reset by peer\n"), err, seen.append)
+    assert err == ["http: Connection reset by peer"] and len(seen) == 1
+    err = []
+    streaming._read_err(_Proc(PLAYING), err)                   # no callback (catch-up): still kept out
+    assert not any("pass" in x or "Stream #" in x for x in err)
+
+
+def test_playing_a_movie_keeps_its_picture_and_sound(labelled):
+    db.run("UPDATE vod_titles SET bitrate=16436 WHERE id='1:m302'")
+    assert vod.save_av("1:m302", PLAYING) and vod.save_av("1:m102", PLAYING)
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id='1:m302'")["bitrate"] == 16436     # the provider's stays
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id='1:m102'")["bitrate"] == 15800     # none given: ffmpeg's
+    by = {v["id"]: v for v in vod.title("1:m202")["versions"]}
+    assert by["1:m302"]["av"]["hdr"] == "Dolby Vision" and by["1:m202"]["av"] is None
+    assert vod.title("1:m302")["av"]["h"] == 2160
+    assert not vod.save_av("1:m202", "nothing useful")
+    assert "-nostats" in vod.stream_cmd("http://x/1.mkv")       # described, without progress lines
+
+
+# ---------------------------------------------------------------- Pick a version: a quick look at each version
+def _peeking(monkeypatch, status=206, total=11283525339, probed=None):
+    """The provider answering a 2 MB read with `status`; ffmpeg reading a version itself answering `probed`
+    ((secs, text, why); default: it can't). -> what was asked: ranges, and "ffmpeg" for each read by ffmpeg."""
+    import httpx
+    asked = []
+    monkeypatch.setattr(vod, "probe_why", lambda url, timeout=None: asked.append("ffmpeg") or
+                        (probed or (0, "", "Server returned 404 Not Found")))
+
+    def handler(req):
+        asked.append(req.headers.get("range"))
+        if status != 206:
+            return httpx.Response(status, content=b"x" * 100)
+        return httpx.Response(206, content=b"\0" * vod.PEEK_BYTES,
+                              headers={"content-range": f"bytes 0-{vod.PEEK_BYTES - 1}/{total}"})
+    real = httpx.Client
+    monkeypatch.setattr(vod.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(vod, "_describe", lambda data: PLAYING)
+    vod._peeked.clear()
+    return asked
+
+
+def test_peek_reads_the_start_of_a_version_once(labelled, monkeypatch, client):
+    asked = _peeking(monkeypatch)
+    db.run("UPDATE vod_titles SET duration=5492 WHERE id IN ('1:m102', '1:m302')")
+    db.run("UPDATE vod_titles SET bitrate=16436 WHERE id='1:m302'")
+    v = client.get("/api/vod/peek/1:m102").json()
+    assert v["av"]["hdr"] == "Dolby Vision" and v["bitrate"] == 16436      # no bitrate given: size over length
+    assert asked == [f"bytes=0-{vod.PEEK_BYTES - 1}"]
+    assert vod.peek("1:m302")["bitrate"] == 16436                          # the provider's stays
+    vod.peek("1:m102")
+    assert len(asked) == 2                                                 # read already: not again
+    assert client.get("/api/vod/peek/nope").status_code == 404
+    vod.peek("1:m102", force=True)
+    assert len(asked) == 2                                                 # Read details: still not again
+    client.get("/api/vod/peek/1:m102?force=1&again=1")
+    assert len(asked) == 3                                                 # Read again: it is
+
+
+def test_peek_never_takes_a_connection_in_use_or_reads_a_whole_film(labelled, monkeypatch):
+    from tunerbox import connections
+    asked = _peeking(monkeypatch)
+    src = db.one("SELECT * FROM sources WHERE id=?", (labelled,))
+
+    def full(source_id, *a, **k):
+        raise connections.Full(src, 1, 1)
+    monkeypatch.setattr(connections, "check", full)
+    assert vod.peek("1:m102")["av"] is None and asked == []
+    monkeypatch.undo()
+    asked = _peeking(monkeypatch, status=200)                             # a provider that ignores Range
+    v = vod.peek("1:m102")
+    assert v["av"] is None and asked == [f"bytes=0-{vod.PEEK_BYTES - 1}", "ffmpeg"]    # 200: ffmpeg reads it instead
+    assert v["why"] == "Couldn't read it: Server returned 404 Not Found"
+    assert vod.peek("1:m102")["why"] == v["why"] and len(asked) == 2      # not tried again today, still says why
+    vod.peek("1:m102", force=True)
+    assert len(asked) == 4                                                 # Read details again: tried now
+
+
+def test_a_version_the_start_says_nothing_about_is_read_by_ffmpeg(labelled, monkeypatch, client):
+    """An MP4 keeps its track list at the end: the first 2 MB say nothing, ffmpeg finds it."""
+    asked = _peeking(monkeypatch, probed=(5492, PLAYING, ""))
+    monkeypatch.setattr(vod, "_describe", lambda data: "pipe:0: Invalid data found when processing input")
+    v = client.get("/api/vod/peek/1:m102").json()
+    assert asked == [f"bytes=0-{vod.PEEK_BYTES - 1}", "ffmpeg"] and v["av"]["hdr"] == "Dolby Vision" and v["why"] == ""
+    no_picture = "Input #0, mov,mp4 from 'x':\n  Duration: 01:31:32.00"            # found, but no video in it
+    monkeypatch.setattr(vod, "probe_why", lambda url, timeout=None: asked.append("ffmpeg") or (5492, no_picture, ""))
+    v = vod.peek("1:m202")
+    assert v["why"] == "Nothing in the file says" and len(asked) == 4
+    vod.peek("1:m202")
+    assert len(asked) == 4                                                 # '{}': read, not again unless asked
+
+
+def test_no_connection_free_says_so_and_is_tried_again_next_time(labelled, monkeypatch):
+    from tunerbox import connections
+    asked = _peeking(monkeypatch)
+    src = db.one("SELECT * FROM sources WHERE id=?", (labelled,))
+    real = connections.check
+
+    def full(source_id, *a, **k):
+        raise connections.Full(src, 1, 1)
+    monkeypatch.setattr(connections, "check", full)
+    assert vod.peek("1:m102")["why"] == "No connection free on this playlist right now" and asked == []
+    monkeypatch.setattr(connections, "check", real)
+    assert vod.peek("1:m102")["av"]["hdr"] == "Dolby Vision"              # not remembered as a failure
+
+
+def _own_copy(of="1:m202", path="Film 2 (2020)/Film 2 (2020).mkv"):
+    """A copy of `of` in one of your libraries, with its file. -> its id."""
+    from tunerbox import library
+    db.run("INSERT INTO lib_shares(name, kind, type, server, share, path) VALUES ('NAS', 'movie', 'smb', 'nas', 'media', 'm')")
+    sid = db.one("SELECT max(id) n FROM lib_shares")["n"]
+    row = dict(db.one("SELECT * FROM vod_titles WHERE id=?", (of,)))
+    row.update(id=f"L{sid}:m{of}", source_id=-sid, tag="", country="", av="")
+    db.run(f"INSERT INTO vod_titles({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+    db.run("INSERT INTO lib_files(item_id, title_id, share_id, path, size, mtime) VALUES (?, ?, ?, ?, 5, 0)",
+           (row["id"], row["id"], sid, path))
+    library.init()
+    vod._changed()
+    return row["id"]
+
+
+def test_reading_details_automatically_only_when_asked_or_never(labelled, monkeypatch):
+    from tunerbox import library
+    asked, measured = _peeking(monkeypatch), []
+    monkeypatch.setattr(library, "measure_one", lambda item_id: measured.append(item_id) or True)
+    mine = _own_copy()
+    config.update({"vod_details": "off"})
+    vod.peek("1:m102")
+    vod.peek("1:m102", force=True)
+    vod.peek(mine, force=True)
+    assert asked == [] and measured == []                                  # off: nothing read at all, even asked
+    config.update({"vod_details": "ask"})
+    assert vod.peek("1:m102")["av"] is None and asked == []                # only when Read details is pressed
+    assert vod.peek("1:m102", force=True)["av"]["hdr"] == "Dolby Vision" and len(asked) == 1
+    config.update({"vod_details": "auto"})
+    vod.peek(mine)
+    assert len(asked) == 1 and measured == [mine]                          # your own: from the NAS, not the provider
+    assert vod.peek("1:s70") is None                                       # shows: not read
+
+
+def test_pausing_the_screen_for_the_reading_can_be_turned_off(labelled, monkeypatch):
+    from tunerbox import connections
+    _peeking(monkeypatch)
+    src = db.one("SELECT * FROM sources WHERE id=?", (labelled,))
+
+    def check(source_id, url=None, client="", **k):
+        if client != "tv-1":
+            raise connections.Full(src, 1, 1)
+    monkeypatch.setattr(connections, "check", check)
+    config.update({"vod_details_pause": False})
+    v = vod.peek("1:m102", client="tv-1")
+    assert "mine" not in v and v["why"] == vod.NO_CONNECTION
+
+
+# what an Xtream panel sends in get_vod_info's info (ffprobe's fields)
+PANEL = {"bitrate": 8421,
+         "video": {"codec_name": "hevc", "width": 3840, "height": 1608, "pix_fmt": "yuv420p10le",
+                   "color_transfer": "smpte2084", "avg_frame_rate": "24000/1001"},
+         "audio": {"codec_name": "eac3", "channels": 6, "channel_layout": "5.1(side)"}}
+
+
+def test_the_panels_own_reading_of_a_movie_is_kept_and_ffmpegs_wins(labelled, monkeypatch):
+    _versions_api(monkeypatch, {"102": {"info": PANEL, "movie_data": {}},
+                                "202": {"info": {**PANEL, "video": []}, "movie_data": {}}})   # a panel that didn't probe
+    vod.check_versions("1:m102")
+    by = {v["id"]: v for v in vod.title("1:m102")["versions"]}
+    assert by["1:m102"]["av"] == {"w": 3840, "h": 1608, "vcodec": "hevc", "bits": 10, "hdr": "HDR10",
+                                  "fps": 23.976, "acodec": "eac3", "layout": "5.1"}
+    assert by["1:m202"]["av"] is None
+    db.run("UPDATE vod_titles SET av='{\"w\":1920}', info_at=0 WHERE id='1:m102'")      # read by ffmpeg since
+    vod.check_versions("1:m102")
+    assert vod.title("1:m102")["av"] == {"w": 1920}
+    asked = _peeking(monkeypatch)
+    db.run("UPDATE vod_titles SET av='' WHERE id='1:m102'")
+    db.run("UPDATE vod_titles SET info_at=0 WHERE id='1:m102'")
+    vod.check_versions("1:m102")
+    vod.peek("1:m102")
+    assert asked == []                    # the panel said already: no connection used to read it
+
+
+def test_details_fetched_before_the_panels_reading_was_kept_are_fetched_again_once(labelled):
+    db.run("UPDATE vod_titles SET info_at=?", (NOW,))
+    db.run("UPDATE vod_titles SET av='{}' WHERE id='1:m202'")
+    db.run("DELETE FROM meta WHERE k='vod_details_v3'")
+    vod.init()
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m102'")["info_at"] == 0
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m202'")["info_at"] == NOW     # read already
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:s70'")["info_at"] == NOW      # shows: no
+    db.run("UPDATE vod_titles SET info_at=? WHERE id='1:m102'", (NOW,))
+    vod.init()
+    assert db.one("SELECT info_at FROM vod_titles WHERE id='1:m102'")["info_at"] == NOW     # once
+
+
+def test_a_version_not_read_yet_shows_what_its_file_name_or_label_says(labelled):
+    mine = _own_copy(path="Film 2 (2020)/Film.2.2020.1080p.BluRay.x264.DTS-HD.MA.5.1-GRP.mkv")
+    by = {v["id"]: v for v in vod.title("1:m202")["versions"]}
+    assert by[mine]["hint"] == {"w": 1920, "h": 1080, "vcodec": "h264", "acodec": "dts", "layout": "5.1"}
+    assert by["1:m302"]["hint"] == {"w": 3840, "h": 2160}                  # its label: 4K-EN
+    assert by["1:m202"]["hint"] is None                                    # DE says nothing about the picture
+    assert vod.title(mine)["hint"]["vcodec"] == "h264"
+    db.run("""UPDATE vod_titles SET av='{"w":1280,"h":720}' WHERE id=?""", (mine,))
+    assert {v["id"]: v for v in vod.title("1:m202")["versions"]}[mine]["hint"] is None    # read: no guess
+
+
+def test_pick_a_version_lists_the_best_first(labelled):
+    """Your own copy, then the best picture (what ffmpeg read, else the label), then the highest bitrate."""
+    db.run("UPDATE vod_titles SET bitrate=2596 WHERE id='1:m102'")      # EN
+    db.run("UPDATE vod_titles SET bitrate=13969 WHERE id='1:m202'")     # DE: no resolution known
+    db.run("UPDATE vod_titles SET bitrate=16436 WHERE id='1:m302'")     # 4K-EN, by its label
+    assert [v["id"] for v in vod.title("1:m102")["versions"]] == ["1:m302", "1:m202", "1:m102"]
+    vod.save_av("1:m302", PLAYING.replace("3840x2160", "1920x1080"))    # read: really 1080p
+    vod.save_av("1:m102", PLAYING.replace("3840x2160", "1280x720"))
+    assert [v["id"] for v in vod.title("1:m102")["versions"]] == ["1:m302", "1:m102", "1:m202"]
+    assert vod._quality({"av": "", "tag": "UHD"}) == 4 and vod._quality({"av": "", "tag": "FHD"}) == 3
+    assert vod._quality({"av": "", "tag": "HD"}) == 2 and vod._quality({"av": "", "tag": "EN"}) == 1.5
+
+
+def test_pick_a_version_gives_each_files_type_and_size(labelled):
+    db.run("UPDATE vod_titles SET ext='MKV' WHERE id='1:m102'")
+    db.run("INSERT INTO lib_files(item_id, title_id, share_id, path, size) VALUES ('1:m102', '1:m102', 1, 'x.mkv', 11283525339)")
+    by = {v["id"]: v for v in vod.title("1:m202")["versions"]}
+    assert (by["1:m102"]["ext"], by["1:m102"]["size"]) == ("mkv", 11283525339)
+    assert by["1:m202"]["size"] == 0                       # a provider's: worked out on the screen from its bitrate
+
+
+def test_a_file_that_cant_be_read_says_why(monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    def ran(err=b"", timeout=False, missing=False):
+        def run(cmd, **k):
+            assert "-reconnect" not in cmd                     # a one-off read: an error isn't retried until 25 s
+            if missing:
+                raise FileNotFoundError("ffmpeg")
+            if timeout:
+                raise subprocess.TimeoutExpired(cmd, 25, stderr=err)
+            return SimpleNamespace(stderr=err)
+        monkeypatch.setattr(vod.subprocess, "run", run)
+    ran(b"[http @ 0x1] HTTP error 502 Bad Gateway\nhttp://127.0.0.1/api/library/file/x: Server returned 5XX Server Error reply\n")
+    assert vod.probe_why("http://127.0.0.1/api/library/file/x") == \
+        (0, "", "http://127.0.0.1/api/library/file/x: Server returned 5XX Server Error reply")   # not "read, nothing in it"
+    ran(timeout=True)
+    assert vod.probe_why("http://h/x")[2] == "no answer within 25 s"
+    ran(missing=True)
+    assert vod.probe_why("http://h/x")[2].startswith("ffmpeg didn't start")
+    ran(b"Input #0, matroska,webm, from 'x':\n  Duration: 01:00:00.00, start: 0.000000, bitrate: 5000 kb/s\n")
+    secs, text, why = vod.probe_why("http://h/x")
+    assert secs == 3600 and text and why == ""
+
+
+def test_a_panel_giving_a_films_length_in_minutes_is_read_as_minutes():
+    assert vod._secs({"duration_secs": "92"}, movie=True) == 92 * 60
+    assert vod._secs({"duration": "00:01:32"}, movie=True) == 92 * 60      # minutes in the text too
+    assert vod._secs({"duration_secs": "5520", "duration": "01:32:00"}, movie=True) == 5520
+    assert vod._secs({"duration_secs": "92"}) == 92                          # an episode can be that short
+
+
+def test_the_files_own_length_fixes_a_wrong_one_and_no_impossible_bitrate_is_kept(labelled, monkeypatch):
+    asked = _peeking(monkeypatch, total=7_400_000_000)
+    db.run("UPDATE vod_titles SET duration=60 WHERE id='1:m102'")          # the panel said "1 min"
+    v = vod.peek("1:m102")
+    assert len(asked) == 1 and v["duration"] == 5492                       # PLAYING: Duration 01:31:32
+    assert v["bitrate"] == int(7_400_000_000 * 8 / 5492 / 1000)            # ~10.8 Mbps, not 987 Mbps
+    monkeypatch.setattr(vod, "_describe", lambda data: PLAYING.replace("Duration: 01:31:32.00", "Duration: 00:00:30.00"))
+    db.run("UPDATE vod_titles SET duration=61, bitrate=0, av='' WHERE id='1:m202'")
+    assert vod.peek("1:m202")["bitrate"] in (0, 15800)                     # 30 s: not a length to work it out from
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id='1:m202'")["bitrate"] <= vod.MAX_KBPS
+
+
+def test_lengths_and_bitrates_stored_wrong_before_are_cleared_once(labelled):
+    db.run("UPDATE vod_titles SET duration=60, bitrate=987100, info_at=? WHERE id='1:m102'", (NOW,))
+    db.run("UPDATE vod_titles SET duration=5492, bitrate=4100, info_at=? WHERE id='1:m202'", (NOW,))
+    db.run("UPDATE vod_titles SET bitrate=500000 WHERE id='1:m302'")
+    db.run("DELETE FROM meta WHERE k='vod_details_v4'")
+    vod.init()
+    r = {x["id"]: x for x in db.rows("SELECT id, duration, bitrate, info_at FROM vod_titles")}
+    assert (r["1:m102"]["duration"], r["1:m102"]["bitrate"], r["1:m102"]["info_at"]) == (0, 0, 0)
+    assert (r["1:m202"]["duration"], r["1:m202"]["bitrate"], r["1:m202"]["info_at"]) == (5492, 4100, NOW)
+    assert r["1:m302"]["bitrate"] == 0
+
+
+def test_a_connection_held_only_by_the_screen_asking_can_be_let_go_of(labelled, monkeypatch, client):
+    """Live TV in this screen's corner uses the playlist's only connection: peek says so ("mine"), reads
+    nothing, and reads once the screen has let go of it. Another screen's stream is never "mine"."""
+    from tunerbox import connections
+    asked = _peeking(monkeypatch)
+    src = db.one("SELECT * FROM sources WHERE id=?", (labelled,))
+    holder = {"client": "tv-1"}
+
+    def check(source_id, url=None, client="", **k):
+        if holder["client"] and client != holder["client"]:
+            raise connections.Full(src, 1, 1)
+    monkeypatch.setattr(connections, "check", check)
+    v = client.get("/api/vod/peek/1:m102?client=tv-1").json()
+    assert v["mine"] is True and v["av"] is None and asked == []
+    v = vod.peek("1:m102", client="tv-2")                                  # someone else's: left alone
+    assert v["why"] == vod.NO_CONNECTION and "mine" not in v and asked == []
+    holder["client"] = ""                                                  # tv-1 stopped its stream
+    v = client.get("/api/vod/peek/1:m102?client=tv-1").json()
+    assert v["av"]["hdr"] == "Dolby Vision" and "mine" not in v and len(asked) == 1
+
+
+def test_a_placeholder_length_is_unknown_when_the_other_copies_disagree():
+    v = lambda d, mine=False: {"duration": d, "mine": mine, "len_unknown": False}     # noqa: E731
+    vs = [v(5491, True), v(3600), v(5491)]
+    vod._unknown_lengths(vs)
+    assert [(x["duration"], x["len_unknown"]) for x in vs] == [(5491, False), (0, True), (5491, False)]
+    vs = [v(3600), v(3610)]                     # an hour-long film: the copies agree, it's real
+    vod._unknown_lengths(vs)
+    assert vs[0]["duration"] == 3600 and not vs[0]["len_unknown"]
+
+
+def test_pick_a_version_gives_each_versions_own_progress(labelled):
+    vod.set_progress("1:m202", 1800, 5400)                  # DE: stopped half an hour in
+    vod.set_progress("1:m302", 5300, 5400)                  # 4K-EN: played to the end
+    by = {v["id"]: v for v in vod.title("1:m102")["versions"]}
+    assert (by["1:m202"]["position"], by["1:m202"]["pdur"], by["1:m202"]["watched"]) == (1800, 5400, False)
+    assert by["1:m202"]["stopped"] > 0
+    assert by["1:m302"]["watched"] and by["1:m302"]["position"] == 0
+    assert (by["1:m102"]["position"], by["1:m102"]["watched"], by["1:m102"]["stopped"]) == (0, False, 0)

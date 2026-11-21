@@ -19,8 +19,9 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response,
                                StreamingResponse)
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, matcher, media, remote, scoreboard, sources, sports, tracks, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, logview, matcher, media, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -610,7 +611,7 @@ def api_import_sources(request: Request, data: dict = Body(...)):
         raise HTTPException(400, str(e))
     guide.invalidate()
     if r["added"] or r["updated"]:
-        r["job"] = "scan" if jobs.scan() else ""        # read the new / changed playlists
+        r["job"] = "scan" if jobs.scan(queue=True) else ""        # read the new / changed playlists
     return r
 
 
@@ -654,7 +655,7 @@ def api_edit_source(request: Request, sid: int, data: dict = Body(...)):
     job = ""
     src = db.one("SELECT * FROM sources WHERE id=?", (sid,))
     if any(k in data and data[k] != before[k] for k in ("url", "username", "password", "xtream_format")):
-        job = "scan" if jobs.scan() else ""      # a new address or login: read the playlist again
+        job = "scan" if jobs.scan(queue=True, source_id=sid) else ""      # a new address or login: read it again
     turned = {k: int(bool(data[k])) for k in ("vod_movies", "vod_series") if src and k in data and int(bool(data[k])) != src[k]}
     if turned:              # On Demand switched on or off for this playlist
         for k, on in turned.items():
@@ -727,7 +728,7 @@ def api_source_groups_save(sid: int, hidden: list[str] = Body(..., embed=True)):
         raise HTTPException(404)
     guide.invalidate()
     if r["shown_again"]:
-        r["job"] = "scan" if jobs.scan() else ""        # the playlist has to be read again
+        r["job"] = "scan" if jobs.scan(queue=True, source_id=sid) else ""        # the playlist has to be read again
     elif r["newly_hidden"]:
         r["job"] = "match" if jobs.rematch() else ""     # re-match + renumber without those groups
     return r
@@ -744,17 +745,30 @@ def api_del_source(sid: int):
 
 # ------------------------------------------------------------------ jobs & settings
 @app.post("/api/jobs/{name}")
-def api_job(name: str, force: int = 0):
-    fn = {"scan": lambda: jobs.scan(bool(force)), "epg": jobs.refresh_epg, "match": jobs.rematch, "refresh": jobs.quick_refresh,
+def api_job(name: str, force: int = 0, source: int = 0):
+    # source: a playlist just added: read only that one (Setup's Add playlist)
+    fn = {"scan": lambda: jobs.scan(bool(force), queue=True, source_id=source or None), "epg": jobs.refresh_epg, "match": jobs.rematch, "refresh": jobs.quick_refresh,
           "vod": jobs.vod_scan}.get(name)
     if not fn:
         raise HTTPException(404)
-    return {"started": fn()}
+    started = fn()
+    return {"started": started, **({"after": jobs.running_what()} if started == "queued" else {})}
+
+
+@app.get("/api/log")
+def api_log(request: Request, after: int = -1):
+    """Setup › Log: the log's newest lines, then what's added after `pos` (logins and keys hidden)."""
+    if config.get("require_pairing") and not remote.trusted(request):
+        raise HTTPException(403, "Pair this device first (Setup › Phones on the TunerBox PC)")
+    return logview.tail(after)
 
 
 @app.get("/api/jobs")
 def api_jobs():
-    return {**jobs.state, "epg_updated": int(db.get_meta("epg_updated", 0) or 0),
+    """The main lane's job (playlists, On Demand, the guide) at the top; My Library's own lane under "library", and
+    grabbing its video details under "videos" (`resume_at`: when it starts again after the NAS stopped answering)."""
+    return {**jobs.state, "library": dict(jobs.lib_state), "videos": {**jobs.vid_state, "resume_at": int(library.resume_at)},
+            "epg_updated": int(db.get_meta("epg_updated", 0) or 0),
             "scan_updated": int(db.get_meta("scan_updated", 0) or 0)}
 
 
@@ -1088,6 +1102,26 @@ def api_vod_title(title_id: str):
     return t
 
 
+@app.get("/api/vod/title/{title_id}/versions")
+def api_vod_versions(title_id: str):
+    """Pick a version: its versions, with the bitrate and length of each fetched from the provider."""
+    v = vod.check_versions(title_id)
+    if v is None:
+        raise HTTPException(404, "That title is no longer in the playlist")
+    return v
+
+
+@app.get("/api/vod/peek/{version_id}")
+def api_vod_peek(version_id: str, force: int = 0, client: str = "", again: int = 0):
+    """Pick a version: one version's picture and sound, read from the start of its file (one at a time).
+    `force` (Read details again): also one that couldn't be read earlier today. `client`: the screen asking
+    ("mine" in the answer: only its own stream holds the connection, which it can let go of for the read)."""
+    v = vod.peek(version_id, force=bool(force), client=client[:64], again=bool(again))
+    if v is None:
+        raise HTTPException(404, "That title is no longer in the playlist")
+    return v
+
+
 @app.get("/api/vod/poster/{title_id}")
 async def api_vod_poster(title_id: str):
     """A small copy of a title's poster for TV grids (made once, then served from disk).
@@ -1124,6 +1158,15 @@ def _vod_label(it):
     return " · ".join(str(x) for x in (it.get("title"), it.get("sub")) if x)
 
 
+def _log_play(it, ss, client, how):
+    """One line in the log for each movie or episode started: Setup › Log shows what's playing."""
+    where = "My Library" if library.is_library(it["source_id"]) else (
+        (db.one("SELECT name FROM sources WHERE id=?", (it["source_id"],)) or {}).get("name") or "a playlist")
+    at = f" from {int(ss // 3600)}:{int(ss % 3600 // 60):02d}:{int(ss % 60):02d}" if ss >= 1 else ""
+    log.info("On Demand: playing %s (%s)%s for %s, %s", _vod_label(it) or "a title", where, at,
+             connections.client_name(client) if client else "-", how)
+
+
 @app.get("/api/vod/play/{item_id}")
 def api_vod_play(item_id: str):
     """What the player needs before it starts: title, length, where to resume, the next episode."""
@@ -1143,7 +1186,10 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
         lambda: vod.stream_cmd(url, ss, mode or it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None,
                                max(0, a)))
     proc = await _started(lambda: streaming.start_cmd(cmd, client or None, url, _vod_label(it), it["source_id"]))
-    return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc),
+    _log_play(it, ss, client, "streamed as MPEG-TS")
+    # the movie's picture and sound, as ffmpeg reads them while it plays: kept for Pick a version
+    keep = None if it.get("catchup") else (lambda text: vod.save_av(item_id, text))
+    return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc, on_header=keep),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
                         cleanup=lambda: streaming.release(proc, client or None))
 
@@ -1159,6 +1205,7 @@ async def api_vod_hls(item_id: str, ss: float = 0.0, client: str = "", mode: str
                                            _vod_label(it), it["source_id"], max(0, a) if a > 0 else None))
     if not await hls.wait_ready(sid):
         raise HTTPException(502, "Can't play this title")
+    _log_play(it, ss, client, "streamed as HLS")
     return RedirectResponse(f"/api/hls/s/{sid}/index.m3u8", status_code=302)
 
 
@@ -1677,7 +1724,7 @@ def api_library_delete(sid: int):
 
 def _queued(job):
     """{"job": …}, and when it waits for another job, what that one is ("after": "the guide update")."""
-    return {"job": bool(job), **({"queued": True, "after": jobs.running_what()} if job == "queued" else {})}
+    return {"job": bool(job), **({"queued": True, "after": jobs.running_what(library=True)} if job == "queued" else {})}
 
 
 @app.post("/api/library/scan")
@@ -1715,8 +1762,8 @@ def api_library_task_run(key: str):
 
 
 @app.get("/api/library/titles")
-def api_library_titles(share_id: int = 0, filter: str = "review", q: str = ""):
-    return library.review(share_id or None, filter, q[:100])
+def api_library_titles(share_id: int = 0, filter: str = "review", q: str = "", kind: str = ""):
+    return library.review(share_id or None, filter, q[:100], kind=kind if kind in ("movie", "series") else "")
 
 
 @app.get("/api/library/tmdb")
@@ -1756,11 +1803,22 @@ async def api_library_file(request: Request, item_id: str):
     except KeyError:
         raise HTTPException(404)
     except library.LibraryError as e:
+        log.warning("Library file %s: %s", item_id, e)      # Setup › Log: why a video couldn't be read or played
         raise HTTPException(502, str(e))
     if request.method == "HEAD":
-        getattr(body, "close", lambda: None)()      # closes the file it opened
+        await anyio.to_thread.run_sync(body.close)      # closes the file it opened
         return Response(status_code=status, headers=headers, media_type="application/octet-stream")
-    return StreamingResponse(body, status_code=status, headers=headers, media_type="application/octet-stream")
+
+    async def chunks():
+        try:
+            while data := await anyio.to_thread.run_sync(body.read):
+                yield data
+        finally:                # done, or the reader hung up: the file is closed on the NAS now, not someday
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(body.close)
+    # and once the response is over in any way (a reader gone before the first byte never starts chunks())
+    return StreamingResponse(chunks(), status_code=status, headers=headers, media_type="application/octet-stream",
+                             background=BackgroundTask(body.close))
 
 
 # ------------------------------------------------------------------ web UI
@@ -1827,7 +1885,10 @@ async def _setup_lock(request: Request, call_next):
     if (request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith(_LOCKED)
             and config.get("require_pairing") and not remote.trusted(request)):
         return JSONResponse({"detail": "Pair this device first (Setup › Phones on the TunerBox PC)"}, 403)
-    return await call_next(request)
+    r = await call_next(request)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith(("/api/sources", "/api/library")):
+        logview.forget()        # a login or key may have changed: the log hides the new one from the next line on
+    return r
 
 
 def _named(html):

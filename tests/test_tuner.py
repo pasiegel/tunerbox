@@ -438,3 +438,39 @@ def test_stopping_a_tuner_for_a_recording_doesnt_wait_for_ffmpeg(fake, monkeypat
     while not slow and time.monotonic() < end:
         time.sleep(0.05)
     assert slow                                         # ffmpeg still stopped, in the background
+
+
+def _end_line(caplog, url):
+    lines = [r for r in caplog.records if r.getMessage().startswith("Tuner end") and url in r.getMessage()]
+    assert len(lines) == 1, [r.getMessage() for r in caplog.records]
+    return lines[0]
+
+
+def test_log_says_the_provider_ended_the_stream(fake, caplog):
+    with caplog.at_level("INFO", logger="tunerbox.tuner"):
+        a = tuner.join("fake:3:0:0.1", "copy", name="tv1")
+        _read(a, 10 ** 9)
+        time.sleep(0.5)
+    r = _end_line(caplog, "fake:3:0:0.1")
+    assert r.levelname == "WARNING" and "provider's stream ended" in r.getMessage()
+    assert "ffmpeg exit 0" in r.getMessage()
+
+
+def test_log_says_the_viewer_left(fake, caplog):
+    with caplog.at_level("INFO", logger="tunerbox.tuner"):
+        a = tuner.join("fake:1000:0.05:2", "copy", name="tv1")
+        assert _read(a, 20000)
+        a.close()
+        time.sleep(0.5)
+    r = _end_line(caplog, "fake:1000:0.05:2")
+    assert r.levelname == "INFO" and "last viewer left: tv1 disconnected" in r.getMessage()
+
+
+def test_log_says_a_recording_took_the_connection(fake, caplog):
+    with caplog.at_level("INFO", logger="tunerbox.tuner"):
+        a = tuner.join("fake:1000:0.05:3", "copy", name="tv1")
+        assert _read(a, 20000)
+        assert tuner.evict("fake:1000:0.05:3", "copy", "aac")
+        _read(a, 10 ** 9)
+        time.sleep(0.5)
+    assert "for a recording" in _end_line(caplog, "fake:1000:0.05:3").getMessage()

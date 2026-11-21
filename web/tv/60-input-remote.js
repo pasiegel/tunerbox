@@ -159,7 +159,7 @@ function handleKey(k, ev) {
   if (layer === "home") { homeKey(k); return true; }
 
   if (layer === "dialog") {
-    if (k === "Back") closeDialog(); else listNav($("dlg-list"), k, (_, i) => dlg.entries[i].act());
+    if (k === "Back") { if (dlg.back) dlg.back(); else closeDialog(); } else listNav($("dlg-list"), k, (_, i) => dlg.entries[i].act());
     return true;
   }
   if (layer === "remotecfg") {

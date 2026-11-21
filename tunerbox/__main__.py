@@ -165,8 +165,13 @@ def main():
                                                      encoding="utf-8", delay=True)]
     if sys.stdout and sys.stdout.isatty():
         handlers.append(logging.StreamHandler(sys.stdout))
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", handlers=handlers)
+    from . import logview
+    for h in handlers:      # logins, passwords and keys hidden before anything is written (Setup › Log shows it)
+        h.setFormatter(logview.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=handlers)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    for name in logview.CHATTY:     # the NAS client logs every file it opens and closes: only its problems
+        logging.getLogger(name).setLevel(logging.WARNING)
     logging.getLogger("asyncio").addFilter(_NoClientResets())
     host = a.host or cfg["host"]
     port = a.port or cfg["port"]

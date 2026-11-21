@@ -203,12 +203,24 @@ def refresh(full=True, now=None):
                 except (httpx.HTTPError, ValueError) as e:
                     log.warning("Scoreboard %s %s: %s", key, day, e)
                     continue
-                with db.conn() as c:
-                    c.execute("DELETE FROM sports_events WHERE league=? AND day=?", (key, day))
-                    c.executemany("INSERT OR REPLACE INTO sports_events(id, league, day, start, data) VALUES (?, ?, ?, ?, ?)",
-                                  [(ev["id"], key, day, ev["start"], json.dumps(ev)) for ev in evs])
+                try:
+                    with db.conn() as c:
+                        c.execute("DELETE FROM sports_events WHERE league=? AND day=?", (key, day))
+                        c.executemany("INSERT OR REPLACE INTO sports_events(id, league, day, start, data) VALUES (?, ?, ?, ?, ?)",
+                                      [(ev["id"], key, day, ev["start"], json.dumps(ev)) for ev in evs])
+                except Exception as e:  # noqa: BLE001
+                    if not db.is_locked(e):
+                        raise
+                    # a long job has the database: these scores keep what they had and come again next refresh
+                    log.warning("Scoreboard %s %s: database busy, trying again next refresh", key, day)
+                    continue
                 good += 1
-    db.run("DELETE FROM sports_events WHERE start < ?", (now - 86400,))
+    try:
+        db.run("DELETE FROM sports_events WHERE start < ?", (now - 86400,))
+    except Exception as e:  # noqa: BLE001
+        if not db.is_locked(e):
+            raise
+        log.warning("Scoreboard: database busy, old games cleared next refresh")
     if good or not keys:
         db.set_meta("sports_quick", now)
         if full:

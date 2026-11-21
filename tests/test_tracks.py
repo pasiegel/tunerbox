@@ -133,3 +133,25 @@ def test_embedded_subtitles_end_to_end(tmp_path, monkeypatch):
     assert tracks.cues("L1:e2e", str(mkv), "s0") == cues
     with pytest.raises(KeyError):
         tracks.cues("L1:e2e", str(mkv), "s9")
+
+
+def test_what_a_release_name_says():
+    from tunerbox.tracks import name_summary
+    assert name_summary("Heat.1995.2160p.UHD.BluRay.DV.HDR.x265.TrueHD.Atmos.7.1-GRP.mkv") == \
+        {"w": 3840, "h": 2160, "vcodec": "hevc", "hdr": "Dolby Vision", "acodec": "truehd", "layout": "7.1"}
+    assert name_summary("Show - S01E02 - 720p WEB-DL DDP5.1 H.264.mkv") == \
+        {"w": 1280, "h": 720, "vcodec": "h264", "acodec": "eac3", "layout": "5.1"}
+    assert name_summary("Ludo 1080p HDR10+ x265 DD 5.1.mkv")["hdr"] == "HDR10+"
+    assert name_summary("Film.2002.1080p.x264.mkv") == {"w": 1920, "h": 1080, "vcodec": "h264"}   # no year as 2.1
+    # nothing about the picture: nothing at all (a title with "HD" or "DD" in it isn't a guess)
+    assert name_summary("Dune Part Two (2024).mkv") == {} and name_summary("The Advent (2001) HD.mkv") == {}
+    assert name_summary("Divergent (2014).mkv") == {} and name_summary("Hdtv Man (1999).mkv") == {}
+
+
+def test_a_panels_reading_without_a_picture_is_nothing():
+    from tunerbox.tracks import xtream_summary
+    assert xtream_summary({"video": [], "audio": []}) == {}
+    assert xtream_summary({"video": {"width": "x"}}) == {}
+    assert xtream_summary({"video": {"codec_name": "h264", "width": 1920, "height": 1080, "r_frame_rate": "25/1"},
+                           "audio": {"codec_name": "aac", "channels": 2}}) == \
+        {"w": 1920, "h": 1080, "vcodec": "h264", "bits": 8, "hdr": "", "fps": 25.0, "acodec": "aac", "layout": "stereo"}
