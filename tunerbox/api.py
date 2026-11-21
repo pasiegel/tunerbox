@@ -1505,11 +1505,13 @@ def out_xmltv():
 
 
 @app.get("/guide.json")
-def out_guide_json(request: Request, hours: int = 12):
+def out_guide_json(request: Request, hours: int = 12, desc: int = 1):
     """The guide for the Roku: from 3 hours ago to `hours` ahead, only channels that have listings, as
     {"programs": {"<number>": [[start, stop, title, subtitle, descr, category, episode, rating]]}}. A fraction
     of epg.xml (three days of every channel) and read with the Roku's built-in JSON parser instead of picking
-    the XML apart in BrightScript. Gzipped when the caller accepts it."""
+    the XML apart in BrightScript. Gzipped when the caller accepts it. desc=0 leaves the descriptions out
+    (the column stays, empty): usually most of the bytes, and the Roku fetches the one it shows from
+    /api/guide when it's needed. An older TunerBox ignores desc=0 and sends them, so the Roku works with both."""
     hours = max(1, min(72, hours))
     now = int(time.time())
     chans = guide.channels()
@@ -1518,7 +1520,7 @@ def out_guide_json(request: Request, hours: int = 12):
     for c in chans:
         rows = progs.get(c["epg"]) if c["epg"] else None
         if rows:
-            out[str(c["number"])] = [[p["start"], p["stop"], p["title"] or "", p["subtitle"] or "", p["descr"] or "",
+            out[str(c["number"])] = [[p["start"], p["stop"], p["title"] or "", p["subtitle"] or "", (p["descr"] or "") if desc else "",
                                        p["category"] or "", p["episode"] or "", p["rating"] or ""] for p in rows]
     return _roku_json(request, {"programs": out})
 
