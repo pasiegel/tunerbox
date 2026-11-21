@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import config
@@ -222,6 +223,55 @@ def name_summary(name):
         n = int(ch.group(1)) + int(ch.group(2))
         out["layout"] = _LAYOUTS.get(n, f"{ch.group(1)}.{ch.group(2)}")
     return out
+
+
+# An NFO file next to a video (Kodi, Jellyfin, Emby, Plex add-ons, Radarr and Sonarr write them): its
+# <fileinfo><streamdetails> is what the program that wrote it read from the file, so the file needn't be read again.
+# Codec names vary by writer: mapped to ffmpeg's, as av_summary gives them
+_NFO_INFO = re.compile(rb"<fileinfo\b.*?</fileinfo\s*>", re.S | re.I)
+_NFO_VCODEC = {"avc": "h264", "avc1": "h264", "x264": "h264", "h.264": "h264", "h265": "hevc", "x265": "hevc",
+               "h.265": "hevc", "hvc1": "hevc", "hev1": "hevc", "xvid": "mpeg4", "divx": "mpeg4", "dx50": "mpeg4",
+               "mpeg2": "mpeg2video", "mpeg-2": "mpeg2video", "vc-1": "vc1", "wvc1": "vc1"}
+_NFO_ACODEC = {"dca": "dts", "dtshd_ma": "dts", "dtshd_hra": "dts", "dts-hd": "dts", "dts-hd ma": "dts", "dtsx": "dts",
+               "ac-3": "ac3", "e-ac-3": "eac3", "ec-3": "eac3", "ddp": "eac3", "dd+": "eac3", "mlp": "truehd",
+               "mpeg1audio": "mp3", "mp3float": "mp3"}
+_NFO_HDR = {"dolbyvision": "Dolby Vision", "dolby vision": "Dolby Vision", "dovi": "Dolby Vision", "hdr10": "HDR10",
+            "hdr10+": "HDR10+", "hdr10plus": "HDR10+", "hlg": "HLG"}
+
+
+def _num(el, tag, kind=int):
+    try:
+        return kind(float((el.findtext(tag) or "").strip())) if el is not None else 0
+    except ValueError:
+        return 0
+
+
+def nfo_summary(data):
+    """An NFO file's bytes -> (length in seconds, the same fields as av_summary plus kbps when it gives one), or
+    (0, {}) when it doesn't say how long the video is and what its picture is: then the video itself is read.
+    Only the <fileinfo> part is parsed (an NFO may have a link after the XML, and nothing else is needed)."""
+    m = _NFO_INFO.search(data or b"")
+    if not m:
+        return 0, {}
+    try:
+        info = ET.fromstring(m.group(0))
+    except ET.ParseError:
+        return 0, {}
+    sd = info.find("streamdetails")
+    video = sd.find("video") if sd is not None else None
+    w, h = _num(video, "width"), _num(video, "height")
+    secs = _num(video, "durationinseconds") or next(
+        (n for el in (sd.findall("*") if sd is not None else []) if (n := _num(el, "durationinseconds"))), 0)
+    if not (w and h and secs > 0):
+        return 0, {}
+    codec = (video.findtext("codec") or "").strip().lower()
+    hdr = _NFO_HDR.get((video.findtext("hdrtype") or "").strip().lower(), "")
+    out = {"w": w, "h": h, "vcodec": _NFO_VCODEC.get(codec, codec), "bits": 10 if hdr else 8, "hdr": hdr,
+           "fps": round(_num(video, "framerate", float), 3)}
+    audio = sd.find("audio")
+    if audio is not None and (ac := (audio.findtext("codec") or "").strip().lower()):
+        out.update(acodec=_NFO_ACODEC.get(ac, ac), layout=_layout("", _num(audio, "channels")))
+    return secs, out
 
 
 def _probe(url):

@@ -1043,13 +1043,13 @@ def _fix_length(item_id, text):
     return (db.one("SELECT duration FROM vod_titles WHERE id=?", (item_id,)) or {}).get("duration") or 0
 
 
-def save_av(item_id, text, empty=False, episode=False):
+def save_av(item_id, text, empty=False, episode=False, av=None):
     """Keep a movie's picture and sound as ffmpeg described them (playing it, or the library scan), for
     Pick a version. A bitrate the provider gave stays (ffmpeg's is only an estimate for a stream); for your
     own files ffmpeg's is the only one. `empty`: keep '{}' when there's no picture to describe, so the
-    library scan doesn't read the file again."""
+    library scan doesn't read the file again. `av`: already summed up (from an NFO file: tracks.nfo_summary)."""
     from . import tracks
-    av = tracks.av_summary(text or "")
+    av = dict(av) if av is not None else tracks.av_summary(text or "")
     if episode:                 # an episode of your own (My Library): its bitrate goes with the rest ("kbps")
         js = json.dumps(av, separators=(",", ":")) if av else ("{}" if empty else "")
         if js:

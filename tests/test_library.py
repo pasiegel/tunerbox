@@ -1375,3 +1375,339 @@ def test_own_copy_borrows_the_playlist_copys_details(movies):
     assert (t["plot"], t["rating"], t["poster"]) == ("A heist.", "8.3", "http://img/heat.jpg")
     assert len(t["versions"]) == 2
     assert vod.poster_url(heat["id"]) == "http://img/heat.jpg"
+
+
+# ---------------------------------------------------------------- NFO files instead of reading the video
+KODI_NFO = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+    <title>Heat</title>
+    <fileinfo>
+        <streamdetails>
+            <video><codec>hevc</codec><aspect>2.39</aspect><width>3840</width><height>1608</height>
+                <durationinseconds>10272</durationinseconds><hdrtype>dolbyvision</hdrtype></video>
+            <audio><codec>truehd</codec><language>eng</language><channels>8</channels></audio>
+            <audio><codec>ac3</codec><language>fra</language><channels>6</channels></audio>
+            <subtitle><language>eng</language></subtitle>
+        </streamdetails>
+    </fileinfo>
+</movie>
+https://www.themoviedb.org/movie/949
+"""
+
+
+def _nfo(root, rel, body=KODI_NFO, age=0):
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(body)
+    if age:
+        os.utime(p, (time.time() - age, time.time() - age))
+    return p
+
+
+def test_nfo_summary_kodi_with_a_link_after_the_xml():
+    secs, av = tracks.nfo_summary(KODI_NFO)
+    assert secs == 10272
+    assert av == {"w": 3840, "h": 1608, "vcodec": "hevc", "bits": 10, "hdr": "Dolby Vision", "fps": 0,
+                  "acodec": "truehd", "layout": "7.1"}
+
+
+def test_nfo_summary_other_writers_names_and_what_isnt_enough():
+    jellyfin = b"""<episodedetails><fileinfo><streamdetails><video><codec>avc</codec><width>1920</width>
+        <height>1080</height><framerate>23.976</framerate><durationinseconds>2700</durationinseconds></video>
+        <audio><codec>dca</codec><channels>6</channels></audio></streamdetails></fileinfo></episodedetails>"""
+    assert tracks.nfo_summary(jellyfin) == (2700, {"w": 1920, "h": 1080, "vcodec": "h264", "bits": 8, "hdr": "",
+                                                   "fps": 23.976, "acodec": "dts", "layout": "5.1"})
+    no_length = KODI_NFO.replace(b"<durationinseconds>10272</durationinseconds>", b"")
+    assert tracks.nfo_summary(no_length) == (0, {})                 # ffmpeg reads the video
+    assert tracks.nfo_summary(b"<movie><title>Heat</title></movie>") == (0, {})
+    assert tracks.nfo_summary(b"<fileinfo><streamdetails><video>") == (0, {})
+    assert tracks.nfo_summary(b"") == (0, {})
+
+
+def test_videos_with_an_nfo_are_not_read(movies, monkeypatch):
+    sid, root = movies
+    _nfo(root, "Heat (1995)/movie.nfo")                                      # Kodi's name in a movie's own folder
+    _nfo(root, "Collection/Alien (1979).nfo")                                # next to the video, same name
+    _nfo(root, "Collection/movie.nfo")                                       # not a movie's own folder: not used
+    library.scan_share(library.share(sid))
+    read = []
+    _stub_probe(monkeypatch, lambda url: (read.append(url), (5400, FFMPEG_4K))[1])
+    assert library.measure_lengths() == "Grabbed details for 5 videos"
+    assert len(read) == 3                                                    # Dune, Aliens, Loose Movie
+    heat = db.one("SELECT duration, av, bitrate FROM vod_titles WHERE name='Heat'")
+    assert heat["duration"] == 10272 and json.loads(heat["av"])["hdr"] == "Dolby Vision"
+    assert heat["bitrate"] == round(1000 * 8 / 10272 / 1000)                  # its size over its length
+    assert db.one("SELECT duration FROM vod_titles WHERE name='Aliens'")["duration"] == 5400
+    assert vod.title(db.one("SELECT id FROM vod_titles WHERE name='Alien'")["id"])["av"]["acodec"] == "truehd"
+
+
+def test_an_nfo_that_doesnt_say_or_is_older_than_its_video_is_not_used(movies, monkeypatch):
+    sid, root = movies
+    _nfo(root, "Heat (1995)/Heat.nfo", KODI_NFO.replace(b"<width>3840</width>", b""))
+    _nfo(root, "Collection/Alien (1979).nfo", age=3 * 86400)                  # written for the copy it replaced
+    library.scan_share(library.share(sid))
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.measure_lengths()
+    assert {r["duration"] for r in db.rows("SELECT duration FROM vod_titles WHERE source_id=?", (-sid,))} == {5400}
+
+
+def test_an_nfo_gone_since_the_scan_reads_the_video(movies, monkeypatch):
+    sid, root = movies
+    p = _nfo(root, "Heat (1995)/movie.nfo")
+    library.scan_share(library.share(sid))
+    p.unlink()
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    library.measure_lengths()
+    assert db.one("SELECT duration FROM vod_titles WHERE name='Heat'")["duration"] == 5400
+
+
+def test_episodes_and_pick_a_version_use_the_nfo(shows, movies, monkeypatch):
+    sid, root = shows
+    _nfo(root, "Severance (2022)/Season 02/Severance - S02E04.nfo",
+         KODI_NFO.replace(b"10272", b"3100").replace(b"<movie>", b"<episodedetails>").replace(b"</movie>", b"</episodedetails>"))
+    library.scan_share(library.share(sid))
+    _stub_probe(monkeypatch, lambda url: (2000, FFMPEG_4K))
+    library.measure_lengths()
+    assert db.one("SELECT duration FROM vod_episodes WHERE season=2 AND episode=4")["duration"] == 3100
+    assert db.one("SELECT duration FROM vod_episodes WHERE season=1 AND episode=1")["duration"] == 2000
+    msid, mroot = movies
+    _nfo(mroot, "Heat (1995)/movie.nfo")
+    library.scan_share(library.share(msid))
+    _nas_stops_after(monkeypatch, 0)                                         # the video itself isn't read
+    assert library.measure_one(db.one("SELECT id FROM vod_titles WHERE name='Heat'")["id"]) is True
+    assert db.one("SELECT duration FROM vod_titles WHERE name='Heat'")["duration"] == 10272
+
+
+def test_quick_scan_notices_a_new_nfo(movies, monkeypatch):
+    sid, root = movies
+    _age(root)
+    library.scan_share(library.share(sid))
+    assert library.scan_share(library.share(sid), quick=True) == "5 movies; no changes"
+    _nfo(root, "Heat (1995)/movie.nfo")
+    assert library.scan_share(library.share(sid), quick=True) == "5 movies"
+    assert db.one("SELECT nfo FROM lib_files WHERE item_id=?",
+                  (library.title_id(sid, "movie", "Heat (1995)"),))["nfo"] == "Heat (1995)/movie.nfo"
+
+
+# ---------------------------------------------------------------- NFO files: matched by their id, or their own details
+HEAT_NFO = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+    <title>Heat</title>
+    <originaltitle>Heat</originaltitle>
+    <ratings><rating name="imdb" max="10"><value>8.3</value></rating>
+             <rating name="themoviedb" max="10" default="true"><value>7.9</value><votes>7000</votes></rating></ratings>
+    <plot>A group of high-end professional thieves.</plot>
+    <thumb aspect="poster">https://image.example/heat.jpg</thumb>
+    <thumb aspect="clearlogo">https://image.example/logo.png</thumb>
+    <fanart><thumb>https://image.example/heat-fanart.jpg</thumb></fanart>
+    <uniqueid type="imdb">tt0113277</uniqueid>
+    <uniqueid type="tmdb" default="true">949</uniqueid>
+    <genre>Crime</genre><genre>Thriller</genre><genre>Crime</genre>
+    <director>Michael Mann</director>
+    <premiered>1995-12-15</premiered>
+    <actor><name>Al Pacino</name><role>Vincent Hanna</role></actor>
+    <actor><name>Robert De Niro</name></actor>
+</movie>
+"""
+
+
+def test_parse_nfo_kodi_movie():
+    nfo = library.parse_nfo(HEAT_NFO)
+    assert nfo == {"name": "Heat", "aired": "1995-12-15", "year": "1995", "plot": "A group of high-end professional thieves.",
+                   "genre": "Crime, Thriller", "actors": "Al Pacino, Robert De Niro", "director": "Michael Mann",
+                   "rating": "7.9", "poster": "https://image.example/heat.jpg",
+                   "backdrop": "https://image.example/heat-fanart.jpg", "ids": {"imdb": "tt0113277", "tmdb": "949"}}
+
+
+def test_parse_nfo_other_shapes():
+    assert library.parse_nfo(b"https://www.themoviedb.org/movie/949-heat\n") == {"ids": {"tmdb": "949"}}
+    assert library.parse_nfo(b"https://www.imdb.com/title/tt0113277/\n") == {"ids": {"imdb": "tt0113277"}}
+    show = library.parse_nfo(b"<tvshow><title>Severance</title><year>2022</year><rating>8.7</rating>"
+                             b"<tvdbid>371980</tvdbid><id>371980</id><plot>Work.</plot></tvshow>")
+    assert show == {"name": "Severance", "year": "2022", "plot": "Work.", "rating": "8.7", "ids": {"tvdb": "371980"}}
+    ep = library.parse_nfo(b"<episodedetails><title>Woe's Hollow</title><plot>Outdoors.</plot><aired>2025-02-07</aired>"
+                           b"</episodedetails><episodedetails><title>Second</title></episodedetails>")
+    assert ep["name"] == "Woe's Hollow" and ep["aired"] == "2025-02-07"
+    assert library.parse_nfo(b"<movie><title>Broken</movie>") == {}
+    assert library.parse_nfo(b"<movie><uniqueid type='tmdb'>0</uniqueid><title>Zero</title></movie>") == {"name": "Zero"}
+    assert library.parse_nfo(None) == {}
+
+
+def test_an_nfo_id_matches_tmdb_exactly(movies, tmdb):
+    sid, root = movies
+    _nfo(root, "Collection/Alien (1979).nfo", b"<movie><title>Alien</title><uniqueid type='tmdb'>949</uniqueid></movie>")
+    library.scan_all()
+    alien = db.one("SELECT id FROM vod_titles WHERE url LIKE '%Alien (1979)%'")["id"]
+    assert db.one("SELECT state, score, tmdb_id FROM lib_meta WHERE title_id=?", (alien,)) == {"state": "ok", "score": 100, "tmdb_id": 949}
+    assert ("/search/movie", {"query": "Alien", "include_adult": "false", "year": "1979"}) not in tmdb   # no search
+    assert alien not in {r["id"] for r in library.review(sid)}
+
+
+def test_an_imdb_id_is_found_on_tmdb(movies, tmdb, monkeypatch):
+    sid, root = movies
+    _nfo(root, "Collection/Alien (1979).nfo", b"<movie><uniqueid type='imdb'>tt0078748</uniqueid></movie>")
+    fake = library._tmdb
+
+    def find(path, key=None, **params):
+        if path == "/find/tt0078748":
+            assert params["external_source"] == "imdb_id"
+            return {"movie_results": [{"id": 693134}], "tv_results": []}
+        return fake(path, key, **params)
+    monkeypatch.setattr(library, "_tmdb", find)
+    library.scan_all()
+    alien = db.one("SELECT id FROM vod_titles WHERE url LIKE '%Alien (1979)%'")["id"]
+    assert db.one("SELECT tmdb_id FROM lib_meta WHERE title_id=?", (alien,))["tmdb_id"] == 693134
+
+
+def test_without_a_tmdb_key_titles_with_an_nfo_get_its_details(movies, monkeypatch):
+    sid, root = movies
+    _nfo(root, "Heat (1995)/movie.nfo", HEAT_NFO)
+    msg = library.scan_all()
+    assert "Details for 1 title from NFO files" in msg
+    heat = db.one("SELECT * FROM vod_titles WHERE url LIKE 'Heat%'")
+    assert heat["plot"].startswith("A group") and heat["poster"] == "https://image.example/heat.jpg"
+    assert heat["rating"] == "7.9" and heat["genre"] == "Crime, Thriller"
+    assert db.one("SELECT state, backdrop FROM lib_meta WHERE title_id=?", (heat["id"],)) == \
+        {"state": "nfo", "backdrop": "https://image.example/heat-fanart.jpg"}
+    assert library.counts()["review"] == 0
+    assert db.one("SELECT count(*) n FROM lib_meta")["n"] == 1           # the rest wait for a key
+    assert libtasks.run("details") == "Skipped: no TMDB key"             # nothing more to read
+
+    # a key is added: looked up on TMDB by the NFO's id, and TMDB's details are used
+    calls = []
+    monkeypatch.setattr(library, "_tmdb", lambda path, key=None, **p: calls.append((path, p.get("query"))) or (
+        {"id": 949, "title": "Heat", "release_date": "1995-12-15", "overview": "Plot 949"} if path == "/movie/949" else None))
+    library.save_settings({"tmdb_key": "abc123"})
+    library.fetch_details()
+    assert ("/movie/949", None) in calls and ("/search/movie", "Heat") not in calls
+    assert db.one("SELECT plot FROM vod_titles WHERE id=?", (heat["id"],))["plot"] == "Plot 949"
+    assert db.one("SELECT state FROM lib_meta WHERE title_id=?", (heat["id"],))["state"] == "ok"
+
+
+def test_tmdb_not_knowing_a_title_or_only_something_like_it_uses_the_nfo(movies, tmdb):
+    sid, root = movies
+    _nfo(root, "Collection/Alien (1979).nfo", b"<movie><title>Alien</title><plot>In space.</plot></movie>")
+    _nfo(root, "Loose.Movie.2010.720p.nfo", b"<movie><title>Loose Movie</title><plot>Mine.</plot></movie>")
+    library.scan_all()
+    for url in ("%Alien (1979)%", "Loose%"):
+        t = db.one("SELECT id, plot FROM vod_titles WHERE url LIKE ?", (url,))
+        assert t["plot"] in ("In space.", "Mine.")
+        assert db.one("SELECT state FROM lib_meta WHERE title_id=?", (t["id"],))["state"] == "nfo"
+    assert [r["name"] for r in library.review(sid)] == ["Aliens"]      # no NFO: still needs a look
+    n = len(tmdb)
+    library.fetch_details()
+    assert len(tmdb) == n                                              # not asked again until a week has passed
+
+
+def test_shows_and_episodes_from_nfo_files_without_a_key(shows):
+    sid, root = shows
+    _nfo(root, "Severance (2022)/tvshow.nfo", b"<tvshow><title>Severance</title><plot>Work-life.</plot></tvshow>")
+    _nfo(root, "Severance (2022)/Season 02/Severance - S02E04.nfo",
+         b"<episodedetails><title>Woe's Hollow</title><plot>Outdoors.</plot><aired>2025-02-07</aired></episodedetails>")
+    library.scan_all()
+    sev = db.one("SELECT id, plot, nfo FROM vod_titles WHERE name='Severance'")
+    assert sev["plot"] == "Work-life." and sev["nfo"] == "Severance (2022)/tvshow.nfo"
+    ep = db.one("SELECT name, plot, aired FROM vod_episodes WHERE title_id=? AND season=2", (sev["id"],))
+    assert ep == {"name": "Woe's Hollow", "plot": "Outdoors.", "aired": "2025-02-07"}
+
+
+def test_episodes_tmdb_has_no_plot_for_get_it_from_their_nfo(shows, tmdb, monkeypatch):
+    sid, root = shows
+    fake = library._tmdb
+
+    def no_season_1_plots(path, key=None, **params):
+        d = fake(path, key, **params)
+        if path == "/tv/95396/season/1":
+            d["episodes"][0]["overview"] = ""
+        return d
+    monkeypatch.setattr(library, "_tmdb", no_season_1_plots)
+    _nfo(root, "Severance (2022)/Season 01/Severance - S01E01 - Good News About Hell.nfo",
+         b"<episodedetails><title>Good News</title><plot>From the NFO.</plot></episodedetails>")
+    _nfo(root, "Severance (2022)/Season 02/Severance - S02E04.nfo",
+         b"<episodedetails><title>Woe</title><plot>Not used.</plot></episodedetails>")
+    library.scan_all()
+    eps = {r["season"]: r for r in db.rows("SELECT e.season, e.name, e.plot FROM vod_episodes e JOIN vod_titles t "
+                                           "ON t.id=e.title_id WHERE t.name='Severance'")}
+    assert eps[2]["plot"] == "Outdoors." and eps[2]["name"] == "Woe's Hollow"     # TMDB's
+    assert eps[1]["plot"] == "From the NFO." and eps[1]["name"] == "Good News"    # TMDB had no plot
+
+
+def test_relookup_without_a_key_or_nfo_says_a_key_is_needed(movies):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    heat = db.one("SELECT id FROM vod_titles WHERE url LIKE 'Heat%'")["id"]
+    with pytest.raises(library.LibraryError, match="TMDB API key"):
+        library.relookup(heat)
+
+
+def test_nfo_links_to_full_size_tmdb_pictures_get_the_usual_sizes():
+    nfo = library.parse_nfo(b"""<movie><title>The Out-of-Towners</title>
+        <thumb aspect="poster" preview="x">https://image.tmdb.org/t/p/original/wOmLJYh7oOfATE236XpoDfcXhOh.jpg</thumb>
+        <fanart><thumb>https://image.tmdb.org/t/p/original/umY2wpVWJLY77ydBFlwlGVR3hFg.jpg</thumb></fanart></movie>""")
+    assert nfo["poster"] == "https://image.tmdb.org/t/p/w500/wOmLJYh7oOfATE236XpoDfcXhOh.jpg"
+    assert nfo["backdrop"] == "https://image.tmdb.org/t/p/w1280/umY2wpVWJLY77ydBFlwlGVR3hFg.jpg"
+    assert library.parse_nfo(HEAT_NFO)["poster"] == "https://image.example/heat.jpg"      # not TMDB's: as it is
+
+
+def test_an_nfos_bit_depth_comes_from_the_file_name(tmp_path, monkeypatch):
+    root = tmp_path / "Movies"
+    sdr = KODI_NFO.replace(b"<hdrtype>dolbyvision</hdrtype>", b"")
+    for name in ("Arrival.2016.1080p.BluRay.x265.10bit-GRP", "Sicario.2015.1080p.x265.12-bit", "Akira.1988.Hi10P",
+                 "Heat.1995.1080p.x264", "Dune.2021.2160p.DV.10bit"):
+        _touch(root, f"{name}.mkv")
+        _nfo(root, f"{name}.nfo", KODI_NFO if name.startswith("Dune") else sdr)
+    sid = library.add({"name": "Films", "kind": "movie", "location": str(root)})
+    library.scan_share(library.share(sid))
+    _stub_probe(monkeypatch, lambda url: pytest.fail("the video was read"))
+    library.measure_lengths()
+    bits = {r["url"].split(".")[0]: json.loads(r["av"])["bits"] for r in db.rows("SELECT url, av FROM vod_titles")}
+    assert bits == {"Arrival": 10, "Sicario": 12, "Akira": 10, "Heat": 8, "Dune": 10}
+
+
+def test_a_slow_nas_pauses_reading_its_nfo_files(movies, monkeypatch, caplog):
+    sid, root = movies
+    monkeypatch.setattr(library, "_nfo_paused", {})
+    monkeypatch.setattr(library, "DETAIL_WORKERS", 1)
+    monkeypatch.setattr(library, "NFO_SLOW", -1)                       # every read counts as slow
+    _nfo(root, "Heat (1995)/movie.nfo", HEAT_NFO)
+    _nfo(root, "Collection/Alien (1979).nfo", b"<movie><title>Alien</title><plot>In space.</plot></movie>")
+    _stub_probe(monkeypatch, lambda url: (5400, FFMPEG_4K))
+    with caplog.at_level("WARNING", logger="tunerbox.library"):
+        assert "Details for 1 title from NFO files" in library.scan_all()  # the second isn't read: paused
+    assert library.nfo_paused(sid) and "not reading its NFO files for 10 minutes" in caplog.text
+    # meanwhile the videos are read instead (Heat's NFO would have said 10272)
+    assert {r["duration"] for r in db.rows("SELECT duration FROM vod_titles WHERE source_id=?", (-sid,))} == {5400}
+    library._nfo_paused[sid] = 0                                       # 10 minutes later
+    assert library.fetch_details() == "Details for 1 title from NFO files"
+
+
+def test_a_title_tmdb_didnt_find_is_looked_up_again_when_it_gets_an_nfo(movies, tmdb):
+    sid, root = movies
+    library.scan_all()
+    alien = db.one("SELECT id FROM vod_titles WHERE url LIKE '%Alien (1979)%'")["id"]
+    aliens = db.one("SELECT id FROM vod_titles WHERE url LIKE '%Aliens (1986)%'")["id"]
+    assert db.one("SELECT state FROM lib_meta WHERE title_id=?", (alien,))["state"] == "none"
+    library.unmatch(aliens)                                            # keep its file name: left alone
+    _nfo(root, "Collection/Alien (1979).nfo", b"<movie><uniqueid type='tmdb'>949</uniqueid></movie>")
+    _nfo(root, "Collection/Aliens (1986).nfo", b"<movie><uniqueid type='tmdb'>949</uniqueid></movie>")
+    library.scan_all(only_new=True, quick=True)                        # the automatic scan
+    assert db.one("SELECT state, tmdb_id FROM lib_meta WHERE title_id=?", (alien,)) == {"state": "ok", "tmdb_id": 949}
+    assert db.one("SELECT state FROM lib_meta WHERE title_id=?", (aliens,))["state"] == "none"
+
+
+def test_nothing_to_look_up_leaves_on_demand_alone(movies, monkeypatch):
+    sid, _ = movies
+    library.scan_share(library.share(sid))
+    cleared = []
+    monkeypatch.setattr(vod, "_changed", lambda: cleared.append(1))
+    assert library.fetch_details() == "" and cleared == []             # no key, no NFO files
+
+
+def test_look_up_again_without_a_key_when_the_nfo_cant_be_read(movies):
+    sid, root = movies
+    p = _nfo(root, "Heat (1995)/movie.nfo", HEAT_NFO)
+    library.scan_share(library.share(sid))
+    p.unlink()
+    heat = db.one("SELECT id FROM vod_titles WHERE url LIKE 'Heat%'")["id"]
+    with pytest.raises(library.LibraryError, match="Couldn't read its NFO file"):
+        library.relookup(heat)
