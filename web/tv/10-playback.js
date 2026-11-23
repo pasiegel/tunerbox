@@ -137,7 +137,7 @@ function tune(idx, alt = 0) {
   $("playback").classList.add("hidden");
   destroyPlayer();
   hideStatic();
-  if (alt === 0) showBanner();
+  if (alt === 0) { showBanner(); placesSoon(); }
   if (!ch.mapped) { showStatic(ch.number, "Channel Not Available", ch.name); return; }
   play(ch, alt, () => failOver(idx, alt), () => tune(idx, alt));
 }
@@ -150,7 +150,7 @@ function playFeed(f) {
                feed: f.key, group: f.group, mapped: true, alts: 0, epg: null };
   S.feedCh = ch; S.alt = 0; S.mode = "live";
   $("playback").classList.add("hidden");
-  destroyPlayer(); hideStatic(); showBanner();
+  destroyPlayer(); hideStatic(); showBanner(); placesSoon();
   const fail = () => {
     if (S.feedCh !== ch) return;
     destroyPlayer();

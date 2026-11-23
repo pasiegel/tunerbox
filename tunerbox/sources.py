@@ -3,10 +3,11 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlsplit, urlunsplit
 
 import httpx
 
@@ -258,11 +259,19 @@ def hdhr_info(addr, timeout=6):
 
 
 def fetch_hdhomerun(src):
-    d = hdhr_info(src["url"], 15)
+    try:
+        d = hdhr_info(src["url"], 15)
+    except Exception:
+        if not hdhr_moved(src["id"]):       # gone from that address: the router may have given it a new one
+            raise
+        src = db.one("SELECT * FROM sources WHERE id=?", (src["id"],))
+        d = hdhr_info(src["url"], 15)
     try:        # each channel being watched or recorded uses one of the device's tuners
         db.set_meta(f"hdhr_tuners_{src['id']}", int(d.get("TunerCount") or 0))
     except (TypeError, ValueError):
         pass
+    if d.get("DeviceID"):                   # how to find it again if its address changes (hdhr_moved)
+        db.set_meta(f"hdhr_device_{src['id']}", d["DeviceID"])
     lineup_url = d.get("LineupURL") or hdhr_base(src["url"]) + "/lineup.json"
     with client(30) as c:
         r = c.get(lineup_url)
@@ -337,6 +346,118 @@ def discover_hdhomerun(timeout=2.0):
         out.append({"ip": ip, "name": d.get("FriendlyName", "HDHomeRun"), "model": d.get("ModelNumber", ""),
                     "id": d.get("DeviceID", ""), "tuners": d.get("TunerCount", 0)})
     return out
+
+
+HDHR_CHECK = 15 * 60                        # seconds between looks at each antenna tuner's address
+_hdhr_checked = {"t": 0}
+
+
+def hdhr_tick(now):
+    """From housekeeping: every HDHR_CHECK seconds (and at startup), check the antenna tuners in the
+    background, so one that moved is found before anyone tunes to it."""
+    if now - _hdhr_checked["t"] < HDHR_CHECK:
+        return
+    _hdhr_checked["t"] = now
+    threading.Thread(target=hdhr_check, daemon=True).start()
+
+
+def hdhr_check():
+    """Each antenna source: answering where it is, note its DeviceID (to find it by later); not
+    answering, look for it elsewhere (hdhr_moved)."""
+    for src in db.rows("SELECT * FROM sources WHERE type='hdhomerun' AND enabled=1"):
+        try:
+            d = hdhr_info(src["url"], 4)
+        except Exception:  # noqa: BLE001 - not there: has it moved?
+            try:
+                hdhr_moved(src["id"])
+            except Exception:  # noqa: BLE001
+                log.exception("Looking for the HDHomeRun of %s", src["name"])
+            continue
+        if d.get("DeviceID") and db.get_meta(f"hdhr_device_{src['id']}") != d["DeviceID"]:
+            db.set_meta(f"hdhr_device_{src['id']}", d["DeviceID"])
+
+
+def _channel_numbers(source_id):
+    """The antenna channel numbers ("8.1") a source has, from its stream keys ("<id>:xhd8.1")."""
+    return {r["key"].split(":xhd", 1)[1] for r in db.rows("SELECT key FROM streams WHERE source_id=?", (source_id,))
+            if ":xhd" in r["key"]}
+
+
+def _lineup_numbers(ip):
+    try:
+        d = hdhr_info(ip, 4)
+        with client(8) as c:
+            r = c.get(d.get("LineupURL") or hdhr_base(ip) + "/lineup.json")
+            r.raise_for_status()
+            return {str(it.get("GuideNumber", "")) for it in r.json()}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+_moving = {}                                # source id -> when hdhr_moved last looked
+_moving_lock = threading.Lock()
+MOVE_RETRY = 60                             # seconds before looking for the same tuner again
+
+
+def _with_host(url, host):
+    """`url` pointed at `host` instead, keeping its scheme, port, path and query."""
+    u = urlsplit(url)
+    return urlunsplit(u._replace(netloc=host + (f":{u.port}" if u.port else "")))
+
+
+def hdhr_moved(source_id, now=None):
+    """An antenna source's HDHomeRun didn't answer: look for the same device at a new address, which
+    routers hand out when a lease runs out or the tuner restarts. It's known by the DeviceID it gave
+    before; with none noted (it moved before one was), by its lineup: the one tuner on the network, not
+    used by another antenna source, that has this source's channels. When found, the source and all its
+    channels' stream addresses move there. True when it moved. Looks at most once a minute per source,
+    so a screen retrying a dead tuner doesn't flood the network."""
+    now = now or time.time()
+    with _moving_lock:
+        if now - _moving.get(source_id, 0) < MOVE_RETRY:
+            return False
+        _moving[source_id] = now
+    src = db.one("SELECT * FROM sources WHERE id=? AND type='hdhomerun'", (source_id,))
+    if not src:
+        return False
+    dev = db.get_meta(f"hdhr_device_{source_id}")
+    old = urlsplit(hdhr_base(src["url"])).hostname or ""
+    try:
+        hdhr_info(src["url"], 3)
+        return False                        # it answers where it is: something else is wrong
+    except Exception:  # noqa: BLE001
+        pass
+    near = discover_hdhomerun()
+    if dev:
+        found = next((d for d in near if str(d.get("id")).upper() == str(dev).upper()), None)
+    else:
+        others = {urlsplit(hdhr_base(s["url"])).hostname for s in
+                  db.rows("SELECT url FROM sources WHERE type='hdhomerun' AND id<>?", (source_id,))}
+        ours = _channel_numbers(source_id)
+        fits = [d for d in near if d["ip"] not in others and ours
+                and len(ours & _lineup_numbers(d["ip"])) >= 0.8 * len(ours)]
+        found = fits[0] if len(fits) == 1 else None     # two that fit: can't tell which, leave it
+        dev = found["id"] if found else "?"
+    if found and found["ip"] == old:        # still there (it missed one request): nothing to move
+        return False
+    if not found:
+        log.warning("HDHomeRun %s (%s) isn't answering at %s and wasn't found elsewhere on the network",
+                    dev, src["name"], old)
+        return False
+    new = found["ip"]
+    with db.conn() as c:
+        c.execute("UPDATE sources SET url=? WHERE id=?", (_with_host(hdhr_base(src["url"]), new), source_id))
+        rows = [(_with_host(r["url"], new), r["key"]) for r in
+                c.execute("SELECT key, url FROM streams WHERE source_id=?", (source_id,)).fetchall()
+                if (urlsplit(r["url"]).hostname or "") == old]
+        c.executemany("UPDATE streams SET url=? WHERE key=?", rows)
+    if found.get("id"):
+        db.set_meta(f"hdhr_device_{source_id}", found["id"])
+    from . import guide
+    guide.invalidate()
+    log.warning("HDHomeRun %s (%s) moved from %s to %s: its source and %d channels now use the new address",
+                dev, src["name"], old, new, len(rows))
+    return True
 
 
 # ---------------------------------------------------------------- refresh

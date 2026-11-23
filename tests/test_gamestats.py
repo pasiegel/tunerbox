@@ -93,6 +93,26 @@ def test_game_for_channel_and_feed(monkeypatch):
     gamestats._lookup["t"] = 0
 
 
+def test_places_lists_every_channel_and_feed_with_the_game(monkeypatch):
+    gamestats._lookup["t"] = 0
+    monkeypatch.setattr(sports, "overview", lambda tab="": {"on_now": [
+        {"event": {"id": "nfl:1", "name": "Bucs at Lions"}, "stop": 100, "ch": {"number": 5},
+         "also": [{"number": 234}], "feeds": [{"key": "ppv1", "kind": "ppv"}]},
+    ]})
+    want = {"name": "Bucs at Lions", "stop": 100, "ch": {"number": 5}, "also": [{"number": 234}],
+            "feeds": [{"key": "ppv1", "kind": "ppv"}]}
+    assert gamestats.places(ch="5") == want
+    assert gamestats.places(feed="ppv1") == want
+    assert gamestats.places(ch="9") is None
+    c = TestClient(api.app)
+    monkeypatch.setattr(scoreboard, "selected", lambda: ["nfl"])
+    assert c.get("/api/sports/places?ch=5").json() == {"game": want}
+    assert c.get("/api/sports/places").json() == {"game": None}
+    monkeypatch.setattr(scoreboard, "selected", lambda: [])
+    assert c.get("/api/sports/places?ch=5").json() == {"game": None}
+    gamestats._lookup["t"] = 0
+
+
 def test_summary_rejects_unknown_ids():
     assert gamestats.summary("nope:1") is None
     assert gamestats.summary("nba:abc") is None

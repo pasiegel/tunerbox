@@ -34,6 +34,16 @@ for g in range(gops):
 time.sleep(float(sys.argv[3]) if len(sys.argv) > 3 else 0)
 '''
 
+PASS = r"""
+import sys
+i, o = sys.stdin.buffer, sys.stdout.buffer
+while True:
+    d = i.read1(65536)
+    if not d:
+        break
+    o.write(d); o.flush()
+"""
+
 
 @pytest.fixture
 def fake(monkeypatch):
@@ -45,6 +55,11 @@ def fake(monkeypatch):
         started.append((url, mode, audio))
         return [sys.executable, "-c", FAKE, gops, delay, linger]
     monkeypatch.setattr(tuner, "live_cmd", cmd)
+
+    def derive(mode, audio):                        # a converting tuner: passes its input straight on
+        started.append(("derive", mode, audio))
+        return [sys.executable, "-c", PASS]
+    monkeypatch.setattr(tuner, "derive_cmd", derive)
     yield started
     for t in list(tuner._tuners):
         tuner.kill(t.proc)
@@ -122,8 +137,9 @@ def test_stream_cache_joiner_gets_older_keyframe(fake):
 def test_modes_audio_and_the_dvr(fake):
     url = "fake:1000:0.05:0"
     copy = tuner.join(url, "copy")
-    h264 = tuner.join(url, "h264")                  # a TV that needs re-encoding: its own tuner
-    assert copy.tuner is not h264.tuner and len(fake) == 2
+    h264 = tuner.join(url, "h264")                  # a TV that needs re-encoding: its own tuner,
+    assert copy.tuner is not h264.tuner and len(fake) == 2      # converting the copy one's stream
+    assert h264.tuner.parent.tuner is copy.tuner and fake[1] == ("derive", "h264", "aac")
     dvr = tuner.join(url, "roku720", any_mode=True)  # the DVR takes any picture going
     assert dvr.tuner in (copy.tuner, h264.tuner) and len(fake) == 2
     plex = tuner.join(url, "copy", audio="copy")    # Plex takes AAC rather than a second connection
@@ -389,7 +405,8 @@ def test_busy_uses_the_mode_the_screen_asked_for(fake):
     a = tuner.join("fake:1000:0.05:0", "copy", name="tv1", source_id=sid)
     row = {"url": "fake:1000:0.05:0", "source_id": sid, "video_mode": "copy"}
     assert connections.busy([row], "tv2") == []                           # copy is already on: free to watch
-    full = connections.busy([row], "tv2", mode="roku720")                 # 720p needs a tuner of its own
+    assert connections.busy([row], "tv2", mode="roku720") == []           # 720p converts that one: free too
+    full = connections.busy([{**row, "url": "fake:1000:0.05:1"}], "tv2")  # another channel needs its own
     assert full and full[0]["limit"] == 1
     a.close()
 
@@ -474,3 +491,62 @@ def test_log_says_a_recording_took_the_connection(fake, caplog):
         _read(a, 10 ** 9)
         time.sleep(0.5)
     assert "for a recording" in _end_line(caplog, "fake:1000:0.05:3").getMessage()
+
+
+def test_a_second_format_converts_the_open_stream_instead_of_a_new_connection(fake):
+    sid = _account(1)
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="browser", source_id=sid)
+    roku = tuner.join("fake:1000:0.05:0", "roku720", name="roku", source_id=sid)   # 1 connection: still fine
+    assert [f[0] for f in fake] == ["fake:1000:0.05:0", "derive"]
+    assert roku.tuner.parent.tuner is tv.tuner and roku.tuner.source_id is None
+    assert _packets(_read(roku, 20000))             # the converted stream plays
+    parent = tv.tuner
+    tv.close()                                      # the browser leaves: the Roku keeps the stream
+    assert parent.proc.poll() is None and _read(roku, 5000)
+    roku.close()                                    # the Roku leaves too: both stop
+    time.sleep(0.5)
+    assert parent.proc.poll() is not None and not tuner._tuners
+
+
+def test_ending_stream_ends_its_converted_copy(fake):
+    tv = tuner.join("fake:30:0.01:0", "copy", name="browser")
+    roku = tuner.join("fake:30:0.01:0", "roku720", name="roku")
+    data, chunk = b"", None
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        chunk = roku.get(timeout=1)
+        if not chunk:
+            break
+        data += chunk
+    assert data and chunk == b""                    # all of it, then the end
+    tv.close(); roku.close()
+
+
+def test_from_a_converted_stream_only_when_no_connection_is_left(fake):
+    from tunerbox.connections import Full
+    roku = tuner.join("fake:1000:0.05:0", "roku720", name="roku")     # no limit: a new connection is better
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="browser")
+    assert tv.tuner.parent is None and len(fake) == 2
+    tv.close(); roku.close()
+    sid = _account(1)
+    roku = tuner.join("fake:1000:0.05:1", "roku720", name="roku", source_id=sid)
+    tv = tuner.join("fake:1000:0.05:1", "copy", name="browser", source_id=sid)    # full: convert the 720p
+    assert tv.tuner.parent.tuner is roku.tuner
+    with pytest.raises(Full):                       # another channel still needs a connection of its own
+        tuner.join("fake:1000:0.05:2", "copy", name="tv3", source_id=sid)
+    tv.close(); roku.close()
+
+
+def test_tuners_list_shows_a_converted_copy_as_viewers_of_the_original(fake):
+    sid = _account(1)
+    tv = tuner.join("fake:1000:0.05:0", "copy", name="browser", source_id=sid)
+    roku = tuner.join("fake:1000:0.05:0", "roku720", name="roku", source_id=sid)
+    run = tuner.running()
+    assert len(run) == 1                                  # one connection, listed once
+    assert run[0]["source_id"] == sid and sorted(run[0]["viewers"]) == ["browser", "roku"]
+    from tunerbox import connections
+    assert connections.used(sid) == 1
+    assert connections.used(sid, "browser") == 1          # the browser leaving still leaves the Roku on it
+    tv.close()
+    assert tuner.running()[0]["viewers"] == ["roku"]
+    roku.close()

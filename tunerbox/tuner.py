@@ -79,9 +79,14 @@ class Subscriber:
 
 
 class Tuner:
-    def __init__(self, url, mode, audio, buffer, source_id=None):
+    parent = None                           # a Subscriber on the tuner this one converts (see __init__)
+
+    def __init__(self, url, mode, audio, buffer, source_id=None, parent=None):
         self.url, self.mode, self.audio = url, mode, audio
         self.source_id = source_id          # the playlist whose connection this uses (connections.py)
+        # parent: a Subscriber on another tuner of the same stream. This one converts what that one
+        # sends (a Roku's 720p from a browser's original) instead of opening a second provider connection
+        self.parent = parent
         self.retain = max(buffer, MIN_RETAIN)   # seconds of stream kept for viewers who join later
         self.subs = []
         self.lock = threading.Lock()
@@ -97,13 +102,18 @@ class Tuner:
         self.started = time.time()
         self.err = []
         self.why = ""                       # why TunerBox stopped it (the log); "" = the stream ended by itself
-        cmd = live_cmd(url, mode, audio, buffer)
+        cmd = derive_cmd(mode, audio) if parent else live_cmd(url, mode, audio, buffer)
         self.proc = track(subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                           stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, bufsize=0))
+                                           stdin=subprocess.PIPE if parent else subprocess.DEVNULL,
+                                           creationflags=NO_WINDOW, bufsize=0))
         self._errt = threading.Thread(target=self._stderr, daemon=True)
         self._errt.start()
+        if parent:
+            threading.Thread(target=self._pipe_in, daemon=True).start()
         threading.Thread(target=self._read, daemon=True).start()
-        log.info("Tuner start (%s, %s): %s", mode, audio, split_url(url)[0][-60:])
+        log.info("Tuner start (%s, %s)%s: %s", mode, audio,
+                 f" from the {parent.tuner.mode} tuner already open, no new connection" if parent else "",
+                 split_url(url)[0][-60:])
 
     def error(self):
         return " | ".join(self.err)
@@ -176,6 +186,24 @@ class Tuner:
         try:
             self.err.extend(self.proc.stderr.read().decode("utf-8", "ignore").splitlines()[-5:])
         except (OSError, ValueError):
+            pass
+
+    def _pipe_in(self):
+        """A converting tuner: hand ffmpeg what the parent tuner sends. Its end ends this one too."""
+        try:
+            while not self.ended:
+                try:
+                    chunk = self.parent.get(timeout=1)
+                except queue.Empty:
+                    continue
+                if not chunk:
+                    break
+                self.proc.stdin.write(chunk)
+        except (OSError, ValueError):       # ffmpeg gone
+            pass
+        try:
+            self.proc.stdin.close()
+        except OSError:
             pass
 
     def _read(self):
@@ -298,6 +326,8 @@ class Tuner:
         self._errt.join(2)          # readers (the DVR) report ffmpeg's last words
         for s in subs:
             s.end()
+        if self.parent:             # off the tuner it converted from (the last one off stops it)
+            self.parent.close(wait=False, why=f"its {self.mode} copy ended")
         secs = int(time.time() - self.started)
         what = (f"Tuner end after {self.sent / 1e6:.1f} MB, {secs // 60}m{secs % 60:02d}s: "
                 f"{split_url(self.url)[0][-60:]}")
@@ -309,6 +339,18 @@ class Tuner:
                         self.error() or "no error given")
         if self.sent == 0:
             log.warning("No data from %s: %s", split_url(self.url)[0][:120], self.error())
+            if self.source_id and (not self.why or self.err):     # an antenna tuner may have a new address now
+                threading.Thread(target=_moved, args=(self.source_id,), daemon=True).start()
+
+
+def _moved(source_id):
+    from . import db, sources
+    try:
+        src = db.one("SELECT type FROM sources WHERE id=?", (source_id,))
+        if src and src["type"] == "hdhomerun":
+            sources.hdhr_moved(source_id)
+    except Exception:  # noqa: BLE001 - a background look, never the stream's problem
+        log.exception("Looking for a moved HDHomeRun")
 
 
 def _who(name):
@@ -341,6 +383,23 @@ def _find(url, mode, audio, any_mode):
     return best
 
 
+def _parent_for(url):
+    """A running tuner of `url` that a converting tuner can read from: the original stream first."""
+    if url.startswith("media:"):            # local channels use no connection: nothing to save
+        return None
+    ts = [t for t in _tuners if t.url == url and not t.ended and t.parent is None]
+    return min(ts, key=lambda t: t.mode != "copy", default=None)
+
+
+def derive_cmd(mode, audio):
+    """ffmpeg converting another tuner's MPEG-TS (on its stdin) to `mode` video and `audio`."""
+    vid = streaming.video_args(mode)
+    aud = ["-c:a", "aac", "-ac", "2", "-b:a", "192k"] if audio == "aac" else ["-c:a", "copy"]
+    return [streaming.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-fflags", "+genpts+discardcorrupt", "-f", "mpegts", "-i", "pipe:0",
+            "-sn", "-dn", *vid, *aud, "-f", "mpegts", "-mpegts_flags", "+resend_headers", "pipe:1"]
+
+
 def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name="", source_id=None, take=False):
     """A Subscriber on the tuner for `url`, starting one if none suits. Starting one when `source_id`'s
     playlist has no connection left raises connections.Full, unless `take` (a recording) and live TV
@@ -356,17 +415,28 @@ def join(url, mode=None, audio="aac", buffer=0, any_mode=False, name="", source_
             t = _find(url, mode, audio, any_mode)       # can't stop in between and leave a new,
             if t is not None:                           # uncounted connection to start instead
                 return t.add(buffer, name)
-        for attempt in range(3):
+            parent = _parent_for(url)
+        # The stream is open in another format (a Roku's 720p, a browser's original): convert from it.
+        # From the original always; from an already-converted one only when there's no connection
+        # left, since a fresh connection gives the better picture.
+        derive = parent if parent is not None and parent.mode == "copy" else None
+        for attempt in range(0 if derive is not None else 3):
             try:    # outside _lock: counting what's in use takes it. url=None: a new connection
                 connections.check(source_id, None, client=client)
                 break
             except connections.Full:
+                if parent is not None:
+                    derive = parent
+                    break
                 if not take or attempt == 2 or not connections.make_room(source_id, name):
                     raise
         with _lock:     # nothing else can start a tuner while admit is held; one may have stopped
             t = _find(url, mode, audio, any_mode)
             if t is None:
-                t = Tuner(url, mode, audio, buffer, source_id)
+                if derive is not None and not derive.ended:
+                    t = Tuner(url, mode, audio, buffer, None, parent=derive.add(buffer, f"{mode} copy"))
+                else:
+                    t = Tuner(url, mode, audio, buffer, source_id)
                 _tuners.append(t)
             return t.add(buffer, name)
 
@@ -393,7 +463,7 @@ def sharing(url, mode=None, audio="aac", any_mode=False):
     """True when a reader of `url` would join a running tuner (no new connection)."""
     mode = mode or config.get("video_mode", "copy")
     with _lock:
-        return _find(url, mode, audio, any_mode) is not None
+        return _find(url, mode, audio, any_mode) is not None or _parent_for(url) is not None
 
 
 def evict(url, mode, audio):
@@ -410,10 +480,22 @@ def running():
     never send it to a page as is."""
     with _lock:
         ts = [t for t in _tuners if not t.ended]
+    # A converting tuner (parent set) holds no connection of its own: it isn't listed, and its viewers
+    # are listed on the tuner it reads from, in place of the reader it reads that one through
+    via = {}
+    for t in ts:
+        if t.parent is not None:
+            via.setdefault(id(t.parent.tuner), []).append(t)
+    feeds = {t.parent for t in ts if t.parent is not None}
     out = []
     for t in ts:
+        if t.parent is not None:
+            continue
         with t.lock:
-            names = [s.name for s in t.subs]
+            names = [s.name for s in t.subs if s not in feeds]
+        for k in via.get(id(t), ()):
+            with k.lock:
+                names += [s.name for s in k.subs]
         out.append({"id": id(t), "url": t.url, "mode": t.mode, "audio": t.audio, "viewers": names, "source_id": t.source_id,
                     "since": int(t.started), "mb": round(t.sent / 1e6, 1)})
     return out

@@ -329,6 +329,15 @@ def api_sports_stats(ch: str = "", feed: str = "", id: str = ""):
     return {"game": game, "others": gamestats.others(gid if game else None), "enabled": True}
 
 
+@app.get("/api/sports/places")
+def api_sports_places(ch: str = "", feed: str = ""):
+    """The other channels and event feeds showing the game on channel `ch` or event feed `feed`, so
+    the TV's Switch feed dialog can offer them. {"game": null} when no game the scoreboard knows is on."""
+    if not scoreboard.selected() or not (ch or feed):
+        return {"game": None}
+    return {"game": gamestats.places(ch=ch, feed=feed)}
+
+
 @app.get("/api/sports/alerts")
 def api_sports_alerts():
     """Favorite teams' games on now or starting soon; each TV screen pops one up when it starts."""

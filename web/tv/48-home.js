@@ -274,7 +274,10 @@ function homeAct(it) {
     return;
   }
   if (it.t === "rec") { recDialog(it, () => homeLoad()); return; }
-  if (it.t === "game") { const g = spGame(it.p, "", true); if (g.act) g.act(); return; }
+  if (it.t === "game") {                // more than one place: straight to the best, Switch feed lists the rest
+    if (gameChans(it.p).length + gameFeeds(it.p).length > 1) { pickGame(it.p, true); return; }
+    const g = spGame(it.p, "", true); if (g.act) g.act(); return;
+  }
   const ch = S.channels[S.byNum.get(it.number)];
   const entries = [];
   if (ch && it.start <= now() && now() < it.stop) entries.push({ label: "Watch now", act: () => { closeDialog(); closeHome(); tune(S.byNum.get(it.number)); } });
