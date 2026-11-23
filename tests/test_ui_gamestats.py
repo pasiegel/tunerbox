@@ -287,6 +287,9 @@ def phone(browser, request):
     pg.goto(BASE + "/")
     pg.wait_for_function("window.__gs")
     assert pg.evaluate("() => document.documentElement.classList.contains('phone')")
+    # where things end up, not on the way there: opening the panel animates the picture to 16:9 over
+    # a quarter of a second (#video's transition), and a fast runner measured it half way
+    pg.add_style_tag(content="*, *::before, *::after { transition: none !important; animation: none !important; }")
     pg.evaluate("""() => {
         document.querySelectorAll('#home,#dvr,#guide,#od,.screen,#welcome').forEach((e) => e.classList.add('hidden'));
         document.getElementById('gstats').classList.remove('hidden');

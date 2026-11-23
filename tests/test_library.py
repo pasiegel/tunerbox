@@ -1031,9 +1031,9 @@ def test_videos_are_measured_a_few_at_a_time(movies, monkeypatch):
         return 5400, FFMPEG_4K
     _stub_probe(monkeypatch, probe)
     monkeypatch.setattr(library, "MEASURE_WORKERS", 4)              # a NAS that keeps up
-    t = time.time()
     assert library.measure_lengths() == "Grabbed details for 5 videos"
-    assert most[0] == library.MEASURE_WORKERS and time.time() - t < 0.8     # one at a time would take 1 s
+    # that many at once (not a time limit: a busy CI runner can stall for seconds)
+    assert most[0] == library.MEASURE_WORKERS
 
 
 def test_details_are_looked_up_a_few_at_a_time_and_a_fix_meanwhile_is_kept(movies, monkeypatch):
@@ -1055,9 +1055,8 @@ def test_details_are_looked_up_a_few_at_a_time_and_a_fix_meanwhile_is_kept(movie
         did.append(what)
     monkeypatch.setattr(library, "lookup", lambda t: busy(("lookup", t["name"])) or "ok")
     monkeypatch.setattr(library, "_apply", lambda t, i, sc, st: busy(("apply", t["name"], i, st)) or True)
-    t = time.time()
     assert library.fetch_details(full_refresh=True) == "Details for 5 titles"
-    assert most[0] == library.DETAIL_WORKERS and time.time() - t < 0.8
+    assert most[0] == library.DETAIL_WORKERS     # that many at once (not timed: CI runners stall)
     assert ("apply", "Heat", 949, "pinned") in did                  # its own pick, not looked up again
 
 
