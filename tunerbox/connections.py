@@ -223,8 +223,9 @@ def _who(name, screens, recs):
     if name.startswith("app:"):
         app, _, ip = name[4:].partition("@")
         return {"kind": "roku" if app == "Roku" else "app", "name": f"{app} · {ip}" if ip else app}
-    if name.startswith("roku-"):        # the Roku app's own client id (On Demand)
-        return {"kind": "roku", "name": _client_names.get(name, "Roku")}
+    if name.startswith("roku-"):        # the Roku app's own client id (On Demand, and its multiview pictures)
+        base, _, tile = name.partition("~")
+        return {"kind": "roku", "name": _client_names.get(base, "Roku") + (f" · multiview {tile}" if tile else "")}
     if name.startswith("dvr:"):
         r = recs.get(name[4:])
         return {"kind": "dvr", "name": f"Recording: {r['title']}" if r and r["title"] else "Recording"}

@@ -20,7 +20,7 @@
 
 // pictures at most: what the playlists' connections allow (the server's multiview_max: 1 = none), and
 // on phones two; iPhone / iPad play HLS natively, one video at a time. Setup can turn multiview off.
-const mvEnabled = () => S.settings.multiview_enabled === true;
+const mvEnabled = () => S.settings.multiview_enabled !== false;
 const mvMax = () => (!mvEnabled() || useHls() || !window.mpegts || !mpegts.getFeatureList().mseLivePlayback ? 1
   : Math.min(isPhone() ? 2 : 4, +S.settings.multiview_max || 4));
 const mvOn = () => S.mv.tiles.length > 0;

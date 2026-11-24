@@ -21,7 +21,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, logview, matcher, media, multiview, remote, scoreboard, sources, sports, tracks, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, logview, matcher, media, multiview, mvstream, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -297,7 +297,7 @@ def api_mv_plan(client: str = Body(...), tiles: list = Body([]), want: dict = Bo
         raise HTTPException(400, "Unknown tile")
     cap = multiview.capacity()
     if cap < 2:
-        raise HTTPException(409, "Multiview is turned off in Setup › Settings › Screens" if not config.get("multiview_enabled", False)
+        raise HTTPException(409, "Multiview is turned off in Setup › Settings › Screens" if not config.get("multiview_enabled", True)
                             else "Your playlists allow one channel at a time")
     if not isinstance(want, dict) or not (want.get("key") or isinstance(want.get("number"), int)):
         raise HTTPException(400, "Pick a channel")
@@ -317,6 +317,53 @@ def api_mv_plan(client: str = Body(...), tiles: list = Body([]), want: dict = Bo
 def api_mv_room():
     """Multiview's "+ Add" tile: connections in use on each playlist that has a limit."""
     return multiview.room()
+
+
+@app.get("/api/mv/stream")
+async def api_mv_stream(request: Request, client: str = "", layout: str = "grid", tiles: str = "[]", sound: int = 1,
+                        mode: str = "", name: str = ""):
+    """Multiview for a screen that plays one video at a time (the Roku): its pictures tiled into one
+    MPEG-TS stream (mvstream). `tiles`: JSON [{"slot", "number" | "key", "alt"}] in place order (place 1
+    is the big one); `sound`: the slot whose sound is heard (POST /api/mv/sound changes it while it plays);
+    mode=roku720: 1280x720, else 1920x1080."""
+    if not client or multiview.SEP in client:
+        raise HTTPException(400, "Unknown screen")
+    if layout not in mvstream.PLACES:
+        raise HTTPException(400, "Unknown layout")
+    try:
+        specs = mvstream.parse_tiles(tiles)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    cap = multiview.capacity()
+    if cap < 2:
+        raise HTTPException(409, "Multiview is turned off in Setup › Settings › Screens" if not config.get("multiview_enabled", True)
+                            else "Your playlists allow one channel at a time")
+    if len(specs) > min(cap, len(mvstream.PLACES[layout])):
+        raise HTTPException(409, f"There's room for {min(cap, len(mvstream.PLACES[layout]))} channels in that layout")
+    connections.name_client(client, name)
+    w, h = (1280, 720) if mode == "roku720" else (1920, 1080)
+    try:
+        got = await anyio.to_thread.run_sync(lambda: mvstream.start(client, layout, specs, sound, w, h))
+    except OSError as e:            # ffmpeg missing
+        raise HTTPException(502, str(e)) from None
+    if got is None:
+        raise HTTPException(503, "None of the pictures has a signal")
+    _scr, gen, proc = got
+    return LiveResponse(mvstream.read(proc, request), media_type="video/mp2t", headers={"Cache-Control": "no-store"},
+                        cleanup=lambda: mvstream.ended(client, gen))
+
+
+@app.post("/api/mv/sound")
+def api_mv_sound(client: str = Body(...), slot: int = Body(...)):
+    """Multiview's tiled stream (mvstream): picture `slot`'s sound is heard now, without restarting it.
+    {"ok": false} when the screen has no tiled stream playing (it asks for the stream again instead)."""
+    return {"ok": mvstream.set_sound(client, slot)}
+
+
+@app.get("/api/mv/status")
+def api_mv_status(client: str = ""):
+    """How a screen's tiled multiview pictures are doing (mvstream): {"on", "tiles": [{"slot", "ok", "why"}]}."""
+    return mvstream.status(client)
 
 
 # ------------------------------------------------------------------ search, sports & PPV
@@ -1235,6 +1282,21 @@ async def api_vod_stream(request: Request, item_id: str, ss: float = 0.0, client
     return LiveResponse(ffmpeg_stream(url, client or None, request=request, buffer=0, proc=proc, on_header=keep),
                         media_type="video/mp2t", headers={"Cache-Control": "no-store"},
                         cleanup=lambda: streaming.release(proc, client or None))
+
+
+def _mv_vod(item_id, at):
+    """mvstream: an On Demand title playing in a multiview picture, the way the full-screen player plays it."""
+    it = _vod_item(item_id)
+    url, ss = _vod_source(it, max(0.0, at))
+    if not url:
+        raise LookupError("Can't play this")
+    cmd = vod.stream_cmd(url, ss, it["video_mode"] or None, catchup.pace(ss) if it.get("catchup") else None, 0)
+    _log_play(it, ss, "", "in a multiview picture")
+    return {"url": url, "cmd": cmd, "label": _vod_label(it), "source_id": it["source_id"],
+            "duration": it.get("duration") or 0, "at": ss}
+
+
+mvstream.vod_open = _mv_vod
 
 
 @app.get("/api/vod/hls/{item_id}")

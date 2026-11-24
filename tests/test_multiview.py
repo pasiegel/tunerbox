@@ -151,11 +151,6 @@ def test_my_channels_allow_four(lineup):
     assert multiview.capacity() == 4
 
 
-def test_multiview_is_off_by_default():
-    assert config.DEFAULTS["multiview_enabled"] is False
-    assert multiview.capacity() == 1
-
-
 def test_setup_can_turn_multiview_off(lineup):
     c = TestClient(api.app)
     assert c.post("/api/settings", json={"multiview_enabled": False}).status_code == 200

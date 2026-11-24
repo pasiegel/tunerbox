@@ -45,7 +45,7 @@ const dvrTab = (on) => document.querySelector('#tabs button[data-tab="dvr"]').cl
 function mvCapNote(s) {
   const el = $("mv-cap"); if (!el || !s) return;
   const n = s.multiview_max || 1;
-  el.textContent = !s.multiview_enabled ? "" : n > 1 ? `Now: up to ${n} at once.` : "Now: one at a time, so it's left out (your playlists allow one connection).";
+  el.textContent = s.multiview_enabled === false ? "" : n > 1 ? `Now: up to ${n} at once.` : "Now: one at a time, so it's left out (your playlists allow one connection).";
 }
 api("/api/settings").then((s) => { dvrTab(s.dvr_enabled !== false); mvCapNote(s); window.tbTheme && tbTheme.server(s.theme); }).catch(() => {});
 function showTab(name) {

@@ -21,7 +21,7 @@ def capacity():
     enabled playlists allow, added up. A playlist with no limit (none set, and none reported by the
     provider or tuner) has room for all four, and so do your own videos, which need no provider
     connection: My Channels, and My Library (its movies and shows play in a small picture)."""
-    if not config.get("multiview_enabled", False):
+    if not config.get("multiview_enabled", True):
         return 1
     n = 0
     for s in db.rows("SELECT * FROM sources WHERE enabled=1"):

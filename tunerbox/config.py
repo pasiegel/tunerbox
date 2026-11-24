@@ -132,7 +132,7 @@ DEFAULTS = {
     "home_screen": True,
     # Multiview: a TV screen watching two to four live channels at once (multiview.py). How many is
     # worked out from the playlists' connections (multiview.capacity); off: one channel at a time.
-    "multiview_enabled": False,          # off until turned on in Settings › Screens
+    "multiview_enabled": True,
     # Home's rows top to bottom (ids in home.ROWS; a row missing here goes at the end, in its usual place),
     # and the ones switched off. Hidden rows come back from /api/home as empty lists.
     "home_order": [],
