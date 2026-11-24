@@ -224,3 +224,44 @@ def test_stream_takes_roku_client_and_name(path):
     route = next(r for r in api.app.routes if isinstance(r, Route) and r.path == path)
     params = {p.name for p in route.dependant.query_params}
     assert {"client", "name"} <= params
+
+
+def test_fight_card_rows_have_the_game_fields(client):
+    # a UFC / PFL card is a game like any other on the Roku's Sports and Home screens (SportsView.brs,
+    # HomeView.brs gameHeading): the same keys, an empty score, and no stats panel game
+    import time
+    from test_fight_cards import _raw, _store
+    from tunerbox import config, guide
+    now = int(time.time())
+    _store(scoreboard.parse_event("ufc", _raw(now - 3600, "in", 1)))
+    config.update({"sports_leagues": ["ufc"]})
+    guide.invalidate()
+    (p,) = [p for p in client.get("/api/sports").json()["on_now"] if p.get("event")]
+    for key in ("title", "start", "stop", "is_live", "ch", "heading", "matchup", "sport"):
+        assert key in p, key
+    for key in ("id", "league", "name", "score", "detail", "state", "teams"):
+        assert key in p["event"], key
+    assert p["event"]["score"] == "" and len(p["event"]["teams"]) == 2
+    assert client.get("/api/sports/stats", params={"id": p["event"]["id"]}).json()["game"] is None
+
+
+def test_sports_rows_have_a_kind(client):
+    # SportsView.brs: "kind" folds replays and shows away (absent on older servers: nothing is folded)
+    import time
+    from tunerbox import guide
+    now = int(time.time())
+    sid = db.run("INSERT INTO sources(name, type, url) VALUES ('p', 'm3u', 'http://x')")
+    db.run("INSERT INTO streams(key, source_id, name, url) VALUES ('k2', ?, 'CW', 'http://s')", (sid,))
+    db.run("INSERT INTO lineup(number, name) VALUES (2, 'CW')")
+    db.run("INSERT INTO mappings(number, stream_key, mode) VALUES (2, 'k2', 'manual')")
+    db.run("INSERT INTO programs(channel, start, stop, title, category, is_live) VALUES ('gn:2', ?, ?, 'WWE NXT', '', 1)",
+           (now - 600, now + 3600))
+    guide.invalidate()
+    (p,) = client.get("/api/sports").json()["on_now"]
+    assert p["kind"] == "live" and p["sport"] == "Wrestling"
+
+
+def test_settings_have_the_sports_layout(client):
+    # LoadTask.brs loadSports: "enhanced" picks SportsViewEnhanced; anything else (or none: an older
+    # TunerBox) is the Basic SportsView
+    assert client.get("/api/settings").json()["sports_layout"] == "basic"        # the default

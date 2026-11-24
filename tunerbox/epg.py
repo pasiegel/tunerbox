@@ -376,7 +376,7 @@ def _parse_xmltv(url, ids, names, claimed, lo, hi):
         idx = json.loads(idx_file.read_text(encoding="utf-8")) if idx_file.exists() else {}
     except (OSError, ValueError):
         last, idx = {}, {}
-    if (last.get("version") == version == idx.get("version")
+    if (last.get("version") == version == idx.get("version") and last.get("genres")
             and time.time() - last.get("t", 0) < REPARSE_AFTER):
         keep, hits = _selection(idx["index"], ids, names, claimed)
         if keep == last.get("keep"):
@@ -394,7 +394,7 @@ def _parse_xmltv(url, ids, names, claimed, lo, hi):
         idx_file.write_text(json.dumps({"version": version, "index": info["index"]}), encoding="utf-8")
         keep, _ = _selection(info["index"], ids, names, claimed)
         db.set_meta(f"xmltv_last_{uid}", json.dumps({
-            "version": version, "t": int(time.time()), "keep": keep, "channels": sorted(out),
+            "version": version, "t": int(time.time()), "keep": keep, "channels": sorted(out), "genres": 1,
             "count": sum(len(v) for v in out.values())}))
     except OSError as e:
         log.info("Couldn't save the guide index for %s: %s", url, e)
@@ -441,11 +441,14 @@ def _parse_open(f, ids, names, claimed, lo, hi, info=None):
                                 pass
                     icon = el.find("icon")
                     rating = el.find("rating/value")
+                    cats = [t for t in ((e.text or "").strip() for e in el.findall("category")) if t]
+                    cats = list(dict.fromkeys(cats))
                     out.setdefault(cid, []).append((
                         f"x:{cid}", start, stop, _txt(el, "title"), _txt(el, "sub-title"), _txt(el, "desc"),
-                        ep, _txt(el, "category"), rating.text if rating is not None else "",
+                        ep, cats[0] if cats else "", rating.text if rating is not None else "",
                         icon.get("src") if icon is not None else "",
-                        int(el.find("new") is not None), int(el.find("live") is not None)))
+                        int(el.find("new") is not None), int(el.find("live") is not None),
+                        "|".join(cats) if len(cats) > 1 else ""))
             el.clear()
     if name_hits:
         with db.conn() as c:
@@ -464,13 +467,20 @@ def _txt(el, tag):
 def _store(rows, windows, channels=None):
     """Replace these channels' programs starting inside each (lo, hi) window (hi None = open-ended)."""
     rows = list(rows)
+    # an XMLTV row has a 13th value, its categories ("" when it has one or none): kept in program_genres
+    genres = [(r[0], r[1], r[2], r[12]) for r in rows if len(r) > 12 and r[12]]
+    rows = [r[:12] for r in rows]
     chans = channels or sorted({r[0] for r in rows})
     by_ch = {}
     for r in rows:
         by_ch.setdefault(r[0], []).append(r)
     from . import catchup
+    by_gen = {}
+    for g in genres:
+        by_gen.setdefault(g[0], []).append(g)
     with db.conn() as c:
         catchup.prune(c)                # ended shows: kept for the archive on channels with catch-up
+        c.execute("DELETE FROM program_genres WHERE stop < ?", (int(time.time()) - 6 * 3600,))
     # a few channels at a time, each replaced whole in one transaction (so a channel's guide is never half
     # there), keeping every transaction short so other writers aren't left waiting out the lock
     group, size = [], 0
@@ -481,11 +491,13 @@ def _store(rows, windows, channels=None):
         with db.conn() as c:
             for g in group:
                 for lo, hi in windows:
-                    if hi is None:
-                        c.execute("DELETE FROM programs WHERE channel=? AND start>=?", (g, lo))
-                    else:
-                        c.execute("DELETE FROM programs WHERE channel=? AND start>=? AND start<?", (g, lo, hi))
+                    for t in ("programs", "program_genres"):
+                        if hi is None:
+                            c.execute(f"DELETE FROM {t} WHERE channel=? AND start>=?", (g, lo))
+                        else:
+                            c.execute(f"DELETE FROM {t} WHERE channel=? AND start>=? AND start<?", (g, lo, hi))
                 c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", by_ch.get(g, ()))
+                c.executemany("INSERT OR REPLACE INTO program_genres VALUES (?,?,?,?)", by_gen.get(g, ()))
         group, size = [], 0
     # rows for a channel that wasn't listed in `channels` (shouldn't happen): stored as before
     listed = set(chans)
@@ -493,6 +505,8 @@ def _store(rows, windows, channels=None):
     if extra:
         with db.conn() as c:
             c.executemany("INSERT OR REPLACE INTO programs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", extra)
+            c.executemany("INSERT OR REPLACE INTO program_genres VALUES (?,?,?,?)",
+                          [g for ch, gs in by_gen.items() if ch not in listed for g in gs])
 
 
 def refresh_all(progress=None):

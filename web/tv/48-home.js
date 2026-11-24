@@ -177,7 +177,7 @@ function hmMatchup(e, p, noLogo = false) {
   const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
   const mid = scored
     ? `<span class="mu-sc">${sc(t[0], !(a < b))}<i>–</i>${sc(t[1], !(b < a))}</span>${e.detail ? `<small class="mu-clk">${esc(e.detail)}</small>` : ""}`
-    : `<span class="mu-vs">${e.sport === "Soccer" ? "vs" : "@"}</span>${p && p.start > now() ? `<small class="mu-clk">${esc(fmtTime(p.start))}</small>` : ""}`;
+    : `<span class="mu-vs">${e.sport === "Soccer" || e.sport === "MMA" ? "vs" : "@"}</span>${p && p.start > now() ? `<small class="mu-clk">${esc(fmtTime(p.start))}</small>` : ""}`;
   return `<div class="mu${scored ? " scored" : ""}" style="--l:${col(t[0], "#1d3a7a")};--r:${col(t[1], "#5a1f2a")}">${img(t[0], "l")}`
     + `<div class="mu-mid">${mid}</div>${img(t[1], "r")}</div>`;
 }
@@ -276,7 +276,7 @@ function homeAct(it) {
   if (it.t === "rec") { recDialog(it, () => homeLoad()); return; }
   if (it.t === "game") {                // more than one place: straight to the best, Switch feed lists the rest
     if (gameChans(it.p).length + gameFeeds(it.p).length > 1) { pickGame(it.p, true); return; }
-    const g = spGame(it.p, "", true); if (g.act) g.act(); return;
+    spAct(it.p)(); return;
   }
   const ch = S.channels[S.byNum.get(it.number)];
   const entries = [];

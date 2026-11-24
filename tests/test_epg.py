@@ -51,11 +51,33 @@ def test_programmes_kept_by_id_and_by_display_name():
 def test_programme_fields_and_episode_numbers():
     out = parse()
     (row,) = out["cnn.us"]
-    channel, start, stop, title, sub, desc, ep, cat, rating, icon, new, live = row
-    assert (channel, sub, desc, ep, cat, icon, new, live) == (
-        "x:cnn.us", "Tonight", "News.", "S01E02", "News", "http://i/ac.jpg", 1, 0)
+    channel, start, stop, title, sub, desc, ep, cat, rating, icon, new, live, genres = row
+    assert (channel, sub, desc, ep, cat, icon, new, live, genres) == (
+        "x:cnn.us", "Tonight", "News.", "S01E02", "News", "http://i/ac.jpg", 1, 0, "")
     (late,) = out["other.us"]
     assert late[6] == "S03E07"                               # onscreen wins over xmltv_ns
+
+
+WRESTLING = b"""<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="cw.us"><display-name>CW</display-name></channel>
+  <programme start="20261109200000 +0000" stop="20261109220000 +0000" channel="cw.us">
+    <title>WWE NXT</title><category>Series</category><category>Pro wrestling</category><category>Series</category>
+  </programme>
+</tv>"""
+
+
+def test_every_category_is_kept_apart_from_the_first():
+    out = epg._parse_open(io.BytesIO(WRESTLING), {"cw.us"}, set(), set(), LO, HI)
+    (row,) = out["cw.us"]
+    assert row[7] == "Series"                                # programs.category: the first, as before
+    assert row[12] == "Series|Pro wrestling"                 # all of them, once each
+    epg._store([r for rows in out.values() for r in rows], [(LO, None)])
+    assert db.one("SELECT category FROM programs WHERE channel='x:cw.us'") == {"category": "Series"}
+    assert db.rows("SELECT channel, start, genres FROM program_genres") == [
+        {"channel": "x:cw.us", "start": row[1], "genres": "Series|Pro wrestling"}]
+    epg._store([], [(LO, None)], channels=["x:cw.us"])       # the guide dropped it: its categories go too
+    assert db.rows("SELECT * FROM program_genres") == []
 
 
 def test_display_name_matches_are_remembered():

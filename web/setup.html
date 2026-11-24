@@ -271,6 +271,20 @@
       <div class="set-group" data-cat="sports" data-label="Sports">
         <h4>Sports</h4>
         <div class="set-block">
+          <div class="set-head"><span class="set-text"><b>Sports &amp; Events layout</b><small>How the TV's Sports &amp; Events screen looks, on every TV screen and the Roku app.</small></span></div>
+          <input type="hidden" name="sports_layout">
+          <div class="layout-pick" id="sports-layout" role="radiogroup" aria-label="Sports &amp; Events layout">
+            <button type="button" class="layout-opt" data-v="basic" role="radio" aria-checked="false">
+              <span class="lp-pic basic" aria-hidden="true"><i class="t"></i><i class="t"></i><i class="t"></i><i class="r"></i><i class="r"></i><i class="r"></i><i class="r"></i></span>
+              <span class="lp-text"><b>Basic</b><small>Tabs for On Now, Coming Up, Sports Channels and Events, each one list.</small></span>
+            </button>
+            <button type="button" class="layout-opt" data-v="enhanced" role="radio" aria-checked="false">
+              <span class="lp-pic enhanced" aria-hidden="true"><i class="side"></i><i class="hero"></i><i class="c"></i><i class="c"></i><i class="c"></i><i class="r"></i><i class="r"></i></span>
+              <span class="lp-text"><b>Enhanced</b><small>Sports down the side, the biggest game up top with score cards, close-game tags, and replays folded away.</small></span>
+            </button>
+          </div>
+        </div>
+        <div class="set-block">
           <div class="set-head"><span class="set-text"><b>Leagues to follow</b><small>Their games are looked up on ESPN's scoreboard and matched to your channels and event feeds, so they show under Sports › On Now and Coming Up with live scores.</small></span><output id="league-count"></output></div>
           <input type="hidden" name="sports_leagues" data-list="1">
           <div class="league-grid" id="league-grid"></div>
@@ -279,13 +293,16 @@
           <div class="set-head"><span class="set-text"><b>Favorite teams</b><small>Their games come first under Sports › On Now, and pop up on the TV when they start so you can switch to them with OK. A team's league is followed even if it isn't picked above.</small></span><output id="team-count"></output></div>
           <input type="hidden" name="sports_teams" data-list="1">
           <div class="chips fav-teams" id="fav-teams"></div>
-          <div class="team-pick">
-            <select id="team-sport" aria-label="Sport"></select>
-            <select id="team-league" aria-label="League"></select>
-            <input id="team-filter" type="search" placeholder="Find a team" aria-label="Find a team" autocomplete="off">
+          <div class="team-box">
+            <div class="team-pick">
+              <div class="seg" id="team-sport" role="group" aria-label="Sport"></div>
+              <input id="team-filter" type="search" placeholder="Find a team" aria-label="Find a team" autocomplete="off">
+            </div>
+            <div class="seg small" id="team-league" role="group" aria-label="League"></div>
+            <div class="team-list" id="team-list"></div>
           </div>
-          <div class="chips team-list" id="team-list"></div>
         </div>
+        <label class="set-row"><span class="set-text"><b>Pop up when your team's game is close</b><small>When one of your favorite teams' games is close late on, or goes to overtime, it pops up on the TV once so you can switch to it with OK. Close games are still tagged on the Sports screen either way.</small></span><input type="checkbox" class="toggle" name="sports_close_alerts"></label>
         <label class="set-row"><span class="set-text"><b>List games you have no channel for</b><small>Games that none of your channels or event feeds carry are still listed, with where they air.</small></span><input type="checkbox" class="toggle" name="sports_show_unmatched"></label>
         <label class="set-row"><span class="set-text"><b>Sports &amp; Events countries</b><small>Country codes of playlist groups to show: US, or US,CA,UK, or * for all.</small></span><input name="sports_regions" placeholder="US"></label>
       </div>
