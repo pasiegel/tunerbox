@@ -53,6 +53,76 @@ def test_on_now_live_first_then_start_sport_name():
     assert on_now[0]["sport"] == "Football"
 
 
+@pytest.mark.parametrize("title, category, want", [
+    ("Live: WWE NXT", "", True),                       # wrestling the guide files as nothing / "Series"
+    ("WWE Monday Night Raw", "Series", True),
+    ("All Elite Wrestling: Dynamite", "Series", True),
+    ("TNA Wrestling", "Special", True),
+    ("Lucha Libre IWRG", "", True),
+    ("UFC Fight Night", "", True),
+    ("PBR Team Series", "Series", True),
+    ("Rodeo", "", True),
+    ("Fight Sports: World Championship Kickboxing", "Martial arts", True),
+    ("NBA Basketball", "Sports", True),                # the category still counts
+    ("Raw Questions Relevant Answers", "", False),     # a bare "Raw" or "Impact" isn't wrestling
+    ("World Impact With Dr. Billy Wilson", "", False),
+    ("WWE Legends", "Series", False),                  # shows about the sport
+    ("UFC Countdown", "", False),
+    ("The Wrestler", "Movie", False),
+    ("Seinfeld", "Sitcom", False),
+])
+def test_is_sport_program_by_title(title, category, want):
+    assert sports.is_sport_program({"title": title, "category": category}) is want
+
+
+@pytest.mark.parametrize("title, genres, want, sport", [
+    ("Some Promotion Weekly", "Series|Pro wrestling", True, "Wrestling"),    # the guide's second category says
+    ("Fight Sports: World Championship Kickboxing", "Series|Martial arts|Boxing", True, "MMA"),
+    ("Canadian Finals Rodeo", "Series|Rodeo", True, "Rodeo"),
+    ("NFL Films Presents", "Series|Football|Documentary", False, ""),        # about the sport, not the sport
+    ("The NFL Today", "Sports talk|Football", False, ""),
+    ("IMPACT in 60", "Series|Pro wrestling", False, ""),
+    ("A Fistful of Dynamite", "Movie|Western", False, ""),
+])
+def test_is_sport_program_by_any_category(title, genres, want, sport):
+    p = {"title": title, "category": genres.split("|")[0], "genres": genres, "subtitle": ""}
+    assert sports.is_sport_program(p) is want
+    if want:
+        assert sports.sport_type(p) == sport
+
+
+def test_on_now_has_wrestling_with_no_category():
+    sid = db.run("INSERT INTO sources(name, type, url) VALUES ('p', 'm3u', 'http://x')")
+    now = int(time.time())
+    for n, title, cat in [(2, "Live: WWE NXT", ""), (3, "Raw Questions Relevant Answers", ""),
+                          (4, "All Elite Wrestling: Dynamite", "Series")]:
+        db.run("INSERT INTO streams(key, source_id, name, url) VALUES (?, ?, ?, 'http://s')", (f"k{n}", sid, f"C{n}"))
+        db.run("INSERT INTO lineup(number, name) VALUES (?, ?)", (n, f"C{n}"))
+        db.run("INSERT INTO mappings(number, stream_key, mode) VALUES (?, ?, 'manual')", (n, f"k{n}"))
+        db.run("INSERT INTO programs(channel, start, stop, title, category) VALUES (?, ?, ?, ?, ?)",
+               (f"gn:{n}", now - 600, now + 3600, title, cat))
+    guide.invalidate()
+    on_now = sports.overview()["on_now"]
+    assert sorted(p["title"] for p in on_now) == ["All Elite Wrestling: Dynamite", "Live: WWE NXT"]
+    assert {p["sport"] for p in on_now} == {"Wrestling"}
+
+
+def test_on_now_uses_the_guides_other_categories():
+    sid = db.run("INSERT INTO sources(name, type, url) VALUES ('p', 'm3u', 'http://x')")
+    now = int(time.time())
+    for n, title, genres in [(2, "Saturday Night Brawl", "Series|Pro wrestling"), (3, "Cooking Live", "Series|Cooking")]:
+        db.run("INSERT INTO streams(key, source_id, name, url) VALUES (?, ?, ?, 'http://s')", (f"k{n}", sid, f"C{n}"))
+        db.run("INSERT INTO lineup(number, name) VALUES (?, ?)", (n, f"C{n}"))
+        db.run("INSERT INTO mappings(number, stream_key, mode) VALUES (?, ?, 'manual')", (n, f"k{n}"))
+        db.run("INSERT INTO programs(channel, start, stop, title, category) VALUES (?, ?, ?, ?, 'Series')",
+               (f"gn:{n}", now - 600, now + 3600, title))
+        db.run("INSERT INTO program_genres VALUES (?, ?, ?, ?)", (f"gn:{n}", now - 600, now + 3600, genres))
+    guide.invalidate()
+    on_now = sports.overview()["on_now"]
+    assert [(p["title"], p["sport"], p["category"]) for p in on_now] == [("Saturday Night Brawl", "Wrestling", "Series")]
+    assert "genres" not in on_now[0]                        # the rows the TV gets keep their keys
+
+
 # ---------------------------------------------------------------- scoreboard games
 def _team(name, nick, loc, abbr, score="", short=None):
     return {"name": name, "short": short or nick, "nick": nick, "loc": loc, "abbr": abbr, "score": score}
@@ -310,3 +380,47 @@ def test_public_game_has_both_teams_logos_and_colours():
     for c, sc in zip(raw["competitions"][0]["competitors"], ("88", "92")):
         c["score"] = sc
     assert [t["score"] for t in scoreboard.public(scoreboard.parse_event("nba", raw))["teams"]] == ["92", "88"]   # away, home
+
+
+@pytest.mark.parametrize("title, category, genres, is_live, want", [
+    ("Live: WWE NXT", "", "", 0, "live"),
+    ("WWE NXT", "", "", 1, "live"),
+    ("NBA Basketball", "Sports", "", 0, "on"),                 # the guide doesn't say: neither live nor a replay
+    ("Cubs Classics", "Sports", "", 0, "replay"),
+    ("TNA No Surrender 2012", "Special", "Special|Pro wrestling", 0, "replay"),   # an old event
+    ("Fight Sports: Boxing", "Sports", "Sports|Classic Sport Event|Boxing", 0, "replay"),
+    ("Mile High Postgame Live", "Sports", "", 1, "show"),      # live, but a show about the game
+    ("The Dan Le Batard Show", "Sports talk", "", 1, "show"),
+    ("NFL Films Presents", "Series", "Series|Football|Documentary", 0, "show"),
+    (f"{time.localtime().tm_year - 1} College Football Playoff", "Sports", "", 0, "on"),   # last year's: can be live in January
+])
+def test_program_kind(title, category, genres, is_live, want):
+    assert sports.program_kind({"title": title, "category": category, "is_live": is_live}, genres) == want
+
+
+
+def _live(league, home, away, period, clock):
+    return {"league": league, "state": "in", "home": {"score": str(home)}, "away": {"score": str(away)},
+            "period": period, "clock": clock}
+
+
+@pytest.mark.parametrize("ev, close, ot", [
+    (_live("ncaab", 54, 56, 2, 130), True, False),        # men's college basketball: two halves, 2:10 left
+    (_live("ncaab", 54, 56, 1, 130), False, False),       # end of the first half: not late
+    (_live("nba", 90, 104, 4, 60), False, False),         # 14 points: not close
+    (_live("nba", 100, 100, 5, 200), True, True),         # overtime
+    (_live("nfl", 17, 21, 4, 400), True, False),
+    (_live("nhl", 2, 1, 3, 500), True, False),
+    (_live("mlb", 3, 2, 8, 0), True, False),              # late innings
+    (_live("epl", 1, 1, 2, 80 * 60), True, False),        # soccer's clock counts up
+    (_live("epl", 1, 1, 2, 50 * 60), False, False),
+    ({**_live("nba", 100, 100, 4, 60), "state": "post"}, False, False),
+])
+def test_close_games(ev, close, ot):
+    assert scoreboard.is_close(ev) is close and scoreboard.overtime(ev) is ot
+
+
+def test_sports_layout_setting():
+    assert config.clean_changes({"sports_layout": "enhanced"}, from_pc=False) == {"sports_layout": "enhanced"}
+    with pytest.raises(ValueError):
+        config.clean_changes({"sports_layout": "fancy"}, from_pc=False)

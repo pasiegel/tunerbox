@@ -100,6 +100,11 @@ DEFAULTS = {
     "sports_teams": [],
     # Also list games that none of your channels or event feeds carry
     "sports_show_unmatched": True,
+    # the TV's Sports & Events screen: "basic" (tabs and one list) or "enhanced" (sports down the side,
+    # the biggest game up top, score cards, replays folded away)
+    "sports_layout": "basic",
+    # A favorite team's game that turns close late on (or goes to overtime) pops up on the TV
+    "sports_close_alerts": True,
     # Network name: what this box is called when Plex, Jellyfin, Emby or Channels DVR find it as an
     # HDHomeRun tuner, so two TunerBoxes on one network can be told apart (home-screen apps stay "TunerBox")
     "box_name": "TunerBox",
@@ -292,6 +297,7 @@ def update(changes: dict):
 # Settings that name a program to run, or a place on disk to read or write: only the PC itself can
 # change them, so another device on the network can't point TunerBox at its own program or folder.
 THEMES = ("midnight", "classic", "retro", "contrast", "light")     # same list as web/theme.js
+SPORTS_LAYOUTS = ("basic", "enhanced")
 VOD_DETAILS = ("auto", "ask", "off")
 PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
            "https_enabled", "https_port", "https_hosts"}
@@ -360,6 +366,8 @@ def clean_changes(changes: dict, from_pc: bool, allow=()) -> dict:
             v = sorted({str(x).strip().lower() for x in v if str(x).strip()})
         elif k == "sports_teams":
             v = sorted({str(x).strip().lower() for x in v if re.fullmatch(r"[a-z0-9]+:[a-z0-9-]+", str(x).strip().lower())})
+        elif k == "sports_layout" and v not in SPORTS_LAYOUTS:
+            raise ValueError(f"sports_layout: one of {', '.join(SPORTS_LAYOUTS)}")
         elif k == "vod_details" and v not in VOD_DETAILS:
             raise ValueError(f"vod_details: one of {', '.join(VOD_DETAILS)}")
         elif k == "theme" and v not in THEMES:
