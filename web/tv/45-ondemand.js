@@ -738,7 +738,8 @@ function vodLeave() {
   $("playback").classList.add("hidden");
   subsTick();                       // takes the subtitles off
 }
-async function playVod(id, start, back) {
+// `whole`: full screen even in multiview (otherwise, in multiview, it plays in a small picture: mvVodTarget)
+async function playVod(id, start, back, whole = false) {
   if (back === undefined) back = S.layer.includes("od");      // go back to On Demand afterwards
   closeDialog();
   toast("Loading…", 6000);
@@ -747,7 +748,15 @@ async function playVod(id, start, back) {
   if (start === undefined) start = it.position > RESUME_MIN ? it.position : 0;
   closeOD(); closePanels(); closeMenu(); closeDvr();
   if (top() === "guide") G.close();
-  vodLeave();
+  const tile = !whole && mvVodTarget();
+  if (tile) {
+    closeHome();
+    mvVodPlay(tile, it, start);
+    mvFocus(tile.slot);
+    toast(`${start > 0 ? `Resuming ${it.title} from ${fmtDur(start)}` : it.title} · Back: watch it full screen`, 4000);
+    return;
+  }
+  vodLeave(); mvStop();
   recLeave(); S.mode = "vod"; hideBanner();
   S.vod = { it, dur: it.duration || 0, base: start, back, retries: 0, target: null, parked: false, paused: false, done: false };
   avInit(S.vod);                    // the audio track and subtitles picked last time for this movie or show

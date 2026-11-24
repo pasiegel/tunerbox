@@ -31,7 +31,7 @@ function fillList(listEl, entries, sel = 0) {
 
 let dlg = { entries: [], back: null };       // back: what Back does instead of closing (a step inside the dialog)
 function openDialog(title, sub, entries) {
-  dlg.entries = entries; dlg.back = null; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
+  dlg.entries = entries; dlg.back = null; $("dialog").classList.remove("pv-dlg", "mv-dlg", "mv-chans"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
   $("dlg-title").textContent = title; $("dlg-sub").textContent = sub || "";
   fillList($("dlg-list"), entries);
   if (top() !== "dialog") S.layer.push("dialog");
@@ -101,7 +101,7 @@ async function feedDialog() {
     closeDialog();
     if (f.alt === S.alt) return;
     toast(`${ch.number} ${ch.name}: ${role(f)}${f.source ? ` · ${f.source}` : ""}`);
-    tune(S.byNum.get(ch.number), f.alt);
+    tune(S.byNum.get(ch.number), f.alt, true);
   };
   // playlist names often carry decorations ("##### NEWS #####"): leave those out
   const tidy = (n) => (n || "").replace(/#{2,}/g, " ").replace(/\s{2,}/g, " ").trim() || n;
@@ -130,7 +130,7 @@ function bufferDialog() {
     if (v === null) localStorage.removeItem("tb.buffer"); else localStorage.setItem("tb.buffer", v);
     closeDialog();
     toast(`Stream cache: ${bufSecs() ? bufSecs() + " seconds" : "Off"}`);
-    if (S.mode === "live") { if (S.feedCh) { const f = S.feedCh; playFeed({ key: f.feed, name: f.name, group: f.group, logo: f.logo, kind: f.badge === "PPV" ? "ppv" : "events" }); } else if (S.idx >= 0) tune(S.idx, S.alt); }
+    if (S.mode === "live") { if (S.feedCh) { const f = S.feedCh; playFeed({ key: f.feed, name: f.name, group: f.group, logo: f.logo, kind: f.badge === "PPV" ? "ppv" : "events" }, true); } else if (S.idx >= 0) tune(S.idx, S.alt, true); }
     sendState(true);
   };
   const def = +(S.settings.stream_buffer || 0);
@@ -290,7 +290,7 @@ function openMenu() {
   hideBanner();
   const t = S.mode === "vod" && S.vod && S.vod.tracks;
   const avOn = (e) => !e.av || (t && (e.av === true || (e.av === "audio" ? t.audio.length > 1 : t.subs.length > 0)));
-  const items = MENU.filter((e) => avOn(e) && !(e.catchup && !cuLive()) && !(e.liveAlts && !liveAlts()) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
+  const items = MENU.filter((e) => avOn(e) && !(e.catchup && !cuLive()) && !(e.liveAlts && (!liveAlts() || S.mv.focus > 1)) && !(isPhone() && e.notPhone) && !(e.needsHome && !homeEnabled()) && !(e.homeOff && homeEnabled()) && featOn(e));
   menuShown = items.filter((e, i) => e.head === undefined || (items[i + 1] && items[i + 1].head === undefined));
   renderMenu();
   S.layer.push("menu"); $("menu").classList.remove("hidden", "two");
@@ -347,7 +347,7 @@ function recDialog(r, after) {
 function playRecording(r, from = 0) {
   vodLeave(); recLeave(); closeHome();
   destroyPlayer(); hideStatic(); hideBanner();
-  S.mode = "playback";
+  S.mode = "playback"; mvStop();
   if (from > 0) video.addEventListener("loadedmetadata", () => { if (S.rec === r) video.currentTime = from; }, { once: true });
   if (r.file.endsWith(".ts") && window.mpegts) {
     S.player = mpegts.createPlayer({ type: "mpegts", isLive: false, url: `${location.origin}/api/recordings/${r.id}/file` });

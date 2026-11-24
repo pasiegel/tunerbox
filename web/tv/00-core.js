@@ -10,6 +10,10 @@ const S = {
   digits: "", digitTimer: null, bannerTimer: null, watchdog: null,
   nowCache: new Map(), settings: {},
   favs: new Set(),        // favorite channel numbers (shared by every screen, stored on the server)
+  // multiview (41-multiview.js): the extra tiles (slot 2-4; slot 1 is the main picture above), which one
+  // has the focus and the sound, `add`: when a channel is being picked to add as a new tile, and `order`:
+  // the slots in place order (place 1 is the big one); `vodAdd`: when On Demand was opened to add a picture
+  mv: { tiles: [], focus: 1, add: 0, vodAdd: 0, seq: 0, pref: {}, order: [] },
 };
 
 // ---------------------------------------------------------------- helpers

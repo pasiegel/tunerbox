@@ -41,7 +41,13 @@ const loaders = {};
 document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 // the DVR tab is left out while recordings are turned off (Settings › DVR)
 const dvrTab = (on) => document.querySelector('#tabs button[data-tab="dvr"]').classList.toggle("hidden", !on);
-api("/api/settings").then((s) => { dvrTab(s.dvr_enabled !== false); window.tbTheme && tbTheme.server(s.theme); }).catch(() => {});
+// Settings › Screens › Multiview: how many channels a screen can show at once, with these playlists
+function mvCapNote(s) {
+  const el = $("mv-cap"); if (!el || !s) return;
+  const n = s.multiview_max || 1;
+  el.textContent = s.multiview_enabled === false ? "" : n > 1 ? `Now: up to ${n} at once.` : "Now: one at a time, so it's left out (your playlists allow one connection).";
+}
+api("/api/settings").then((s) => { dvrTab(s.dvr_enabled !== false); mvCapNote(s); window.tbTheme && tbTheme.server(s.theme); }).catch(() => {});
 function showTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + name));
@@ -1189,6 +1195,7 @@ $("set-form").onsubmit = async (e) => {
   try { await api("/api/settings", { method: "POST", body: out }); }
   catch (err) { toast(err.message); return; }
   rememberSaved(); syncSettings(); dvrTab(out.dvr_enabled !== false); if (out.theme && window.tbTheme) tbTheme.server(out.theme);
+  api("/api/settings").then(mvCapNote).catch(() => {});
   toast("Settings saved");
 };
 

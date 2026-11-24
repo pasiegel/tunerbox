@@ -40,8 +40,8 @@ function sendState(force) {
   const live = S.mode === "live" && ch;
   const nn = live && !ch.feed && S.nowCache.get(ch.number);
   const st = { power: S.mode !== "off", mode: S.mode, number: live ? ch.number : "", name: live ? (ch.label || ch.name) : S.vod ? S.vod.it.title : "",
-               title: nn && nn.d && nn.d.now ? nn.d.now.title : "", layer: top() || "", volume: Math.round(video.volume * 100) / 100,
-               muted: video.muted, feed: !!(live && ch.feed), buffer: bufSecs() };
+               title: nn && nn.d && nn.d.now ? nn.d.now.title : "", layer: top() || "", volume: Math.round(soundEl().volume * 100) / 100,
+               muted: soundEl().muted, feed: !!(live && ch.feed), buffer: bufSecs() };
   const js = JSON.stringify(st);
   if (!force && js === lastState && Date.now() - lastStateAt < 30000) return;
   lastState = js; lastStateAt = Date.now();

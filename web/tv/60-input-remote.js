@@ -7,7 +7,7 @@ const ACTIONS = [
   ["ChannelUp", "Channel up / Page up"], ["ChannelDown", "Channel down / Page down"],
   ["g", "Guide"], ["i", "Info"], ["m", "Menu"], ["l", "Last channel"],
   ["*", "Favorite: add / remove"], ["v", "Favorites guide / show all"], ["c", "Guide: filter by genre"],
-  ["h", "Home"], ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["x", "Game stats"], ["o", "On Demand"],
+  ["h", "Home"], ["r", "Record"], ["d", "Recordings (DVR)"], ["/", "Search"], ["t", "Sports & Events"], ["x", "Game stats"], ["o", "On Demand"], ["w", "Multiview"],
   ["VolUp", "Volume up"], ["VolDown", "Volume down"], ["u", "Mute"],
   [" ", "Play / Pause"], ["s", "Stop playback"], ["f", "Full screen"], ["Power", "Power on / off"],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => [String(n), `Number ${n}`]),
@@ -27,7 +27,7 @@ const DEFAULT_BINDINGS = {
   r: "r", MediaRecord: "r", ColorF0Red: "r",
   d: "d", DVR: "d",
   "*": "*", a: "*", Favorites: "v", v: "v", c: "c",
-  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", x: "x", o: "o",
+  "/": "/", BrowserSearch: "/", Find: "/", F3: "/", t: "t", x: "x", o: "o", w: "w",
   "+": "VolUp", "=": "VolUp", AudioVolumeUp: "VolUp",
   "-": "VolDown", "_": "VolDown", AudioVolumeDown: "VolDown",
   u: "u", AudioVolumeMute: "u",
@@ -159,7 +159,9 @@ function handleKey(k, ev) {
   if (layer === "home") { homeKey(k); return true; }
 
   if (layer === "dialog") {
-    if (k === "Back") { if (dlg.back) dlg.back(); else closeDialog(); } else listNav($("dlg-list"), k, (_, i) => dlg.entries[i].act());
+    // the multiview layouts sit in a row: Left / Right move along it
+    const d = $("dialog").classList, across = d.contains("mv-dlg") && !d.contains("mv-chans") && { ArrowLeft: "ArrowUp", ArrowRight: "ArrowDown" }[k];
+    if (k === "Back") { if (dlg.back) dlg.back(); else closeDialog(); } else listNav($("dlg-list"), across || k, (_, i) => dlg.entries[i].act());
     return true;
   }
   if (layer === "remotecfg") {
@@ -202,8 +204,8 @@ function handleKey(k, ev) {
       case "t": G.close(); openSports(); break;
       case "o": G.close(); openOD(); break;
       case "u": toggleMute(); break;
-      case "VolUp": setVolume(video.volume + 0.05); break;
-      case "VolDown": setVolume(video.volume - 0.05); break;
+      case "VolUp": setVolume(soundEl().volume + 0.05); break;
+      case "VolDown": setVolume(soundEl().volume - 0.05); break;
       default: return false;
     }
     return true;
@@ -248,11 +250,14 @@ function handleKey(k, ev) {
     return true;
   }
   // live TV
+  S.mv.add = 0; S.mv.vodAdd = 0;    // back on TV without picking one: not adding a tile any more
+  if (mvOn() && mvKey(k)) return true;
   switch (k) {
     case "ArrowUp": case "ChannelUp": chStep(1); break;
     case "ArrowDown": case "ChannelDown": chStep(-1); break;
     case "g": case "h": G.open(); break;          // h: the Home button, when Home is turned off
     case "v": G.open(true); break;
+    case "w": mvOpen(); break;                  // multiview (also the button on the on-screen controls)
     case "*": toggleFav(curCh()); break;
     case "i": case "Enter":
       if (!$("banner").classList.contains("hidden") && k === "i") { $("banner").classList.toggle("full"); clearTimeout(S.bannerTimer); S.bannerTimer = setTimeout(hideBanner, 12000); }
@@ -274,8 +279,8 @@ function handleKey(k, ev) {
       break;
     }
     case "u": toggleMute(); break;
-    case "VolUp": case "ArrowRight": setVolume(video.volume + 0.05); break;
-    case "VolDown": case "ArrowLeft": setVolume(video.volume - 0.05); break;
+    case "VolUp": case "ArrowRight": setVolume(soundEl().volume + 0.05); break;
+    case "VolDown": case "ArrowLeft": setVolume(soundEl().volume - 0.05); break;
     case "f": toggleFull(); break;
     default: return false;
   }

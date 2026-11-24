@@ -331,7 +331,7 @@ const G = {
     const p = this.selected(); const ch = this.ch(this.row);
     const n0 = now();
     if (!p || p.empty || (p.start <= n0 && n0 < p.stop && !cuAvailable(ch, p, n0))) {
-      if (this.list[this.row] !== S.idx || S.mode !== "live") tune(this.list[this.row]);
+      if (this.list[this.row] !== S.idx || S.mode !== "live" || S.mv.focus > 1 || mvAdding()) tune(this.list[this.row]);
       closeHome(); this.close();          // watching: full-screen TV, not back to Home
       return;
     }

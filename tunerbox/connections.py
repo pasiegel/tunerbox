@@ -233,10 +233,12 @@ def _who(name, screens, recs):
         name = name[4:]
     if name.startswith("setup-"):
         return {"kind": "setup", "name": "Setup preview"}
+    name, _, tile = name.partition("~")        # a multiview tile: "<screen>~<slot>" (multiview.py)
+    more = f" · multiview {tile}" if tile else ""
     s = screens.get(name)
     if s:
-        return {"kind": "tv", "name": s["name"] or "TV"}
-    return {"kind": "tv", "name": "iPhone / iPad" if hls_ else "A TV screen"}
+        return {"kind": "tv", "name": (s["name"] or "TV") + more}
+    return {"kind": "tv", "name": ("iPhone / iPad" if hls_ else "A TV screen") + more}
 
 
 def in_use():

@@ -35,7 +35,8 @@ function hideStatic() { $("static").classList.add("hidden"); }
 })();
 
 // what's on screen: a numbered channel, or an event/PPV feed picked from Sports or Search
-const curCh = () => S.feedCh || S.channels[S.idx];
+// in multiview, the tile with the focus
+const curCh = () => mvFocusCh() || S.feedCh || S.channels[S.idx];
 // extra stream cache (seconds): this device's choice from the Menu, else the server-wide setting
 const BUFFERS = [0, 5, 10, 20, 30, 60];
 function bufSecs() {
@@ -43,20 +44,22 @@ function bufSecs() {
   const v = own !== null && own !== "" ? +own : +(S.settings.stream_buffer || 0);
   return isNaN(v) ? 0 : v;
 }
-function streamUrl(ch, alt, hls, mode = "") {
+// `cid`: whose stream it is (a multiview tile has its own, so it only ever replaces its own stream)
+function streamUrl(ch, alt, hls, mode = "", cid = CID) {
   const b = `&buf=${bufSecs()}` + (mode ? `&mode=${mode}` : "");
-  if (ch.feed) return `${location.origin}/api/feed/${hls ? "hls" : "stream"}?key=${encodeURIComponent(ch.feed)}&client=${CID}${b}`;
-  return `${location.origin}/api/${hls ? "hls" : "stream"}/${ch.number}?alt=${alt}&client=${CID}${b}`;
+  if (ch.feed) return `${location.origin}/api/feed/${hls ? "hls" : "stream"}?key=${encodeURIComponent(ch.feed)}&client=${cid}${b}`;
+  return `${location.origin}/api/${hls ? "hls" : "stream"}/${ch.number}?alt=${alt}&client=${cid}${b}`;
 }
 // A picture this browser can't decode (HEVC/H.265 without hardware support, MPEG-2): the server converts
 // that channel / title to H.264 instead, and it's remembered for this visit. `key` names what's playing,
 // `redo` starts it again. Returns a test for player errors: true when it took over.
 const h264Keys = new Set();
-function codecFallback(p, key, mode, redo) {
+// `el` / `mine()`: the video element it plays in and whether `p` still plays there (a multiview tile has its own)
+function codecFallback(p, key, mode, redo, el = video, mine = () => S.player === p) {
   if (mode) return () => false;
   let done = false;
   const go = () => {
-    if (done || S.player !== p) return done;
+    if (done || !mine()) return done;
     done = true; h264Keys.add(key);
     toast("Converting the picture for this screen…", 3000);
     setTimeout(redo, 0);
@@ -69,22 +72,22 @@ function codecFallback(p, key, mode, redo) {
     if (window.MediaSource && MediaSource.isTypeSupported
         && !MediaSource.isTypeSupported(`video/mp4; codecs="${c}"`)) go();
     else if (slowHevc()[hevcKind(c)]) go();     // this screen choked on this kind lately: no need to watch
-    else if (!watching) { watching = true; watchDecode(p, () => { rememberSlowHevc(hevcKind(c)); return go(); }); }
+    else if (!watching) { watching = true; watchDecode(p, () => { rememberSlowHevc(hevcKind(c)); return go(); }, el, mine); }
   });
   return (type) => type === mpegts.ErrorTypes.MEDIA_ERROR && go();
 }
 // HEVC the browser says it supports can still be decoded too slowly (Chrome/Edge on a Mac with 10-bit x265):
 // it plays, but drops frames. Watch the dropped-frame count while it plays and convert if it can't keep up.
 const DECODE_DROP = 0.08, DECODE_BAD = 2;   // two seconds in a row with 8%+ of frames dropped
-function watchDecode(p, go) {
-  if (!video.getVideoPlaybackQuality) return;
+function watchDecode(p, go, el = video, mine = () => S.player === p) {
+  if (!el.getVideoPlaybackQuality) return;
   let last = null, bad = 0;
   const t = setInterval(() => {
-    if (S.player !== p) { clearInterval(t); return; }
-    const q = video.getVideoPlaybackQuality(), cur = { total: q.totalVideoFrames, dropped: q.droppedVideoFrames };
+    if (!mine()) { clearInterval(t); return; }
+    const q = el.getVideoPlaybackQuality(), cur = { total: q.totalVideoFrames, dropped: q.droppedVideoFrames };
     const prev = last; last = cur;
     // paused, buffering, hidden, just started or nearly out of data (the network, not the decoder): nothing to judge
-    if (!prev || video.paused || video.readyState < 3 || document.hidden || bufferedAhead() < 1) { bad = 0; return; }
+    if (!prev || el.paused || el.readyState < 3 || document.hidden || bufferedAhead(el) < 1) { bad = 0; return; }
     const total = cur.total - prev.total, dropped = cur.dropped - prev.dropped;
     if (total < 12) { bad = 0; return; }
     bad = dropped / total >= DECODE_DROP ? bad + 1 : 0;
@@ -104,9 +107,9 @@ function slowHevc() {
 function rememberSlowHevc(kind) {
   try { localStorage.setItem("tb.slowHevc", JSON.stringify({ ...slowHevc(), [kind]: Date.now() })); } catch (e) { /* private window */ }
 }
-const bufferedAhead = () => {
-  const b = video.buffered;
-  return b.length ? b.end(b.length - 1) - Math.max(video.currentTime, b.start(b.length - 1)) : 0;
+const bufferedAhead = (el = video) => {
+  const b = el.buffered;
+  return b.length ? b.end(b.length - 1) - Math.max(el.currentTime, b.start(b.length - 1)) : 0;
 };
 function hideBuffering() { clearInterval(S.bufTimer); S.bufTimer = null; $("buffering").classList.add("hidden"); }
 // hold the picture until `secs` of video are cached, then play (a stall later rebuilds part of it)
@@ -123,8 +126,11 @@ function fillCache(p, secs, then) {
   }, 250);
 }
 
-function tune(idx, alt = 0) {
+// `direct`: tune the main picture itself. Otherwise, in multiview (or while picking a channel to add
+// as a tile) the channel goes to the tile with the focus, or a new one, by way of multiview's planner.
+function tune(idx, alt = 0, direct = false) {
   if (idx < 0 || idx >= S.channels.length) return;
+  if (!direct && mvRoute({ idx })) return;
   clearTimeout(S.stepTimer); S.pendingIdx = undefined;
   vodLeave(); recLeave();        // leaving a movie or a recording: its position is saved
   const ch = S.channels[idx];
@@ -139,11 +145,12 @@ function tune(idx, alt = 0) {
   hideStatic();
   if (alt === 0) { showBanner(); placesSoon(); }
   if (!ch.mapped) { showStatic(ch.number, "Channel Not Available", ch.name); return; }
-  play(ch, alt, () => failOver(idx, alt), () => tune(idx, alt));
+  play(ch, alt, () => failOver(idx, alt), () => tune(idx, alt, true));
 }
 
 // event / PPV feed: no channel number, no backups; Last/Back returns to the channel you were on
-function playFeed(f) {
+function playFeed(f, direct = false) {
+  if (!direct && mvRoute({ feed: f })) return;
   vodLeave();
   if (S.idx >= 0 && !S.feedCh) S.lastIdx = S.idx;
   const ch = { number: "", badge: f.kind === "ppv" ? "PPV" : "LIVE", name: f.name, label: f.name, logo: f.logo || "",
@@ -157,7 +164,7 @@ function playFeed(f) {
     showStatic(ch.badge, "Event not on right now", `${ch.name}: this feed only carries video while the event is live. Press Last to go back.`);
     explainBusy({ key: f.key }, ch.badge, () => S.feedCh === ch);
   };
-  play(ch, 0, fail, () => S.feedCh === ch && playFeed(f));
+  play(ch, 0, fail, () => S.feedCh === ch && playFeed(f, true));
 }
 
 // Setup › Tuners › Stop ended this screen's stream: say so, rather than reconnecting or trying a backup
@@ -253,11 +260,11 @@ function playHls(ch, alt, onFail) {
 function failOver(idx, alt) {
   if (S.feedCh || S.idx !== idx || S.alt !== alt) return;
   const ch = S.channels[idx];
-  if (alt < (ch.alts || 0)) { toast(`Trying backup feed ${alt + 2}…`); tune(idx, alt + 1); }
+  if (alt < (ch.alts || 0)) { toast(`Trying backup feed ${alt + 2}…`); tune(idx, alt + 1, true); }
   else if (S.gameFeed && S.gameFeed.idx === idx && now() < S.gameFeed.until) {
     // tuned for a game that an event feed carries too (Sports screen): watch it there instead
     const f = S.gameFeed.feed; S.gameFeed = null;
-    toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); playFeed(f);
+    toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); pplayFeed(f, true);
   } else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); explainBusy({ number: ch.number }, ch.number, () => S.idx === idx && !S.feedCh); }
 }
 
@@ -293,7 +300,9 @@ video.addEventListener("playing", () => { clearTimeout(S.watchdog); hideStatic()
 function chStep(d) {
   if (!S.channels.length) return;
   const n = S.channels.length;
-  const from = S.pendingIdx !== undefined ? S.pendingIdx : (S.feedCh || S.idx < 0 ? Math.max(0, S.idx) : S.idx);
+  const t = mvTile(S.mv.focus), tIdx = t && !t.ch.feed ? S.byNum.get(t.ch.number) : undefined;
+  const from = S.pendingIdx !== undefined ? S.pendingIdx : tIdx !== undefined ? tIdx
+    : (S.feedCh || S.idx < 0 ? Math.max(0, S.idx) : S.idx);
   const to = (((from + d) % n) + n) % n;
   S.pendingIdx = to;
   peekBanner(S.channels[to]);

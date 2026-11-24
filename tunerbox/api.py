@@ -21,7 +21,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTe
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, logview, matcher, media, remote, scoreboard, sources, sports, tracks, vod
+from . import bundle, config, connections, https, db, dvr, epg, gamestats, guide, hls, home, jobs, library, libtasks, lineup, logview, matcher, media, multiview, remote, scoreboard, sources, sports, tracks, vod
 from . import streaming, tuner
 from .streaming import ffmpeg_stream, stop_client
 from . import reminders  # noqa: I001
@@ -285,6 +285,38 @@ def api_busy(number: int | None = None, key: str = "", vod_id: str = "", client:
     else:
         rows = []
     return {"full": connections.busy(rows, client, mode or None, audio)}
+
+
+@app.post("/api/mv/plan")
+def api_mv_plan(client: str = Body(...), tiles: list = Body([]), want: dict = Body(...), slot: int = Body(...)):
+    """Multiview: which feed a channel should play from in tile `slot` of this screen, and which of its
+    other tiles move to another playlist first to make room (multiview.plan)."""
+    if not client or multiview.SEP in client:
+        raise HTTPException(400, "Unknown screen")
+    if not 1 <= slot <= multiview.MAX_TILES:
+        raise HTTPException(400, "Unknown tile")
+    cap = multiview.capacity()
+    if cap < 2:
+        raise HTTPException(409, "Multiview is turned off in Setup › Settings › Screens" if not config.get("multiview_enabled", True)
+                            else "Your playlists allow one channel at a time")
+    if not isinstance(want, dict) or not (want.get("key") or isinstance(want.get("number"), int)):
+        raise HTTPException(400, "Pick a channel")
+    clean = []
+    for t in tiles[:multiview.MAX_TILES]:
+        if isinstance(t, dict) and isinstance(t.get("slot"), int):
+            alt = t.get("alt") if isinstance(t.get("alt"), int) else 0
+            clean.append({"slot": t["slot"], "number": t.get("number") if isinstance(t.get("number"), int) else None,
+                          "key": str(t.get("key") or "") or None, "alt": alt})
+    if len({t["slot"] for t in clean} | {slot}) > cap:
+        raise HTTPException(409, f"There's room for {cap} channels at once")
+    want = {"number": want.get("number") if isinstance(want.get("number"), int) else None, "key": str(want.get("key") or "") or None}
+    return multiview.plan(client, clean, want, slot)
+
+
+@app.get("/api/mv/room")
+def api_mv_room():
+    """Multiview's "+ Add" tile: connections in use on each playlist that has a limit."""
+    return multiview.room()
 
 
 # ------------------------------------------------------------------ search, sports & PPV
@@ -782,8 +814,10 @@ def api_jobs():
 
 
 def _public_settings():
-    # vod_available: some playlist has On Demand turned on (screens leave On Demand out otherwise). Read-only.
-    return {**{k: v for k, v in config.load().items() if k != "devices"}, "vod_available": vod.enabled()}
+    # vod_available: some playlist has On Demand turned on (screens leave On Demand out otherwise).
+    # multiview_max: how many channels a TV screen may show at once (1: no multiview). Both read-only.
+    return {**{k: v for k, v in config.load().items() if k != "devices"}, "vod_available": vod.enabled(),
+            "multiview_max": multiview.capacity()}
 
 
 def _dvr_on():
