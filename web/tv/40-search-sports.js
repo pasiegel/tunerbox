@@ -21,10 +21,11 @@ function pickProgram(p) {
 // A game from the Sports screen: every channel showing it (p.ch, p.also) and every event feed named
 // after it (p.feeds). The guide can't tell whether a channel really has it (blackouts, regional
 // feeds, a wrong guide), and most feeds are never checked, so with more than one choice: ask.
+// `direct` (Home's tiles): no asking, play the best place; the others are in Menu › Switch feed.
 const gameChans = (p) => (p.ch ? [p.ch, ...(p.also || [])] : []).filter((c) => S.byNum.has(c.number));
 const gameFeeds = (p) => p.feeds || (p.feed ? [p.feed] : []);
 const clip = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s);
-function pickGame(p) {
+function pickGame(p, direct = false) {
   const n0 = now(), feeds = gameFeeds(p);
   if (p.ch && !(p.start <= n0 && n0 < p.stop)) { pickProgram(p); return; }      // not on yet: record / remind
   const go = (fn) => () => { closeDialog(); closePanels(); fn(); };
@@ -37,7 +38,7 @@ function pickGame(p) {
   // feeds that were checked and are live, then the channels, then the feeds nobody has checked
   const opts = [...fs.filter((o) => o.live), ...chans, ...fs.filter((o) => !o.live)];
   if (!opts.length) { toast(`Channel ${p.ch.number} is not available`); return; }
-  if (opts.length === 1) { opts[0].act(); return; }
+  if (opts.length === 1 || direct) { opts[0].act(); return; }
   openDialog(p.event ? p.event.name : p.title, `${opts.length} places have this game. If one doesn't work, try the next.`, opts);
 }
 const progHtml = (p, badge) => `${badge} <span>${esc(p.title)}${p.subtitle ? ` <small>· ${esc(p.subtitle)}</small>` : ""}</span>`;

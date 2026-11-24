@@ -232,8 +232,8 @@ def due(now=None):
 
 
 def _details(progress):
-    if not library.settings()["tmdb_key"]:
-        return "Skipped: no TMDB key"
+    if not library.settings()["tmdb_key"]:      # titles with an NFO file still get its details
+        return library.fetch_details(progress) or "Skipped: no TMDB key"
     return library.fetch_details(progress) or "Nothing to update"
 
 

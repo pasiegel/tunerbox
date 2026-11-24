@@ -323,6 +323,18 @@ def test_search_words_accents_typos_and_years(monkeypatch):
     assert names("dragnet") == ["Dragnet"]                                # shows too
 
 
+def test_search_typos_need_every_word(monkeypatch):
+    _titles(monkeypatch, [("Hotel Transylvania", "KIDS"), ("Hotel Transylvania 2", "KIDS"), ("Hotel Rwanda", "DRAMA"),
+                          ("Hotel Artemis", "ACTION"), ("Hostel", "HORROR"), ("Hostel: Part II", "HORROR")])
+    names = lambda q: sorted(r["name"] for r in vod.search(q, limit=100))    # noqa: E731
+    hotel_t = ["Hotel Transylvania", "Hotel Transylvania 2"]
+    assert names("hotel trans") == hotel_t
+    for q in ("hotels trans", "Hotels Trans", "hotels t", "hotels tr", "hotels tran"):    # while still typing too
+        assert names(q) == hotel_t, q
+    assert names("hotel transylvnia") == ["Hotel Transylvania", "Hotel Transylvania 2"]     # a typo still finds it
+    assert "Hotel Rwanda" in names("hotel rwnda") and "Hostel" not in names("hotel rwnda")
+
+
 def test_api_search_and_kinds(monkeypatch, client):
     _titles(monkeypatch, MOVIES)
     assert [r["name"] for r in client.get("/api/vod/search?q=boot").json()] == ["DE - Das Boot"]
@@ -577,6 +589,12 @@ def test_pick_a_version_fetches_each_versions_bitrate_once(labelled, monkeypatch
     assert client.get("/api/vod/title/nope/versions").status_code == 404
 
 
+def test_an_impossible_bitrate_from_the_panel_isnt_kept(labelled, monkeypatch):
+    _versions_api(monkeypatch, {"102": {"info": {"bitrate": 987060, "duration_secs": 5491}, "movie_data": {}}}, [])
+    vod.check_versions("1:m102")
+    assert db.one("SELECT bitrate FROM vod_titles WHERE id='1:m102'")["bitrate"] == 0
+
+
 def test_an_empty_reply_is_tried_again(labelled, monkeypatch):
     calls = []
     _versions_api(monkeypatch, {}, calls)                   # the provider answers {} for everything
@@ -718,6 +736,10 @@ def test_peek_reads_the_start_of_a_version_once(labelled, monkeypatch, client):
     vod.peek("1:m102")
     assert len(asked) == 2                                                 # read already: not again
     assert client.get("/api/vod/peek/nope").status_code == 404
+    vod.peek("1:m102", force=True)
+    assert len(asked) == 2                                                 # Read details: still not again
+    client.get("/api/vod/peek/1:m102?force=1&again=1")
+    assert len(asked) == 3                                                 # Read again: it is
 
 
 def test_peek_never_takes_a_connection_in_use_or_reads_a_whole_film(labelled, monkeypatch):
@@ -961,3 +983,23 @@ def test_a_connection_held_only_by_the_screen_asking_can_be_let_go_of(labelled, 
     holder["client"] = ""                                                  # tv-1 stopped its stream
     v = client.get("/api/vod/peek/1:m102?client=tv-1").json()
     assert v["av"]["hdr"] == "Dolby Vision" and "mine" not in v and len(asked) == 1
+
+
+def test_a_placeholder_length_is_unknown_when_the_other_copies_disagree():
+    v = lambda d, mine=False: {"duration": d, "mine": mine, "len_unknown": False}     # noqa: E731
+    vs = [v(5491, True), v(3600), v(5491)]
+    vod._unknown_lengths(vs)
+    assert [(x["duration"], x["len_unknown"]) for x in vs] == [(5491, False), (0, True), (5491, False)]
+    vs = [v(3600), v(3610)]                     # an hour-long film: the copies agree, it's real
+    vod._unknown_lengths(vs)
+    assert vs[0]["duration"] == 3600 and not vs[0]["len_unknown"]
+
+
+def test_pick_a_version_gives_each_versions_own_progress(labelled):
+    vod.set_progress("1:m202", 1800, 5400)                  # DE: stopped half an hour in
+    vod.set_progress("1:m302", 5300, 5400)                  # 4K-EN: played to the end
+    by = {v["id"]: v for v in vod.title("1:m102")["versions"]}
+    assert (by["1:m202"]["position"], by["1:m202"]["pdur"], by["1:m202"]["watched"]) == (1800, 5400, False)
+    assert by["1:m202"]["stopped"] > 0
+    assert by["1:m302"]["watched"] and by["1:m302"]["position"] == 0
+    assert (by["1:m102"]["position"], by["1:m102"]["watched"], by["1:m102"]["stopped"]) == (0, False, 0)

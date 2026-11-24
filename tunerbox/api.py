@@ -329,6 +329,15 @@ def api_sports_stats(ch: str = "", feed: str = "", id: str = ""):
     return {"game": game, "others": gamestats.others(gid if game else None), "enabled": True}
 
 
+@app.get("/api/sports/places")
+def api_sports_places(ch: str = "", feed: str = ""):
+    """The other channels and event feeds showing the game on channel `ch` or event feed `feed`, so
+    the TV's Switch feed dialog can offer them. {"game": null} when no game the scoreboard knows is on."""
+    if not scoreboard.selected() or not (ch or feed):
+        return {"game": None}
+    return {"game": gamestats.places(ch=ch, feed=feed)}
+
+
 @app.get("/api/sports/alerts")
 def api_sports_alerts():
     """Favorite teams' games on now or starting soon; each TV screen pops one up when it starts."""
@@ -1112,11 +1121,11 @@ def api_vod_versions(title_id: str):
 
 
 @app.get("/api/vod/peek/{version_id}")
-def api_vod_peek(version_id: str, force: int = 0, client: str = ""):
+def api_vod_peek(version_id: str, force: int = 0, client: str = "", again: int = 0):
     """Pick a version: one version's picture and sound, read from the start of its file (one at a time).
     `force` (Read details again): also one that couldn't be read earlier today. `client`: the screen asking
     ("mine" in the answer: only its own stream holds the connection, which it can let go of for the read)."""
-    v = vod.peek(version_id, force=bool(force), client=client[:64])
+    v = vod.peek(version_id, force=bool(force), client=client[:64], again=bool(again))
     if v is None:
         raise HTTPException(404, "That title is no longer in the playlist")
     return v

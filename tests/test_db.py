@@ -122,3 +122,68 @@ def test_versions_are_found_through_indexes_not_a_scan():
         q, a = captured[0]
         plan = " ".join(r[3] for r in c.execute(f"EXPLAIN QUERY PLAN {q}", a))
     assert "ix_vod_same" in plan and "ix_vod_tmdb" in plan and "ix_vod_browse" not in plan
+
+
+# ---------------------------------------------------------------- the database lock
+def test_long_write_is_logged_with_its_caller(monkeypatch, caplog):
+    monkeypatch.setattr(db, "SLOW_WRITE", -1)          # every write counts as slow
+    with caplog.at_level("WARNING", logger="tunerbox.db"):
+        db.set_meta("lock_test", 1)
+        db.rows("SELECT 1")                            # a read doesn't hold the lock: not logged
+    msgs = [r.getMessage() for r in caplog.records]
+    assert len(msgs) == 1 and "Database write took" in msgs[0] and "db.set_meta" not in msgs[0]
+
+
+def test_is_locked():
+    import sqlite3
+    assert db.is_locked(sqlite3.OperationalError("database is locked"))
+    assert not db.is_locked(sqlite3.OperationalError("no such table: x"))
+    assert not db.is_locked(ValueError("database is locked"))
+
+
+def test_scoreboard_skips_a_locked_database(monkeypatch, caplog):
+    """Another job holding the database mustn't fail the scoreboard refresh (it tries again next time)."""
+    import sqlite3
+    import time
+    from tunerbox import scoreboard
+    monkeypatch.setattr(scoreboard, "selected", lambda: ["nfl"])
+    monkeypatch.setattr(scoreboard, "fetch", lambda client, key, day: [])
+    real = db._connect
+
+    class Busy:
+        def __init__(self):
+            self.con = real()
+        def execute(self, sql, *a):
+            if sql.lstrip().upper().startswith("DELETE FROM SPORTS_EVENTS"):
+                raise sqlite3.OperationalError("database is locked")
+            return self.con.execute(sql, *a)
+        def __getattr__(self, k):
+            return getattr(self.con, k)
+
+    monkeypatch.setattr(db, "_connect", Busy)
+    with caplog.at_level("WARNING", logger="tunerbox.scoreboard"):
+        assert scoreboard.refresh(True, int(time.time())) == 0
+    assert any("database busy" in r.getMessage() for r in caplog.records)
+
+
+def test_guide_and_on_demand_write_in_batches(monkeypatch):
+    """The big writers commit a few thousand rows at a time; the result is the same as one transaction."""
+    from tunerbox import epg, vod
+    monkeypatch.setattr(db, "BATCH", 3)
+    t0 = 1_800_000_000
+    epg._store([("x:a", t0, t0 + 60, "Old", "", "", "", "", "", "", 0, 0)], [(t0, None)])
+    rows = [(f"x:{c}", t0 + i * 60, t0 + i * 60 + 60, f"{c}{i}", "", "", "", "", "", "", 0, 0)
+            for c in "abcd" for i in range(2)]
+    epg._store(rows, [(t0, None)])
+    got = db.rows("SELECT channel, title FROM programs WHERE start>=? ORDER BY channel, start", (t0,))
+    assert [(r["channel"], r["title"]) for r in got] == [(r[0], r[3]) for r in rows]
+
+    with db.conn() as c:
+        c.execute("INSERT INTO sources(id, name, type, url) VALUES (77, 'p', 'xtream', 'http://x')")
+    src = {"id": 77, "name": "p", "vod_hidden": "[]"}
+    vod._store(src, ("movie",), [{"id": f"77:m{i}", "kind": "movie", "name": f"M{i}", "category": "c"} for i in range(8)])
+    later = vod.time.time() + 5                                   # the second read, a few seconds on
+    monkeypatch.setattr(vod.time, "time", lambda: later)
+    vod._store(src, ("movie",), [{"id": f"77:m{i}", "kind": "movie", "name": f"M{i}", "category": "c"} for i in range(2, 7)])
+    ids = [r["id"] for r in db.rows("SELECT id FROM vod_titles WHERE source_id=77 ORDER BY id")]
+    assert ids == [f"77:m{i}" for i in range(2, 7)]

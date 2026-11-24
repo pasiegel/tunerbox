@@ -29,15 +29,15 @@ function fillList(listEl, entries, sel = 0) {
   listEl.innerHTML = entries.map((e, i) => `<li class="${i === sel ? "sel" : ""}${e.cls ? ` ${e.cls}` : ""}" data-i="${i}">${e.html ?? esc(e.label)}${e.right ? `<span class="r">${e.right}</span>` : ""}</li>`).join("");
 }
 
-let dlg = { entries: [] };
+let dlg = { entries: [], back: null };       // back: what Back does instead of closing (a step inside the dialog)
 function openDialog(title, sub, entries) {
-  dlg.entries = entries; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
+  dlg.entries = entries; dlg.back = null; $("dialog").classList.remove("pv-dlg"); $("dlg-img").classList.add("hidden"); $("dlg-img").classList.remove("art"); $("dlg-img").dataset.key = "";
   $("dlg-title").textContent = title; $("dlg-sub").textContent = sub || "";
   fillList($("dlg-list"), entries);
   if (top() !== "dialog") S.layer.push("dialog");
   $("dialog").classList.remove("hidden");
 }
-function closeDialog() { S.layer = S.layer.filter((l) => l !== "dialog"); $("dialog").classList.add("hidden"); $("dlg-img").classList.add("hidden"); clearInterval(S.pairPoll); }
+function closeDialog() { dlg.back = null; S.layer = S.layer.filter((l) => l !== "dialog"); $("dialog").classList.add("hidden"); $("dlg-img").classList.add("hidden"); clearInterval(S.pairPoll); }
 
 // this screen's colours: follow Setup's theme, or pick one just for this screen (kept in this browser)
 function themeDialog() {
@@ -49,28 +49,79 @@ function themeDialog() {
       .map(([id, name]) => ({ label: `${name}${own === id ? "  ✓" : ""}`, act: () => set(id) })),
   ]);
 }
-// a lineup channel with backup feeds is on (not an event feed): the menu offers to switch between them
-const liveAlts = () => { const ch = S.mode === "live" && !S.feedCh && curCh(); return !!(ch && ch.alts > 0); };
+// The other channels and event feeds showing the game that's on (Sports' places), looked up a moment
+// after tuning so channel surfing doesn't ask; S.places: { key: gsKey of what it's for, game }.
+function placesSoon() {
+  clearTimeout(S.placesT); S.places = null;
+  S.placesT = setTimeout(loadPlaces, 2500);
+}
+async function loadPlaces() {
+  const ch = S.mode === "live" && curCh(), key = gsKey(ch);
+  if (!key) return null;
+  let r;
+  try { r = await api(`/api/sports/places?${ch.feed ? `feed=${encodeURIComponent(ch.feed)}` : `ch=${encodeURIComponent(ch.number)}`}`); }
+  catch (_) { return null; }
+  if (gsKey(S.mode === "live" && curCh()) !== key) return null;        // changed channel meanwhile
+  S.places = { key, game: r.game };
+  return r.game;
+}
+// the places other than what's on now, as dialog entries (like the Sports screen's game picker)
+function placeEntries(ch) {
+  const g = S.places && S.places.key === gsKey(ch) && S.places.game;
+  if (!g) return [];
+  const go = (fn) => () => { closeDialog(); fn(); };
+  const chans = gameChans(g).filter((c) => ch.feed || c.number !== ch.number).map((c) => ({
+    html: `<span class="badge ch">CH</span> <span>${c.number} ${esc(c.label || c.name)}</span>`,
+    act: go(() => { const i = S.byNum.get(c.number); tune(i); if (g.feeds[0]) S.gameFeed = { idx: i, feed: g.feeds[0], until: g.stop || 0 }; }) }));
+  const fs = gameFeeds(g).filter((f) => f.key !== ch.feed).map((f) => ({ live: f.status === "ok",
+    html: `${feedBadge(f)} <span>${esc(clip(f.name, 64))}</span>`, right: esc(f.group || ""), act: go(() => playFeed(f)) }));
+  return [...fs.filter((o) => o.live), ...chans, ...fs.filter((o) => !o.live)];
+}
+// a lineup channel with backup feeds is on, or a game that other channels / event feeds show too:
+// the menu offers to switch between them
+const liveAlts = () => {
+  const ch = S.mode === "live" && curCh();
+  return !!(ch && ((!S.feedCh && ch.alts > 0) || placeEntries(ch).length));
+};
 async function feedDialog() {
-  const idx = S.idx, ch = S.channels[idx]; if (!ch) return;
-  let feeds;
-  try { feeds = await api(`/api/channels/${ch.number}/feeds`); } catch (e) { toast(`Can't list the feeds: ${e.message}`); return; }
-  if (S.idx !== idx || S.mode !== "live" || S.feedCh) return;           // changed channel meanwhile
-  ch.alts = Math.max(0, feeds.length - 1);         // Setup may have changed them since the channel list loaded
-  if (feeds.length < 2) { toast("This channel has only one feed now"); return; }
+  const ch = curCh(); if (!ch) return;
+  const key = gsKey(ch), isFeed = !!ch.feed;
+  const [feeds, game] = await Promise.all([
+    isFeed ? [] : api(`/api/channels/${ch.number}/feeds`).catch((e) => e),
+    loadPlaces()]);
+  if (gsKey(S.mode === "live" && curCh()) !== key) return;              // changed channel meanwhile
+  const others = placeEntries(ch);
+  if (feeds instanceof Error && !others.length) { toast(`Can't list the feeds: ${feeds.message}`); return; }
+  const alts = Array.isArray(feeds) ? feeds : [];
+  if (!isFeed && Array.isArray(feeds)) ch.alts = Math.max(0, alts.length - 1);   // Setup may have changed them since the channel list loaded
+  const role = (f) => (f.alt ? `backup ${f.alt}` : "main feed");
+  const own = alts.length > 1 ? alts : [];
+  if (!own.length && !others.length) { toast(isFeed ? "Nothing else has this game" : "This channel has only one feed now"); return; }
   const pick = (f) => () => {
     closeDialog();
     if (f.alt === S.alt) return;
-    toast(`${ch.number} ${ch.name}: ${f.alt ? `backup ${f.alt}` : "main feed"}${f.source ? ` · ${f.source}` : ""}`);
-    tune(idx, f.alt);
+    toast(`${ch.number} ${ch.name}: ${role(f)}${f.source ? ` · ${f.source}` : ""}`);
+    tune(S.byNum.get(ch.number), f.alt);
   };
-  openDialog(`Switch feed · ${ch.number} ${ch.name}`,
-    "This channel has more than one feed. Pick one to watch it now; Setup › Channels sets which one plays first.",
-    feeds.map((f) => ({
-      label: `${f.alt ? `Backup ${f.alt}` : "Main"}: ${f.name}${f.source ? `  ·  ${f.source}` : ""}${f.status === "dead" ? "  (not working at the last scan)" : ""}${f.alt === S.alt ? "  ✓ watching" : ""}`,
-      act: pick(f),
-    })));
-  const cur = feeds.findIndex((f) => f.alt === S.alt);
+  // playlist names often carry decorations ("##### NEWS #####"): leave those out
+  const tidy = (n) => (n || "").replace(/#{2,}/g, " ").replace(/\s{2,}/g, " ").trim() || n;
+  const entries = own.map((f) => {
+    const tags = [f.alt === S.alt ? '<span class="ft on">▶ Watching</span>' : "",
+                  f.status === "dead" ? '<span class="ft off">Failed last scan</span>' : ""].join("");
+    return { cls: `feed${f.alt === S.alt ? " cur" : ""}`,
+             html: `<span class="badge ${f.alt ? "bk" : "main"}">${f.alt ? `BACKUP ${f.alt}` : "MAIN"}</span>`
+               + `<span class="fn">${esc(tidy(f.name))}</span>${tags}`,
+             right: esc(f.source || ""), act: pick(f) };
+  });
+  if (others.length && own.length) others[0].cls = "sep";
+  entries.push(...others);
+  const what = game && game.name ? game.name : "this game";
+  openDialog(`Switch feed · ${isFeed ? ch.name : `${ch.number} ${ch.name}`}`,
+    own.length && others.length ? `Pick a feed of this channel, or another place showing ${what}. Setup › Channels sets which feed plays first.`
+    : own.length ? "Pick a feed to watch it now. Setup › Channels sets which one plays first."
+    : `${others.length === 1 ? "One other place has" : `${others.length} other places have`} ${what}. If this one doesn't work, try the next.`,
+    entries);
+  const cur = own.findIndex((f) => f.alt === S.alt);
   if (cur > 0) fillList($("dlg-list"), dlg.entries, cur);
 }
 function bufferDialog() {
@@ -187,10 +238,7 @@ const MENU = [
       const ch = cuLive() && curCh();
       return `↺ Start this show over${ch ? ` (or a show from the last ${cuDaysText(ch).toLowerCase()} in the Guide)` : ""}`;
     }, catchup: true, act: () => { closeMenu(); startOver(); } },
-  { liveAlts: true, get label() {
-      const ch = curCh();
-      return `Switch feed (watching ${S.alt ? `backup ${S.alt}` : "the main feed"} of ${ch ? (ch.alts || 0) + 1 : 1})`;
-    }, act: () => { closeMenu(); feedDialog(); } },
+  { liveAlts: true, label: "Switch feed", act: () => { closeMenu(); feedDialog(); } },
   { label: "Game stats & live scores (X)", act: () => { closeMenu(); openStats(); } },
   { label: "Open in VLC / mpv (copy the stream address)", notPhone: true, act: async () => {
     const ch = curCh(); if (!ch) return;
@@ -211,7 +259,7 @@ const MENU = [
     act: () => { closeMenu(); sleepDialog(); } },
   { get label() { const b = bufSecs(); return `Stream cache: ${b ? b + " seconds" : "Off"}${localStorage.getItem("tb.buffer") === null ? " (default)" : " (this screen)"}`; },
     act: () => { closeMenu(); bufferDialog(); } },
-  { id: "sstats", get label() { return `Stream stats: ${ssOn() ? "On" : "Off"} (this screen)`; },
+  { id: "sstats", get label() { return `Stream stats: ${ssOn() ? ssWhere() : "Off"} (this screen)`; },
     act: () => { toggleStreamStats(); renderMenu(menuShown.indexOf(MENU_SSTATS)); } },
   { id: "homestart", needsHome: true, get label() { return `Start on Home: ${homeAtStart() ? "On" : "Off"} (this screen)`; },
     act: () => { try { localStorage.setItem("tb.homeStart", homeAtStart() ? "0" : "1"); } catch (_) {} renderMenu(menuShown.indexOf(MENU_HOMESTART)); } },

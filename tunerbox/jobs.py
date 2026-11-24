@@ -279,6 +279,7 @@ def housekeeping():
             if not lib_state["running"] and (task := libtasks.due(now)):      # My Library: its own lane
                 library_task(task)
             scoreboard.tick(now)       # games and scores, in its own thread
+            sources.hdhr_tick(now)     # antenna tuners: one with a new address is found (its own thread)
             sports.warm(now)           # the Sports screen's game matching, ready before it's opened
             # local channels: keep two days of listings ahead
             if now - int(db.get_meta("media_epg", 0) or 0) > 3600:

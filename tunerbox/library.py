@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS lib_files (   -- the file behind each movie and episo
     path TEXT NOT NULL,
     size INTEGER DEFAULT 0,          -- with the extension, how a renamed or moved file is recognised
     mtime INTEGER DEFAULT 0,
-    probed_at INTEGER DEFAULT 0      -- its length was measured (or tried) then: see measure_lengths
+    probed_at INTEGER DEFAULT 0,     -- its length was measured (or tried) then: see measure_lengths
+    nfo TEXT DEFAULT ''              -- the NFO file next to it ('' none): its length and picture come from that
 );
 CREATE INDEX IF NOT EXISTS ix_lib_files_title ON lib_files(title_id);
 CREATE TABLE IF NOT EXISTS lib_dirs (     -- what each folder held when it was last read: see _Dirs
@@ -117,6 +118,8 @@ REFRESH_DAYS = 30           # details are downloaded again after this long
 RETRY_DAYS = 7              # a title TMDB didn't know is looked up again after this long
 DETAIL_WORKERS = 4          # titles looked up on TMDB at once (well inside its limit of ~40 requests a second)
 WALK_DEPTH = 6
+NFO_SLACK = 86400           # an NFO older than its video by more than this was written for a file it replaced: not used
+NFO_MAX = 512 * 1024        # bytes of an NFO read at most (the <fileinfo> part is near the end of a big one)
 SMALL_FILE = 50 * 1024 * 1024   # a renamed file this small is only recognised with the same modified time too
 
 # auto_scan_hours: only read once, to set up the "scan" task (libtasks.py) for people who had changed it
@@ -152,6 +155,8 @@ def _check_on(sid, c=None):
 def init():
     with db.conn() as c:
         c.executescript(SCHEMA)
+        db._add_column(c, "lib_files", "nfo", "TEXT DEFAULT ''")      # NFO files read instead of the video
+        db._add_column(c, "vod_titles", "nfo", "TEXT DEFAULT ''")     # your own title's NFO (a show's tvshow.nfo)
         c.executescript(VIEW)
     from . import libtasks
     libtasks.init()
@@ -618,20 +623,34 @@ class _Dirs:
                                steady=excluded.steady, entries=excluded.entries""", changed)
 
 
-def _walk(fs, rel="", depth=0, progress=None, found=None, dirs=None, mtime=None):
-    """Every video file under `rel`: -> [(relative path, size, mtime)]. `dirs`: a _Dirs to read through."""
+def _walk(fs, rel="", depth=0, progress=None, found=None, dirs=None, mtime=None, nfos=None):
+    """Every video file under `rel`: -> [(relative path, size, mtime)]. `dirs`: a _Dirs to read through.
+    `nfos`: filled with the NFO files found, {lower-case path: (path, mtime)}."""
     found = [] if found is None else found
     entries = dirs.listdir(fs, rel, mtime, depth) if dirs else fs.listdir(rel)
     for name, is_dir, size, mtime_ in entries:
         path = f"{rel}/{name}" if rel else name
         if is_dir:
             if depth < WALK_DEPTH and not SKIP_DIR.match(name):
-                _walk(fs, path, depth + 1, progress, found, dirs, mtime_)
+                _walk(fs, path, depth + 1, progress, found, dirs, mtime_, nfos)
         elif PurePosixPath(name).suffix.lower() in VIDEO_EXT and not SKIP_FILE.search(name) and size != 0:
             found.append((path, size, mtime_))
             if progress and len(found) % 50 == 0:
                 progress(len(found))
+        elif nfos is not None and name.lower().endswith(".nfo") and size:
+            nfos[path.lower()] = (path, mtime_)
     return found
+
+
+def _nfo_for(path, mtime, nfos, own_folder=False):
+    """The NFO file that describes a video: 'Heat.nfo' next to 'Heat.mkv', or a movie folder's 'movie.nfo'.
+    One much older than the video was written for a file it replaced, and isn't used. -> its path, or ''."""
+    d = path.rsplit("/", 1)[0] + "/" if "/" in path else ""
+    for name in (PurePosixPath(path).stem + ".nfo", *(("movie.nfo",) if own_folder else ())):
+        hit = nfos.get((d + name).lower())
+        if hit and hit[1] >= (mtime or 0) - NFO_SLACK:
+            return hit[0]
+    return ""
 
 
 def movies_from(files):
@@ -729,8 +748,9 @@ def scan_share(sh, progress=None, quick=False):
             _check_on(sid)
         if progress:
             progress(f"Reading {sh['name']}: {n} videos")
+    nfos = {}
     try:
-        files = _walk(fs, progress=walked, dirs=dirs)
+        files = _walk(fs, progress=walked, dirs=dirs, nfos=nfos)
     except LibraryStopped:
         raise
     except LibraryError as e:
@@ -744,30 +764,35 @@ def scan_share(sh, progress=None, quick=False):
         db.run("UPDATE lib_shares SET status=? WHERE id=?", (f"error: {e}", sid))
         raise e
     titles, episodes, skipped, on_disk = [], [], 0, []     # on_disk: (item id, title id, path, size, mtime)
+    nfo_of = {}                                             # item id -> its NFO file
     if kind == "movie":
         for m in movies_from(files):
             tid = title_id(sid, kind, m["key"])
-            titles.append({"id": tid, "name": m["name"], "year": m["year"], "url": m["path"],
+            nfo_of[tid] = _nfo_for(m["path"], m["mtime"], nfos, own_folder=m["key"] != m["path"])
+            titles.append({"id": tid, "name": m["name"], "year": m["year"], "url": m["path"], "nfo": nfo_of[tid],
                            "ext": PurePosixPath(m["path"]).suffix.lstrip(".").lower(), "mtime": m["mtime"]})
             on_disk.append((tid, tid, m["path"], m["size"], m["mtime"]))
     else:
         found, skipped = shows_from(files)
         for s in found:
             tid = title_id(sid, kind, s["key"])
+            show_nfo = nfos.get(f"{s['key']}/tvshow.nfo".lower())       # Kodi's name, in the show's folder
             titles.append({"id": tid, "name": s["name"], "year": s["year"], "url": "", "ext": "",
+                           "nfo": show_nfo[0] if show_nfo else "",
                            "mtime": max(e["mtime"] for e in s["episodes"].values())})
             for e in s["episodes"].values():
                 eid = episode_id(sid, s["key"], e["season"], e["episode"])
                 episodes.append({"id": eid, "title_id": tid, "season": e["season"], "episode": e["episode"],
                                  "name": e["name"], "url": e["path"], "ext": PurePosixPath(e["path"]).suffix.lstrip(".").lower()})
                 on_disk.append((eid, tid, e["path"], e["size"], e["mtime"]))
+                nfo_of[eid] = _nfo_for(e["path"], e["mtime"], nfos)
     dirs.save()
     n = len(titles)
     what = _n(n, "movie") if kind == "movie" else f"{_n(n, 'show')}, {_n(len(episodes), 'episode')}"
     if skipped:
         what += f" ({_n(skipped, 'file')} without an episode number left out)"
     _check_on(sid)
-    if quick and had and _unchanged(sid, on_disk, titles):
+    if quick and had and _unchanged(sid, on_disk, titles, nfo_of):
         db.run("UPDATE lib_shares SET status=?, scanned_at=? WHERE id=?", (f"ok: {what}; no changes", now, sid))
         return f"{what}; no changes"
     rows = [{**t, "source_id": -sid, "kind": kind, "category": sh["name"], "search": vod.fold(t["name"]),
@@ -786,10 +811,12 @@ def scan_share(sh, progress=None, quick=False):
         was_missing = {r[0] for r in c.execute("SELECT title_id FROM lib_missing WHERE share_id=?", (sid,))}
         new = {t["id"] for t in titles}
         moves = _find_moves(c, sid, old - new, new - old, on_disk)
+        old_nfo = dict(c.execute("SELECT id, nfo FROM vod_titles WHERE source_id=?", (-sid,)).fetchall())
         # new titles get their names from the files; known ones keep what TMDB gave them
-        c.executemany("""INSERT INTO vod_titles(id, source_id, kind, name, category, year, url, ext, added, seen_at, search, hidden)
-                         VALUES (:id,:source_id,:kind,:name,:category,:year,:url,:ext,:added,:seen_at,:search,0)
+        c.executemany("""INSERT INTO vod_titles(id, source_id, kind, name, category, year, url, ext, added, seen_at, search, hidden, nfo)
+                         VALUES (:id,:source_id,:kind,:name,:category,:year,:url,:ext,:added,:seen_at,:search,0,:nfo)
                          ON CONFLICT(id) DO UPDATE SET url=excluded.url, ext=excluded.ext, category=excluded.category,
+                           nfo=excluded.nfo,
                            seen_at=excluded.seen_at, added=MAX(vod_titles.added, excluded.added), hidden=0,
                            duration=CASE WHEN vod_titles.url!=excluded.url THEN 0 ELSE vod_titles.duration END,
                            av=CASE WHEN vod_titles.url!=excluded.url THEN '' ELSE vod_titles.av END,
@@ -807,11 +834,15 @@ def scan_share(sh, progress=None, quick=False):
         c.executemany("UPDATE vod_titles SET duration=0, av='', bitrate=0 WHERE id=?", replaced)
         c.executemany("UPDATE vod_episodes SET duration=0, av='' WHERE id=?", replaced)
         # the moved files' old rows are still there: their sizes are compared with the new ones in _carry
-        c.executemany("""INSERT INTO lib_files(item_id, title_id, share_id, path, size, mtime) VALUES (?,?,?,?,?,?)
+        c.executemany("""INSERT INTO lib_files(item_id, title_id, share_id, path, size, mtime, nfo) VALUES (?,?,?,?,?,?,?)
                          ON CONFLICT(item_id) DO UPDATE SET title_id=excluded.title_id, path=excluded.path,
-                           size=excluded.size, mtime=excluded.mtime,
+                           size=excluded.size, mtime=excluded.mtime, nfo=excluded.nfo,
                            probed_at=CASE WHEN lib_files.size=excluded.size THEN lib_files.probed_at ELSE 0 END""",
-                      [(i, t, sid, p, s, m) for i, t, p, s, m in on_disk])
+                      [(i, t, sid, p, s, m, nfo_of.get(i, "")) for i, t, p, s, m in on_disk])
+        # an NFO file that's new (or another one) for a title TMDB didn't find: looked up again with it now, as if
+        # never looked up (the scan looks those up). Not one you told to keep its file name (Unmatch: tried_at ahead)
+        c.executemany("UPDATE lib_meta SET state='' WHERE title_id=? AND state='none' AND tried_at<=?",
+                      [(t["id"], now) for t in titles if t["nfo"] and t["nfo"] != old_nfo.get(t["id"], "")])
         names = {t["id"]: t["name"] for t in titles}
         for o, n in moves.items():
             _carry(c, kind, o, n, names[n])
@@ -850,16 +881,18 @@ def scan_share(sh, progress=None, quick=False):
     return what
 
 
-def _unchanged(sid, on_disk, titles):
-    """The same files as last time, nothing missing and every title still there: a quick scan has nothing to do."""
-    have = {(r["item_id"], r["path"], r["size"], r["mtime"]) for r in
-            db.rows("SELECT item_id, path, size, mtime FROM lib_files WHERE share_id=?", (sid,))}
-    if have != {(i, p, sz, m) for i, _, p, sz, m in on_disk}:
+def _unchanged(sid, on_disk, titles, nfo_of=None):
+    """The same files (and NFO files) as last time, nothing missing and every title still there: a quick scan
+    has nothing to do."""
+    nfo_of = nfo_of or {}
+    have = {(r["item_id"], r["path"], r["size"], r["mtime"], r["nfo"] or "") for r in
+            db.rows("SELECT item_id, path, size, mtime, nfo FROM lib_files WHERE share_id=?", (sid,))}
+    if have != {(i, p, sz, m, nfo_of.get(i, "")) for i, _, p, sz, m in on_disk}:
         return False
     if db.one("SELECT 1 FROM lib_missing WHERE share_id=? LIMIT 1", (sid,)):
         return False
-    ids = {r["id"] for r in db.rows("SELECT id FROM vod_titles WHERE source_id=?", (-sid,))}
-    return ids == {t["id"] for t in titles}
+    ids = {(r["id"], r["nfo"] or "") for r in db.rows("SELECT id, nfo FROM vod_titles WHERE source_id=?", (-sid,))}
+    return ids == {(t["id"], t["nfo"]) for t in titles}
 
 
 def _find_moves(c, sid, gone, fresh, on_disk):
@@ -1026,34 +1059,101 @@ def _clock(secs):
     return f"{secs // 3600}:{secs % 3600 // 60:02d}:{secs % 60:02d}"
 
 
-def _log_measured(it, secs, text, why=""):
-    """Setup › Log: each video measured, and what was found ("Heat (1995): 2:50:12 · 4K HEVC HDR10 · 5.1 eac3 · 16.4 Mbps")."""
+def _log_measured(it, secs, text, why="", av=None):
+    """Setup › Log: each video measured, and what was found ("Heat (1995): 2:50:12 · 4K HEVC HDR10 · 5.1 eac3 · 16.4 Mbps").
+    `av`: from its NFO file instead of ffmpeg's `text`."""
     from . import tracks, vod
     name = " ".join(str(x) for x in (it.get("title"), f"({it['sub']})" if it.get("sub") else "") if x)
-    if not secs and not text:
+    if not secs and not text and not av:
         later = "tried again at the next scan" if why.startswith(vod.TIMED_OUT) else f"tried again in {RETRY_DAYS} days"
         log.warning("Video details: couldn't read %s: %s (%s)", name, why or "no reason given", later)
         return
-    av = tracks.av_summary(text or "")
+    av = av if av is not None else tracks.av_summary(text or "")
     res = "" if not av.get("w") else "4K" if av["w"] >= 3200 else "1080p" if av["w"] >= 1800 else "720p" if av["w"] >= 1200 else "SD"
     parts = [_clock(secs) if secs else "length unknown",
              " ".join(x for x in (res, (av.get("vcodec") or "").upper(), av.get("hdr") or "") if x),
              " ".join(x for x in (av.get("layout") or "", av.get("acodec") or "") if x),
              f"{av['kbps'] / 1000:.1f} Mbps" if av.get("kbps") else ""]
-    log.info("Video details for %s: %s", name, " · ".join(p for p in parts if p))
+    log.info("Video details for %s%s: %s", name, " (from its NFO file)" if text == "" and av else "",
+             " · ".join(p for p in parts if p))
 
 
-def _store_measured(item_id, is_movie, secs, text, now, replace=False):
+def _store_measured(item_id, is_movie, secs, text, now, replace=False, av=None):
     """What reading one file found: its length (`replace`: over one already known) and picture and sound
-    (nothing usable: '{}', not read again), and when it was read. -> whether anything was found."""
+    (nothing usable: '{}', not read again), and when it was read. `av`: from its NFO file instead of ffmpeg's
+    `text`. -> whether anything was found."""
     from . import vod
     if secs:
         db.run(f"""UPDATE {'vod_titles' if is_movie else 'vod_episodes'} SET duration=? WHERE id=?
                    {'' if replace else 'AND duration=0'}""", (secs, item_id))
-    if text:
-        vod.save_av(item_id, text, empty=True, episode=not is_movie)
+    if text or av:
+        vod.save_av(item_id, text, empty=True, episode=not is_movie, av=av)
     db.run("UPDATE lib_files SET probed_at=? WHERE item_id=?", (now, item_id))
-    return bool(secs or text)
+    return bool(secs or text or av)
+
+
+_NAME_BITS = re.compile(r"(?<![a-z0-9])((?:10|12)[ ._-]?bits?|hi10p)(?![a-z0-9])", re.I)
+
+
+NFO_SLOW = 10               # seconds: an NFO taking longer than this to read means the NAS is struggling or stuck…
+NFO_BACKOFF = 600           # …so its NFO files aren't read for this long (videos are read, titles looked up by name)
+_nfo_paused = {}            # library id -> until when its NFO files aren't read
+
+
+def nfo_paused(sid):
+    return _nfo_paused.get(sid, 0) > time.time()
+
+
+def _read_nfo(sid, rel):
+    """An NFO file's bytes (the first NFO_MAX), or None: none, or it can't be read now (gone since the scan, the NAS).
+    A read that takes longer than NFO_SLOW, or fails after waiting that long, pauses reading that library's NFO
+    files for NFO_BACKOFF: a stuck connection makes every read wait about a minute, and looking up a library's
+    details would wait that long for each title."""
+    sh = share(sid) if rel and not nfo_paused(sid) else None
+    if not sh:
+        return None
+    began = time.monotonic()
+    try:
+        with FS(sh).open(rel) as fh:
+            return fh.read(NFO_MAX)
+    except Exception as e:  # noqa: BLE001
+        log.debug("NFO %s: %s", rel, e)
+        return None
+    finally:
+        took = time.monotonic() - began
+        if took > NFO_SLOW and not nfo_paused(sid):
+            _nfo_paused[sid] = time.time() + NFO_BACKOFF
+            log.warning("NFO files: %s took %d s to answer; not reading its NFO files for %s (videos are read and "
+                        "titles looked up by name meanwhile)", sh["name"], took, _span(NFO_BACKOFF))
+
+
+def _from_nfo(item_id):
+    """A video's length and picture and sound from the NFO file next to it, so the video needn't be read:
+    -> (secs, av), or None (no NFO, or it doesn't say: then ffmpeg reads the video)."""
+    from . import tracks
+    f = db.one("SELECT share_id, nfo, size, path FROM lib_files WHERE item_id=?", (item_id,))
+    data = _read_nfo(f["share_id"], f["nfo"]) if f else None
+    if not data:
+        return None
+    secs, av = tracks.nfo_summary(data)
+    if not secs:
+        return None
+    # an NFO doesn't say how many bits the picture has (HDR is 10): a release name usually does ("x265 10bit")
+    if not av.get("hdr") and (m := _NAME_BITS.search(PurePosixPath(f["path"]).name)):
+        av["bits"] = 10 if m.group(1).lower() == "hi10p" else int(m.group(1)[:2])
+    if f["size"] and not av.get("kbps"):        # what ffmpeg says for a file: its size over its length
+        av["kbps"] = round(f["size"] * 8 / secs / 1000)
+    return secs, av
+
+
+def _read_details(it):
+    """One video's length and picture and sound: from its NFO file when that says, else ffmpeg reads the video.
+    -> (secs, ffmpeg's text, why it couldn't be read, av from the NFO or None)."""
+    from . import vod
+    got = _from_nfo(it["id"])
+    if got:
+        return got[0], "", "", got[1]
+    return (*vod.probe_why(it["url"], READ_TIMEOUT), None)
 
 
 def measure_one(item_id):
@@ -1063,12 +1163,12 @@ def measure_one(item_id):
     it = vod.item(item_id)
     if not it or not db.one("SELECT 1 FROM lib_files WHERE item_id=?", (item_id,)):
         return False
-    secs, text, why = vod.probe_why(it["url"], READ_TIMEOUT)
+    secs, text, why, av = _read_details(it)
     if why.startswith(vod.TIMED_OUT):
         log.warning("Video details: %s didn't answer in time (%s)", it.get("title") or "a video", why)
         return False
-    _log_measured(it, secs, text, why)
-    found = _store_measured(item_id, it["kind"] == "movie", secs, text, int(time.time()))
+    _log_measured(it, secs, text, why, av)
+    found = _store_measured(item_id, it["kind"] == "movie", secs, text, int(time.time()), av=av)
     if secs:
         _vod_changed()
     return found
@@ -1135,8 +1235,7 @@ def measure_lengths(progress=None, budget=float("inf"), retry_days=RETRY_DAYS, s
         it = vod.item(r["item_id"])
         if not it or not db.one("SELECT 1 FROM lib_files WHERE item_id=?", (r["item_id"],)):
             return r, None                  # its library was removed meanwhile
-        secs, text, why = vod.probe_why(it["url"], READ_TIMEOUT)
-        return r, (secs, text, why, it)
+        return r, (*_read_details(it), it)
 
     # `workers` files at once; what they found is written here, one at a time
     rows, pending, stopped = iter(todo), set(), [False]
@@ -1157,7 +1256,7 @@ def measure_lengths(progress=None, budget=float("inf"), retry_days=RETRY_DAYS, s
                 if got is None:
                     more()
                     continue
-                secs, text, why, it = got
+                secs, text, why, av, it = got
                 if why.startswith(vod.TIMED_OUT):
                     # the NAS stopped answering: stop here (what's being read finishes), drop the connection, and
                     # start again in a while. This file isn't counted: it's read again then
@@ -1169,9 +1268,9 @@ def measure_lengths(progress=None, budget=float("inf"), retry_days=RETRY_DAYS, s
                                     "starting again in %s", it.get("title") or "a video", _span(wait_s))
                         reset_connections()     # wakes every read waiting on the stuck connection
                     continue
-                _log_measured(it, secs, text, why)
+                _log_measured(it, secs, text, why, av)
                 more()
-                ok = _store_measured(r["item_id"], r["is_movie"], secs, text, now, replace=bool(share_id))
+                ok = _store_measured(r["item_id"], r["is_movie"], secs, text, now, replace=bool(share_id), av=av)
                 done += ok
                 failed += not ok
     if not stopped[0] and todo:
@@ -1258,11 +1357,10 @@ def scan_all(progress=None, share_id=None, full_refresh=False, only_new=False, q
             log.warning("Library %s: %s", sh["name"], e)
     db.set_meta("library_scanned", int(time.time()))
     looked = ""
-    if settings()["tmdb_key"]:
-        try:
-            looked = fetch_details(progress, share_id, full_refresh, only_new)
-        except LibraryError as e:
-            errors.append(str(e))
+    try:                        # without a TMDB key: titles with an NFO file only
+        looked = fetch_details(progress, share_id, full_refresh, only_new)
+    except LibraryError as e:
+        errors.append(str(e))
     measured = ""
     if done:
         if quick:                               # Scan now, the scheduled scan, Download all again: all that need it
@@ -1282,6 +1380,140 @@ def scan_all(progress=None, share_id=None, full_refresh=False, only_new=False, q
             measured = "" if measured == "Every video's details are in" else measured
     msg = "; ".join(done + errors) or "No libraries to scan"
     return msg + (f". {looked}" if looked else "") + (f". {measured}" if measured else "")
+
+
+# ---------------------------------------------------------------- NFO files: details written by Kodi, Jellyfin, Emby,
+# Radarr or Sonarr next to your videos. Their TMDB (or IMDb, TVDB) id matches a title on TMDB exactly instead of by
+# its name; without a TMDB key, or for a title TMDB doesn't know, their own details are shown
+_NFO_ROOT = re.compile(rb"<(movie|tvshow|episodedetails)\b.*?</\1\s*>", re.S | re.I)
+_NFO_TMDB_URL = re.compile(rb"themoviedb\.org/(?:movie|tv)/(\d+)", re.I)
+_NFO_IMDB = re.compile(rb"\b(tt\d{7,9})\b")
+
+
+_TMDB_IMG = re.compile(r"^https?://image\.tmdb\.org/t/p/[^/]+/", re.I)
+
+
+def _tmdb_size(url, size):
+    """A TMDB picture an NFO links to at full size ("original": a 4K backdrop is several MB) -> the size TMDB's own
+    details use here (w500 posters, w1280 backdrops). Other links are kept as they are."""
+    return _TMDB_IMG.sub(f"{IMG}{size}/", url) if url else url
+
+
+def _text(el, tag):
+    return " ".join((el.findtext(tag) or "").split())
+
+
+def parse_nfo(data):
+    """An NFO file's bytes -> {name, year, plot, genre, rating, actors, director, poster, backdrop, aired, ids}
+    (the fields it has; ids: {"tmdb", "imdb", "tvdb"} as strings). {} when it's neither XML nor a link Kodi
+    understands. Only the <movie> / <tvshow> / <episodedetails> element is parsed (the first, for a file that
+    holds two episodes), so a link after it and anything declared before it are left alone."""
+    import xml.etree.ElementTree as ET
+    data = data or b""
+    out, ids = {}, {}
+    m = _NFO_ROOT.search(data)
+    root = None
+    if m:
+        try:
+            root = ET.fromstring(m.group(0))
+        except ET.ParseError:
+            root = None
+    if root is not None:
+        for u in root.findall("uniqueid"):
+            kind, val = (u.get("type") or "").lower(), (u.text or "").strip()
+            if kind in ("tmdb", "imdb", "tvdb") and val:
+                ids.setdefault(kind, val)
+        for kind in ("tmdb", "imdb", "tvdb"):
+            if (val := _text(root, f"{kind}id")) and kind not in ids:
+                ids[kind] = val
+        if (val := _text(root, "id")).startswith("tt"):
+            ids.setdefault("imdb", val)
+        out["name"] = _text(root, "title")
+        out["aired"] = _text(root, "aired") or _text(root, "premiered")
+        out["year"] = _text(root, "year")[:4] or out["aired"][:4] or _text(root, "releasedate")[:4]
+        out["plot"] = (root.findtext("plot") or root.findtext("outline") or "").strip()
+        out["genre"] = ", ".join(dict.fromkeys(g for el in root.findall("genre") if (g := " ".join((el.text or "").split()))))
+        out["actors"] = ", ".join([n for a in root.findall("actor") if (n := _text(a, "name"))][:8])
+        out["director"] = ", ".join(dict.fromkeys(d for el in root.findall("director") if (d := " ".join((el.text or "").split()))))
+        rated = root.find("ratings/rating[@default='true']")
+        rated = rated if rated is not None else root.find("ratings/rating")
+        try:
+            if rated is not None:
+                val = float(rated.findtext("value") or 0) * 10 / float(rated.get("max") or 10)
+            else:
+                val = float(root.findtext("rating") or 0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            val = 0
+        out["rating"] = f"{val:.1f}" if 0 < val <= 10 else ""
+        thumbs = [(t.get("aspect") or "", (t.text or "").strip()) for t in root.findall("thumb")]
+        web = [(a, u) for a, u in thumbs if u.lower().startswith(("http://", "https://"))]
+        out["poster"] = _tmdb_size(next((u for a, u in web if a == "poster"), "") or next((u for a, u in web if not a), ""),
+                                   "w500")
+        out["backdrop"] = _tmdb_size(next((u for t in root.findall("fanart/thumb")
+                                           if (u := (t.text or "").strip()).lower().startswith(("http://", "https://"))), ""),
+                                     "w1280")
+    if "tmdb" not in ids and (u := _NFO_TMDB_URL.search(data)):       # Kodi's link-only NFO
+        ids["tmdb"] = u.group(1).decode()
+    if "imdb" not in ids and (u := _NFO_IMDB.search(data[m.end():] if m else data)):
+        ids["imdb"] = u.group(1).decode()
+    ids = {k: v for k, v in ids.items() if (v.isdigit() and v != "0") or (k == "imdb" and v.startswith("tt"))}
+    out = {k: v for k, v in out.items() if v}
+    if ids:
+        out["ids"] = ids
+    return out
+
+
+def _title_nfo(t):
+    """A title's NFO file, parsed (see parse_nfo), or {}."""
+    rel = t.get("nfo") or (db.one("SELECT nfo FROM vod_titles WHERE id=?", (t["id"],)) or {}).get("nfo")
+    return parse_nfo(_read_nfo(-t["source_id"], rel)) if rel else {}
+
+
+def _tmdb_id_from(kind, ids):
+    """The TMDB id an NFO file names (or finds it from the IMDb or TVDB id it names), or 0."""
+    if ids.get("tmdb"):
+        return int(ids["tmdb"])
+    for source, key in (("imdb", "imdb_id"), ("tvdb", "tvdb_id")):
+        if ids.get(source):
+            found = _tmdb(f"/find/{ids[source]}", external_source=key) or {}
+            hits = found.get("movie_results" if kind == "movie" else "tv_results") or []
+            if hits and hits[0].get("id"):
+                return int(hits[0]["id"])
+    return 0
+
+
+def _apply_nfo(t, nfo, tried_at=0):
+    """Show a title with its NFO file's own details (no TMDB key, or TMDB doesn't know it). `tried_at`: when TMDB
+    was asked (0: never, so it's asked once a key is added). -> True if the NFO had any details."""
+    if not (nfo.get("plot") or nfo.get("name")):
+        return False
+    from .vod import fold
+    name = nfo.get("name") or t["name"]
+    log.info("NFO: details for %s (%s) from its NFO file", name, nfo.get("year") or t["year"] or "?")
+    now = int(time.time())
+    db.run("""UPDATE vod_titles SET name=?, search=?, year=?, plot=?, genre=?, rating=?, actors=?, director=?, poster=?,
+              info_at=? WHERE id=?""",
+           (name, fold(name), nfo.get("year") or t["year"], nfo.get("plot", ""), nfo.get("genre", ""),
+            nfo.get("rating", ""), nfo.get("actors", ""), nfo.get("director", ""), nfo.get("poster", ""), now, t["id"]))
+    db.run("""INSERT INTO lib_meta(title_id, tmdb_id, score, state, query, backdrop, fetched_at, tried_at)
+              VALUES (?,0,0,'nfo','',?,?,?)
+              ON CONFLICT(title_id) DO UPDATE SET tmdb_id=0, score=0, state='nfo', backdrop=excluded.backdrop,
+                fetched_at=excluded.fetched_at, tried_at=excluded.tried_at""",
+           (t["id"], nfo.get("backdrop", ""), now, tried_at))
+    if t["kind"] == "series":
+        _episodes_from_nfo(t)
+    return True
+
+
+def _episodes_from_nfo(t):
+    """Episodes still without a plot (TMDB had none, or isn't used): name, plot and air date from their NFO files."""
+    for e in db.rows("""SELECT e.id, f.share_id, f.nfo FROM vod_episodes e JOIN lib_files f ON f.item_id=e.id
+                        WHERE e.title_id=? AND e.plot='' AND f.nfo!=''""", (t["id"],)):
+        nfo = parse_nfo(_read_nfo(e["share_id"], e["nfo"]))
+        if nfo.get("plot") or nfo.get("name"):
+            db.run("""UPDATE vod_episodes SET name=CASE WHEN ?!='' THEN ? ELSE name END, plot=?,
+                      aired=CASE WHEN aired='' THEN ? ELSE aired END WHERE id=? AND plot=''""",
+                   (nfo.get("name", ""), nfo.get("name", ""), nfo.get("plot", ""), nfo.get("aired", ""), e["id"]))
 
 
 # ---------------------------------------------------------------- TMDB
@@ -1401,6 +1633,7 @@ def _apply(t, tmdb_id, score, state):
                           WHERE title_id=? AND season=? AND episode=?""",
                        (e.get("name") or "", e.get("name") or "", e.get("overview") or "", e.get("air_date") or "",
                         t["id"], n, e.get("episode_number")))
+        _episodes_from_nfo(t)
     now = int(time.time())
     db.run("""INSERT INTO lib_meta(title_id, tmdb_id, score, state, query, backdrop, fetched_at, tried_at)
               VALUES (?,?,?,?,?,?,?,?)
@@ -1424,16 +1657,33 @@ def _original(t):
 
 
 def lookup(t):
-    """Find a title on TMDB and store its details. -> its state."""
+    """Find a title on TMDB and store its details. Its NFO file, when it has one, names the TMDB title (an exact
+    match), or gives a better name to search for; without a TMDB key, or when TMDB doesn't know the title or
+    only something like it, the NFO's own details are used. -> its state ('': no key and no NFO to go on)."""
     name, year = _original(t)
     query = json.dumps({"name": name, "year": year})
-    tmdb_id, score = _best(t["kind"], name, year)
     now = int(time.time())
     what = f"{name} ({year})" if year else name
-    if tmdb_id and _apply(t, tmdb_id, score, "ok" if score >= GOOD_MATCH else "weak"):
+    nfo = _title_nfo(t)
+    key = settings()["tmdb_key"]
+    if not key:
+        if _apply_nfo(t, nfo):
+            db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (query, t["id"]))
+            return "nfo"
+        return ""
+    by_id = _tmdb_id_from(t["kind"], nfo.get("ids") or {})
+    if by_id and _apply(t, by_id, 100, "ok"):
+        db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (query, t["id"]))
+        log.info("TMDB: %s matched by the id in its NFO file", what)
+        return "ok"
+    tmdb_id, score = _best(t["kind"], nfo.get("name") or name, nfo.get("year") or year if nfo.get("name") else year)
+    if tmdb_id and (score >= GOOD_MATCH or not nfo.get("plot")) and _apply(t, tmdb_id, score, "ok" if score >= GOOD_MATCH else "weak"):
         db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (query, t["id"]))
         log.info("TMDB: %s matched (%d%% sure%s)", what, score, "" if score >= GOOD_MATCH else ", needs review")
         return "ok" if score >= GOOD_MATCH else "weak"
+    if _apply_nfo(t, nfo, tried_at=now):
+        db.run("UPDATE lib_meta SET query=? WHERE title_id=?", (query, t["id"]))
+        return "nfo"
     log.info("TMDB: no match for %s (looked up again in %d days)", what, RETRY_DAYS)
     db.run("""INSERT INTO lib_meta(title_id, state, query, tried_at) VALUES (?, 'none', ?, ?)
               ON CONFLICT(title_id) DO UPDATE SET state=CASE WHEN lib_meta.state IN ('pinned','ignored') THEN lib_meta.state
@@ -1446,6 +1696,7 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
     (`only_new`: just the first). Missing titles wait until they're back. -> message."""
     progress = progress or (lambda *a, **k: None)
     now = int(time.time())
+    key = bool(settings()["tmdb_key"])          # without one, only titles with an NFO file get details
     w, a = ("AND t.source_id=?", [-share_id]) if share_id else ("", [])
     rows = db.rows(f"""SELECT t.*, COALESCE(m.state,'') state, COALESCE(m.tmdb_id,0) tmdb_id, COALESCE(m.score,0) score,
                               COALESCE(m.fetched_at,0) fetched_at, COALESCE(m.tried_at,0) tried_at
@@ -1455,19 +1706,24 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
     todo = []
     for r in rows:
         st = r["state"]
-        if st == "ignored":
+        if st == "ignored" or (not key and not r["nfo"]):
             continue
         if st == "":
             todo.append(r)
         elif only_new:
             continue
+        elif st == "nfo" and (full_refresh or now - r["fetched_at"] > REFRESH_DAYS * 86400
+                              or (key and now - r["tried_at"] > RETRY_DAYS * 86400)):
+            todo.append(r)              # read again now and then; looked up once a key is added, then weekly
+        elif not key:
+            continue
         elif st == "none" and (full_refresh or now - r["tried_at"] > RETRY_DAYS * 86400):
             todo.append(r)
         elif st in ("ok", "weak", "pinned") and (full_refresh or now - r["fetched_at"] > REFRESH_DAYS * 86400):
             todo.append(r)
-    found = missed = 0
+    found = missed = from_nfo = 0
 
-    def one(t):                             # in a worker: -> True / False (TMDB had it), None (skipped)
+    def one(t):                             # in a worker: -> its state now ('nfo': details from its NFO), None: skipped
         with _title_lock(t["id"]):
             if not db.one("""SELECT 1 FROM vod_titles t JOIN lib_shares s ON -s.id=t.source_id AND s.enabled=1
                              WHERE t.id=?""", (t["id"],)):
@@ -1478,14 +1734,14 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
             if st == "ignored":
                 return None
             try:
-                if st in ("ok", "weak", "pinned") and m.get("tmdb_id"):
-                    return _apply(t, m["tmdb_id"], m["score"], st)
-                return lookup(t) != "none"
+                if key and st in ("ok", "weak", "pinned") and m.get("tmdb_id"):
+                    return st if _apply(t, m["tmdb_id"], m["score"], st) else "none"
+                return lookup(t) or None
             except LibraryError as e:
                 if "API key" in str(e) or "reach" in str(e):
                     raise
                 log.warning("TMDB %s: %s", t["name"], e)
-                return False
+                return "none"
 
     # a few titles at once (DETAIL_WORKERS): most of the time is waiting for TMDB to answer
     rows, pending = iter(todo), set()
@@ -1500,20 +1756,28 @@ def fetch_details(progress=None, share_id=None, full_refresh=False, only_new=Fal
                 finished, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for fut in finished:
                     pending.discard(fut)
-                    ok = fut.result()       # a wrong key or no internet: stops the lot (below)
+                    st = fut.result()       # a wrong key or no internet: stops the lot (below)
                     more()
-                    progress("Downloading details from TMDB", found + missed, len(todo))
-                    if ok is not None:
-                        found += ok
-                        missed += not ok
+                    progress("Downloading details from TMDB" if key else "Reading NFO files",
+                             found + missed + from_nfo, len(todo))
+                    if st is not None:
+                        found += st not in ("none", "nfo")
+                        missed += st == "none"
+                        from_nfo += st == "nfo"
         except LibraryError:
             for fut in pending:
                 fut.cancel()
             raise
-    _vod_changed()
-    if not todo:
+    if found or missed or from_nfo:
+        _vod_changed()
+    if not todo or not (found or missed or from_nfo):
         return ""
-    return f"Details for {found} title{'s' * (found != 1)}" + (f", {missed} not found on TMDB" if missed else "")
+    parts = [f"{found} from TMDB"] if found and from_nfo else []
+    parts += [f"{from_nfo} from NFO files"] if from_nfo and found else []
+    total = found + from_nfo
+    msg = f"Details for {total} title{'s' * (total != 1)}" + (f" ({', '.join(parts)})" if parts else
+                                                              " from NFO files" if from_nfo else "")
+    return msg + (f", {missed} not found on TMDB" if missed else "")
 
 
 # ---------------------------------------------------------------- Setup: review and fix matches
@@ -1640,6 +1904,11 @@ def relookup(tid):
         raise KeyError(tid)
     with _title_lock(tid):
         st = lookup(t)
+    if not st:
+        if t.get("nfo"):
+            raise LibraryError("Couldn't read its NFO file (is the NAS on?). Add a TMDB API key in Setup › My Library "
+                               "to download details and posters without it")
+        raise LibraryError("Add a TMDB API key in Setup › My Library to download details and posters")
     _vod_changed()
     return {"state": st}
 

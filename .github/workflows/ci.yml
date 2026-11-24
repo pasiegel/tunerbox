@@ -17,6 +17,10 @@ jobs:
           python-version: "3.12"
       - name: Install packages
         run: python -m pip install -r requirements.txt -c constraints.txt pytest
+      - name: Browser for the UI tests (tests/test_ui_*.py; skipped without it)
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
       - name: Tests
         run: python -m pytest -q
       - name: Python compiles and the server imports

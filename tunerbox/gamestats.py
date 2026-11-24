@@ -95,6 +95,20 @@ def game_for(ch="", feed="", now=None):
     return lk["feed"].get(feed) if feed else lk["ch"].get(str(ch))
 
 
+def places(ch="", feed="", now=None):
+    """Where else the game on channel `ch` or event feed `feed` is on right now, for the TV's Switch feed
+    dialog: {name, stop, ch, also, feeds} (the same places the Sports screen offers), or None."""
+    now = now or time.time()
+    gid = game_for(ch=ch, feed=feed, now=now)
+    if not gid:
+        return None
+    for g in _current(now)["games"]:
+        if g["event"]["id"] == gid:
+            return {"name": g["event"].get("name") or g.get("title") or "", "stop": g.get("stop"),
+                    "ch": g.get("ch"), "also": g.get("also") or [], "feeds": g.get("feeds") or []}
+    return None
+
+
 # ---------------------------------------------------------------- ESPN summary -> panel
 def _num(v):
     try:

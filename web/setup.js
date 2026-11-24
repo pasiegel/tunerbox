@@ -1307,7 +1307,7 @@ const libStatus = (s) => {
   if (st.startsWith("error")) return `<span class="bad-text">${esc(st.replace(/^error: /, ""))}</span>`;
   return st ? esc(st.replace(/^ok: /, "")) : "Not scanned yet";
 };
-const LIB_STATE = { ok: ["ok", "Matched"], weak: ["weak", "Check this"], none: ["none", "Not found"], pinned: ["pinned", "Picked by you"],
+const LIB_STATE = { ok: ["ok", "Matched"], weak: ["weak", "Check this"], none: ["none", "Not found"], pinned: ["pinned", "Picked by you"], nfo: ["ok", "From NFO file"],
                     ignored: ["none", "Left out"], "": ["pending", "Not looked up"] };
 // grabbing video details: files read from the NAS at once (2 unless changed; 1 is the gentlest, more is faster on a NAS that keeps up)
 const LIB_AT_ONCE = [[1, "1 file at a time"], [2, "2 files at once"], [3, "3 files at once"], [4, "4 files at once"]];
