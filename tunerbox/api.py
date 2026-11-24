@@ -123,11 +123,15 @@ def api_guide(start: int, stop: int, numbers: str = ""):
         (start, stop))}
     rules = {(r["title"].lower(), r["number"]) for r in db.rows("SELECT title, number FROM rules")}
     reminded = reminders.keys(start, stop)
+    # who is playing, for a game the guide lists as just "College Football". A key added, nothing changed:
+    # Roku apps read this endpoint too and ignore keys they don't know.
+    matchups = sports.guide_matchups(chans, progs)
     out = {}
     for c in chans:
         lst = []
         for p in progs.get(c["epg"], []):
             p = dict(p)
+            p["matchup"] = matchups.get((c["epg"], p["start"]), "")
             p["rec"] = recs.get((c["number"], p["start"]), "")
             p["remind"] = (c["number"], p["start"]) in reminded
             p["series"] = (p["title"].lower(), c["number"]) in rules or (p["title"].lower(), None) in rules
@@ -1610,11 +1614,14 @@ def out_xmltv():
 
 
 @app.get("/guide.json")
-def out_guide_json(request: Request, hours: int = 12):
+def out_guide_json(request: Request, hours: int = 12, teams: int = 0):
     """The guide for the Roku: from 3 hours ago to `hours` ahead, only channels that have listings, as
     {"programs": {"<number>": [[start, stop, title, subtitle, descr, category, episode, rating]]}}. A fraction
     of epg.xml (three days of every channel) and read with the Roku's built-in JSON parser instead of picking
-    the XML apart in BrightScript. Gzipped when the caller accepts it."""
+    the XML apart in BrightScript. Gzipped when the caller accepts it.
+    teams=1 adds "matchups": {"<number>": {"<start>": "Texas at Texas A&M"}}: who is playing in a game the
+    guide lists as just "College Football" (see sports.guide_matchups). The rows stay as they are, so a Roku
+    that doesn't ask, or a TunerBox that doesn't know teams=1, works as before."""
     hours = max(1, min(72, hours))
     now = int(time.time())
     chans = guide.channels()
@@ -1625,7 +1632,18 @@ def out_guide_json(request: Request, hours: int = 12):
         if rows:
             out[str(c["number"])] = [[p["start"], p["stop"], p["title"] or "", p["subtitle"] or "", p["descr"] or "",
                                        p["category"] or "", p["episode"] or "", p["rating"] or ""] for p in rows]
-    return _roku_json(request, {"programs": out})
+    body = {"programs": out}
+    if teams:
+        by_epg = {}
+        for c in chans:
+            if c["epg"] and str(c["number"]) in out:
+                by_epg.setdefault(c["epg"], []).append(str(c["number"]))
+        found = {}
+        for (key, start), text in sports.guide_matchups(chans, progs).items():
+            for num in by_epg.get(key, []):
+                found.setdefault(num, {})[str(start)] = text
+        body["matchups"] = found
+    return _roku_json(request, body)
 
 
 # HDHomeRun emulation so Plex / Emby / Jellyfin can add TunerBox as a tuner

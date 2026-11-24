@@ -531,6 +531,15 @@ def title(ev):
     return f"{ev['away']['name']} at {ev['home']['name']}"
 
 
+def short_title(ev):
+    """title() with the teams' short names ("Texas at Texas A&M", "Cowboys at Eagles"): it has to
+    fit in a guide cell."""
+    if ev.get("card"):
+        return ev["card"]
+    away, home = (ev[s].get("short") or ev[s]["name"] for s in ("away", "home"))
+    return f"{home} vs {away}" if LEAGUES[ev["league"]][2] == "Soccer" else f"{away} at {home}"
+
+
 def public(ev):
     """The part of a game the TV and phone screens show next to a listing."""
     name, tag, sport, _, _ = LEAGUES[ev["league"]]

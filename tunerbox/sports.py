@@ -8,6 +8,7 @@
   them dead; they are listed anyway, with an on-demand "which are live now" check.
 """
 import asyncio
+import bisect
 import functools
 import logging
 import re
@@ -512,6 +513,113 @@ def warm(now=None):
             _warm["running"] = False
     threading.Thread(target=work, daemon=True).start()
     return True
+
+
+# ------------------------------------------------------------------ team names in the guide
+# The guide often lists a game as just "College Football". The guide's subtitle, or the scoreboard
+# game it carries, says who is playing; the guide grid shows that after the title.
+MATCHUP_TEXT = re.compile(r"\w\.?\)?\s+(?:at|vs\.?|v\.?|versus|@)\s+\(?\w", re.I)
+# Network names as the scoreboard gives them and as lineups name channels (often a callsign,
+# "TNTP" for TNT's Pacific feed), squashed to one key. Local stations (KCBS for CBS) can't be told
+# apart this way and are left to the guide's own text.
+NETWORKS = {
+    "foxsports1": "fs1", "foxsports2": "fs2", "sec": "secn", "secnetwork": "secn", "acc": "accn",
+    "accnetwork": "accn", "bigtennetwork": "btn", "b1g": "btn", "cbssports": "cbssn", "cbssportsnetwork": "cbssn",
+    "nflnet": "nfln", "nflnetwork": "nfln", "nhlnet": "nhln", "nhlnetwork": "nhln", "mlbnet": "mlbn",
+    "mlbnetwork": "mlbn", "usanet": "usa", "usanetwork": "usa", "usap": "usa", "usae": "usa", "tntp": "tnt",
+    "tnte": "tnt", "tbsp": "tbs", "tbse": "tbs", "thecw": "cw", "golfchannel": "golf",
+}
+_NET_TAIL = re.compile(r"(?: (?:hd|fhd|uhd|4k|sd|east|west))+$")
+NET_SLACK = 30 * 60         # a listing found by its network starts within this long of the game
+# a listing that says which league it is: a game of another league isn't it
+_LEAGUE_HINTS = [(re.compile(r"\b(college|ncaa\w*)\b", re.I), lambda k: k.startswith("ncaa")),
+                 (re.compile(r"\bwomen'?s?\b", re.I), lambda k: k in ("ncaaw", "wnba")),
+                 (re.compile(r"\bnfl\b", re.I), lambda k: k == "nfl"), (re.compile(r"\bnba\b", re.I), lambda k: k == "nba"),
+                 (re.compile(r"\bwnba\b", re.I), lambda k: k == "wnba"), (re.compile(r"\bnhl\b", re.I), lambda k: k == "nhl"),
+                 (re.compile(r"\bmlb\b", re.I), lambda k: k == "mlb")]
+
+
+def _net(name):
+    n = _NET_TAIL.sub("", scoreboard._n(name)).replace(" ", "")
+    return NETWORKS.get(n, n)
+
+
+_MEN = re.compile(r"\bmen'?s\b", re.I)
+
+
+def _fits_league(p, league):
+    text = f"{p.get('title') or ''} {p.get('subtitle') or ''}"
+    if _MEN.search(text) and league == "ncaaw":
+        return False
+    return all(ok(league) for rx, ok in _LEAGUE_HINTS if rx.search(text))
+
+
+def _matchup_text(p, ev):
+    """The game's teams, without what the listing's title already says ("UFC Fight Night: ...")."""
+    text = scoreboard.short_title(ev)
+    title = (p.get("title") or "").strip()
+    if title and text.lower().startswith(title.lower()):
+        text = text[len(title):].lstrip(" :-|")
+    return text
+
+
+def guide_matchups(chans, progs):
+    """{(guide channel, start): "Texas at Texas A&M"} for the sports listings in `progs` (as
+    epg.programs gives them) whose title doesn't name the teams. From, in order: a scoreboard
+    game the listing names, a scoreboard game on that channel's network at that time, or the
+    listing's subtitle when it reads like a matchup."""
+    nets = {}
+    for c in chans:
+        if c["epg"] in progs:
+            nets.setdefault(c["epg"], set()).update(_net(n) for n in (c["name"], c["label"]) if n)
+    lists = [(k, p) for k in nets for p in progs[k] if _maybe_sport(p) and not MATCHUP_TEXT.search(p["title"] or "")]
+    if not lists:
+        return {}
+    lo, hi = min(p["start"] for _, p in lists), max(p["stop"] for _, p in lists)
+    evs = scoreboard.events(lo - EARLY_CARD, hi)
+    starts = [e["start"] for e in evs]
+    keys, out = {}, {}
+    for k, p in lists:
+        i, j = bisect.bisect_left(starts, p["start"] - EARLY_CARD), bisect.bisect_left(starts, p["stop"])
+        sport = sport_type(p) if i < j else ""
+        texts = None
+        found, near = None, []
+        for ev in evs[i:j]:
+            league_sport = scoreboard.LEAGUES[ev["league"]][2]
+            if sport and sport != league_sport:
+                continue
+            # on air by 45 minutes into the game (a fight card's main card) and still on 5 minutes in
+            if p["start"] >= (ev.get("main") or ev["start"]) + scoreboard.EARLY or p["stop"] <= ev["start"] + scoreboard.LATE:
+                continue
+            if texts is None:
+                texts = scoreboard.candidates(p["subtitle"], p["title"], f"{p['title'] or ''} {p['subtitle'] or ''}")
+            if ev["id"] not in keys:
+                keys[ev["id"]] = scoreboard.event_keys(ev)
+            if scoreboard.text_matches(keys[ev["id"]], texts):
+                found = ev
+                break
+            if (sport and abs(p["start"] - ev["start"]) <= NET_SLACK and _fits_league(p, ev["league"])
+                    and nets[k] & {_net(n) for n in ev.get("on") or []}):
+                near.append(ev)
+        if not found and len(near) == 1:          # two games on the network then: can't tell which
+            found = near[0]
+        text = _matchup_text(p, found) if found else ""
+        if not text and is_sport_program(p) and MATCHUP_TEXT.search(p["subtitle"] or ""):
+            text = p["subtitle"].strip()
+        if text:
+            out[(k, p["start"])] = text
+    return out
+
+
+EARLY_CARD = 6 * 3600       # a fight card's listing can start this long after the card (its prelims)
+
+
+# every SPORT_TYPES name in one pattern: most of a whole guide is checked against it, so one search, not 30
+_ANY_SPORT = re.compile("|".join(f"(?:{rx.pattern})" for _, rx in SPORT_TYPES), re.I)
+
+
+def _maybe_sport(p):
+    return is_sport_program(p) or any(_ANY_SPORT.search(p.get(k) or "") for k in ("title", "category", "subtitle"))
 
 
 # ------------------------------------------------------------------ event / PPV feeds

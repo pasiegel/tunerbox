@@ -93,6 +93,23 @@ def test_guide_json_rows(client, monkeypatch):
     assert z.headers.get("content-encoding") == "gzip" and z.json() == r.json()       # the Roku asks for gzip
 
 
+def test_guide_json_teams(client, monkeypatch):
+    # LoadTask.brs guideJsonUrl asks teams=1 and reads "matchups": {"<number>": {"<start>": text}} beside the
+    # rows; the rows are the same with or without it, and without teams=1 the reply is as before
+    from tunerbox import epg, guide
+    monkeypatch.setattr(guide, "channels", lambda *a: [{"number": 5, "epg": "x:a"}, {"number": 6, "epg": "x:a"},
+                                                       {"number": 7, "epg": "x:b"}])
+    p = {"start": 100, "stop": 200, "title": "College Football", "subtitle": "", "descr": "", "category": "Sports",
+         "episode": "", "rating": ""}
+    monkeypatch.setattr(epg, "programs", lambda keys, a, b: {"x:a": [p], "x:b": [{**p, "start": 300}]})
+    monkeypatch.setattr(sports, "guide_matchups", lambda chans, progs: {("x:a", 100): "Texas at Texas A&M"})
+    plain = client.get("/guide.json?hours=12").json()
+    assert set(plain) == {"programs"}
+    r = client.get("/guide.json?hours=12&teams=1").json()
+    assert r["programs"] == plain["programs"]
+    assert r["matchups"] == {"5": {"100": "Texas at Texas A&M"}, "6": {"100": "Texas at Texas A&M"}}
+
+
 def test_channels_json_rows(client, monkeypatch):
     # LoadTask.brs loadBoot / rowsToChannels: {"channels": [[number, name, logo, group, url, tvg-id, tvg-name,
     # backups]]} (backups: feeds after the main one, for failover and Switch feed),

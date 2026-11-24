@@ -424,3 +424,60 @@ def test_sports_layout_setting():
     assert config.clean_changes({"sports_layout": "enhanced"}, from_pc=False) == {"sports_layout": "enhanced"}
     with pytest.raises(ValueError):
         config.clean_changes({"sports_layout": "fancy"}, from_pc=False)
+
+
+# ---------------------------------------------------------------- team names in the guide grid
+TEXAS = _team("Texas Longhorns", "Longhorns", "Texas", "TEX", short="Texas")
+TAMU = _team("Texas A&M Aggies", "Aggies", "Texas A&M", "TA&M", short="Texas A&M")
+DUKE = _team("Duke Blue Devils", "Blue Devils", "Duke", "DUKE", short="Duke")
+UNC = _team("North Carolina Tar Heels", "Tar Heels", "North Carolina", "UNC", short="North Carolina")
+
+
+def _guide(numbers, start, stop):
+    from fastapi.testclient import TestClient
+    from tunerbox import api
+    nums = ",".join(map(str, numbers))
+    g = TestClient(api.app).get(f"/api/guide?start={start}&stop={stop}&numbers={nums}").json()
+    return {int(n): [(p["title"], p["matchup"]) for p in lst] for n, lst in g.items()}
+
+
+def test_guide_names_the_teams():
+    now = int(time.time()) // 60 * 60
+    h = 3600
+    _channel(401, "FS2", [(now - h, now + 2 * h, "College Football", "", "Sports"),           # nothing but the network
+                          (now + 2 * h, now + 3 * h, "Fox College Football Postgame", "", "Sports")])
+    _channel(40, "ESPN2", [(now - h, now + h, "College Basketball", "", "Sports")])           # two games on ESPN2: can't tell
+    _channel(41, "ESPN", [(now - h, now + 2 * h, "NFL Football", "Dallas Cowboys at Philadelphia Eagles", "Sports"),
+                          (now + 2 * h, now + 4 * h, "College Football", "Michigan vs. Ohio State", "Sports")])  # not on the scoreboard
+    _channel(42, "HGTV", [(now - h, now + h, "House Hunters", "Smith vs. Jones", "Reality")])
+    _channel(43, "SEC", [(now - h, now + h, "Women's College Basketball", "", "Sports"),       # "SEC" is ESPN's "SECN"
+                         (now + h, now + 3 * h, "Texas at Texas A&M", "", "Sports")])         # the title says it already
+    _store(_game(1, "ncaaf", now - h + 120, TAMU, TEXAS, "in", on=["FS2"]),
+           _game(2, "nfl", now - h, EAGLES, COWBOYS, "in"),
+           _game(3, "ncaab", now - h, UNC, DUKE, "in", on=["ESPN2"]),
+           _game(4, "ncaab", now - h, OSU, MICHIGAN, "in", on=["ESPN2"]),
+           _game(5, "ncaaw", now - h, DUKE, UNC, "in", on=["SECN"]),
+           _game(6, "ncaab", now - h, TAMU, TEXAS, "in", on=["SECN"]),          # men's: not the women's listing
+           _game(7, "ncaaf", now + h, TAMU, TEXAS, on=["SECN"]))
+    config.update({"sports_leagues": ["ncaaf", "nfl", "ncaab", "ncaaw"]})
+    guide.invalidate()
+    g = _guide([401, 40, 41, 42, 43], now, now + 4 * h)
+    assert g[401] == [("College Football", "Texas at Texas A&M"), ("Fox College Football Postgame", "")]
+    assert g[40] == [("College Basketball", "")]
+    assert g[41] == [("NFL Football", "Cowboys at Eagles"), ("College Football", "Michigan vs. Ohio State")]
+    assert g[42] == [("House Hunters", "")]                     # not sport: its subtitle stays out of the grid
+    assert g[43] == [("Women's College Basketball", "North Carolina at Duke"), ("Texas at Texas A&M", "")]
+
+
+def test_guide_team_names_without_the_scoreboard():
+    now = int(time.time()) // 60 * 60
+    _channel(401, "FS2", [(now - 3600, now + 3600, "College Football", "Texas at Texas A&M", "Sports"),
+                          (now + 3600, now + 7200, "College Football", "", "Sports")])
+    config.update({"sports_leagues": []})
+    guide.invalidate()
+    assert _guide([401], now, now + 7200)[401] == [("College Football", "Texas at Texas A&M"), ("College Football", "")]
+
+
+def test_short_title():
+    assert scoreboard.short_title(_game(1, "nfl", 0, EAGLES, COWBOYS)) == "Cowboys at Eagles"
+    assert scoreboard.short_title(_game(1, "mls", 0, EAGLES, COWBOYS)) == "Eagles vs Cowboys"
