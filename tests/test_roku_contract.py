@@ -85,6 +85,9 @@ def test_guide_json_rows(client, monkeypatch):
     assert r.json() == {"programs": {"5": [[100, 200, "News", "", "d", "News", "", "TV-G"]]}}     # no listings: left out
     z = client.get("/guide.json", headers={"Accept-Encoding": "gzip"})
     assert z.headers.get("content-encoding") == "gzip" and z.json() == r.json()       # the Roku asks for gzip
+    # desc=0 (the Roku): the same rows with the description column empty
+    n = client.get("/guide.json?hours=12&desc=0", headers={"Accept-Encoding": "identity"})
+    assert n.json() == {"programs": {"5": [[100, 200, "News", "", "", "News", "", "TV-G"]]}}
 
 
 def test_channels_json_rows(client, monkeypatch):
