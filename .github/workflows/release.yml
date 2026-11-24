@@ -83,8 +83,10 @@ jobs:
           if [ "$IS_TAG" = true ]; then
             python packaging/set_version.py "$GITHUB_REF_NAME"
           else
-            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
-            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*" || true
+            # a fork without TunerBox's v tags builds as 0.0.0 (a dev build) instead of failing
+            TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
+            python packaging/set_version.py "${TAG:-0.0.0}"
             echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           fi
       - name: Install Python packages
@@ -135,8 +137,10 @@ jobs:
           if [ "$IS_TAG" = true ]; then
             python packaging/set_version.py "$GITHUB_REF_NAME"
           else
-            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
-            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*" || true
+            # a fork without TunerBox's v tags builds as 0.0.0 (a dev build) instead of failing
+            TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
+            python packaging/set_version.py "${TAG:-0.0.0}"
             echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           fi
       - name: Install Python packages
@@ -181,8 +185,10 @@ jobs:
           if [ "$IS_TAG" = true ]; then
             python packaging/set_version.py "$GITHUB_REF_NAME"
           else
-            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*"
-            python packaging/set_version.py "$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)"
+            git fetch --quiet --depth=1 origin "+refs/tags/v*:refs/tags/v*" || true
+            # a fork without TunerBox's v tags builds as 0.0.0 (a dev build) instead of failing
+            TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
+            python packaging/set_version.py "${TAG:-0.0.0}"
             echo "BUILD_LABEL=-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
           fi
       - name: Install Python packages
