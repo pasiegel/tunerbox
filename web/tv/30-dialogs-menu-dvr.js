@@ -205,6 +205,16 @@ function programDialog(ch, p) {
   const gone = ended && !cu ? `\nThis show has ended${ch.catchup ? " and is no longer in the channel's archive" : ""}` : "";
   openDialog(p.title, sub + gone, entries);
   $("dlg-img").classList.add("art"); showArt($("dlg-img"), ch.number, p);
+  // the same movie or episode in On Demand: added under Watch now / Start over once the server finds it
+  odForProgram(ch, p).then((m) => {
+    const add = odProgramEntries(m, p);
+    if (!add.length || top() !== "dialog" || dlg.entries !== entries) return;
+    const lis = [...$("dlg-list").children], sel = Math.max(0, lis.findIndex((li) => li.classList.contains("sel")));
+    const at = entries.findIndex((e) => !/^(Watch now|↺ )/.test(e.label));
+    entries.splice(at < 0 ? 0 : at, 0, ...add);
+    fillList($("dlg-list"), entries, sel >= at && at >= 0 ? sel + add.length : sel);
+    if (gone && !m.show) $("dlg-sub").textContent = sub + "\nThis show has ended, but it's in On Demand";
+  });
 }
 
 // menu, in groups: { head } entries are the group titles ("" = just a dividing line), skipped by the highlight.
@@ -298,6 +308,24 @@ function openMenu() {
   const l = $("menu-list");
   if (!isPhone() && l.scrollHeight > l.clientHeight + 2) $("menu").classList.add("two");
   l.scrollTop = 0;
+  menuOnDemand();
+}
+// the show on now, in On Demand: its entries go into This channel (under Start over) once the server finds it
+async function menuOnDemand() {
+  const ch = S.mode === "live" && curCh(), shown = menuShown;
+  if (!ch || ch.feed || !vodOn()) return;
+  let d;
+  try { d = await nowNext(ch.number); } catch (_) { return; }
+  const add = odProgramEntries(d.now && await odForProgram(ch, d.now), d.now);
+  if (!add.length || top() !== "menu" || menuShown !== shown || curCh() !== ch) return;
+  const head = shown.findIndex((e) => e.head === "This channel");
+  if (head < 0) return;
+  const cu = shown.findIndex((e) => e.catchup), at = (cu > head ? cu : head) + 1;
+  const sel = Math.max(0, [...$("menu-list").children].findIndex((li) => li.classList.contains("sel")));
+  menuShown = [...shown.slice(0, at), ...add, ...shown.slice(at)];
+  renderMenu(sel >= at ? sel + add.length : sel);
+  const l = $("menu-list");
+  if (!isPhone() && l.scrollHeight > l.clientHeight + 2) $("menu").classList.add("two");
 }
 // two columns: ◀ ▶ go across to the item at about the same height in the other column
 function menuAcross(k) {

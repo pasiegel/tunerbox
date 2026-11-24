@@ -953,6 +953,78 @@ def search(q, limit=12):
     return out
 
 
+# ---------------------------------------------------------------- the guide's show in On Demand
+# "S01E02", "S1 E2", "Season 1 Episode 2", "1x02" (the guide's episode-num, as epg.py keeps it)
+PROG_SE = re.compile(r"\bS(?:eason)?\s*(\d{1,2})\W*E(?:p(?:isode)?)?\.?\s*(\d{1,3})\b|\b(\d{1,2})x(\d{1,3})\b", re.I)
+EPS_STALE = 86400                 # a show's episode list this old is read again when the guide's episode isn't in it
+
+
+def _program_se(episode):
+    m = PROG_SE.search(episode or "")
+    if not m:
+        return None
+    s, e = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+    return int(s), int(e)
+
+
+def _program_name(title):
+    """A guide title folded as On Demand keeps names: 'The Office (US)' and 'Dune (2021)' without the brackets."""
+    name, _ = _split_country(title or "")
+    name, year = _split_year(name)
+    return fold(name), year
+
+
+def _episode_for(t, se, subtitle):
+    """The episode of show `t` a guide listing is: by season and episode, else by its episode title."""
+    sub = fold(subtitle)
+    for e in db.rows("SELECT id, season, episode, name FROM vod_episodes WHERE title_id=? ORDER BY season, episode", (t["id"],)):
+        if se and (e["season"], e["episode"]) == se:
+            return e["id"]
+        if not se and sub and fold(e["name"]) == sub:
+            return e["id"]
+    return None
+
+
+def for_program(prog_title, subtitle="", episode="", category=""):
+    """The movie or episode in On Demand that a guide listing is, so it can be watched from the start (or
+    carried on from where the broadcast is). The name has to be the same (accents, case, punctuation, a
+    language label, a year or a country in brackets don't matter); a show's episode is found by its season
+    and episode number, else its episode title. None when there's no such title; a show with the name but
+    not that episode: {"show": its id}, so On Demand can open it."""
+    name, year = _program_name(prog_title)
+    if len(name) < 2:
+        return None
+    rows = db.rows(f"SELECT {_COLS}, t.search {_FROM} WHERE t.search=?", (name,))
+    se = _program_se(episode)
+    movies = [r for r in rows if r["kind"] == "movie" and (not year or not r["year"] or r["year"] == year)]
+    shows = _by_preference([r for r in rows if r["kind"] == "series"]) if rows else []
+    film = re.search(r"movie|film", category or "", re.I)
+    if movies and (not shows or not se and (film or not subtitle)):
+        r = _by_preference(movies)[0]
+        return {"id": r["id"], "kind": "movie", "title_id": r["id"]}
+    if not shows:
+        return None
+    if se or subtitle:
+        for t in shows:
+            if not db.one("SELECT 1 FROM vod_episodes WHERE title_id=? LIMIT 1", (t["id"],)):
+                try:
+                    title(t["id"])                   # a show's episodes are read the first time it's opened (Xtream)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("No episodes for %s: %s", t["name"], e)
+            eid = _episode_for(t, se, subtitle)
+            row = _row(t["id"])
+            if not eid and row and row["source_type"] == "xtream" and time.time() - (row["info_at"] or 0) > EPS_STALE:
+                # a show still on the air gets new episodes: its list is read again (at most once a day)
+                try:
+                    _fetch_series_info(_source(t["source_id"]), row)
+                    eid = _episode_for(t, se, subtitle)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("No episodes for %s: %s", t["name"], e)
+            if eid:
+                return {"id": eid, "kind": "episode", "title_id": t["id"]}
+    return {"show": shows[0]["id"]}
+
+
 # ---------------------------------------------------------------- watching
 def item(item_id):
     """What can be played: a movie or one episode. Includes the real address, so never send it to a page as is."""

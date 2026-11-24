@@ -1188,6 +1188,24 @@ def api_vod_search(q: str = "", limit: int = 60):
     return vod.search(q[:100], max(1, min(limit, 200)))
 
 
+@app.get("/api/vod/for-program/{number}/{start}")
+def api_vod_for_program(number: int, start: int):
+    """The guide's show (channel `number`, the airing at `start`) in On Demand, to watch from the beginning or
+    carry on from where the broadcast is. {"match": null} when it isn't there; {"match": {"show": id}} when the
+    show is but not that episode. `slot`: the airing's start and stop, for working out how far in it is."""
+    c = guide.channel(number)
+    p = db.one("SELECT * FROM programs WHERE channel=? AND start<=? AND stop>?", (c["epg"], start, start)) \
+        if c and c["epg"] and vod.enabled() else None
+    m = vod.for_program(p["title"], p["subtitle"], p["episode"], p["category"]) if p else None
+    if m and m.get("id"):
+        it = vod.item(m["id"])
+        if not it:
+            m = None
+        else:
+            m.update({k: it[k] for k in ("title", "sub", "duration", "position")})
+    return {"match": m, "slot": {"start": p["start"], "stop": p["stop"]} if p else None}
+
+
 @app.get("/api/vod/title/{title_id}")
 def api_vod_title(title_id: str):
     t = vod.title(title_id)
