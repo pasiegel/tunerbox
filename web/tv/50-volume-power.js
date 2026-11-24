@@ -1,14 +1,18 @@
 // ---------------------------------------------------------------- volume / fullscreen / power
+// the sound comes from the main picture, or in multiview from the tile with the focus
 function setVolume(v) {
-  video.volume = Math.max(0, Math.min(1, v)); video.muted = false;
-  localStorage.setItem("tb.vol", video.volume);
-  toast(`Volume ${"▮".repeat(Math.round(video.volume * 20))}${"▯".repeat(20 - Math.round(video.volume * 20))}`, 1200);
+  const a = soundEl();
+  a.volume = Math.max(0, Math.min(1, v)); a.muted = false;
+  if (a !== video) video.volume = a.volume;          // the main picture gets it back when multiview ends
+  localStorage.setItem("tb.vol", a.volume);
+  toast(`Volume ${"▮".repeat(Math.round(a.volume * 20))}${"▯".repeat(20 - Math.round(a.volume * 20))}`, 1200);
 }
-function toggleMute() { video.muted = !video.muted; toast(video.muted ? "Mute" : "Sound on", 1200); }
+function toggleMute() { const a = soundEl(); a.muted = !a.muted; toast(a.muted ? "Mute" : "Sound on", 1200); }
 function openSetup() { location.href = "/setup"; }
 // Android app: stop the stream while the app is in the background, resume on return
 window.tbAppPaused = () => {
   if (S.mode !== "live") return;
+  mvStop();
   if (S.feedCh) { S.resumeFeed = S.feedCh; destroyPlayer(); }
   else if (S.idx >= 0) { S.resumeIdx = S.idx; destroyPlayer(); }
 };
@@ -79,7 +83,7 @@ function keepAwake(on) {
 }
 function powerOff() {
   keepAwake(false);
-  vodLeave(); recLeave(); closeOD(); closeHome();
+  vodLeave(); recLeave(); closeOD(); closeHome(); mvStop();
   destroyPlayer(); S.mode = "off"; hideBanner(); hideStatic(); IDLE.offSince = Date.now();
   $("power").classList.remove("hidden");
 }

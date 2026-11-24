@@ -43,6 +43,101 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 #nosig-msg { font-size: 2em; font-weight: 600; margin-top: .2em; }
 #nosig-sub { color: var(--dim); margin-top: .6em; }
 
+/* multiview (41-multiview.js): #tv[data-mv] is the layout, and data-pos the place of each frame and of
+   the main picture (#video and its No Signal, which follow its frame; Home's .pip preview doesn't). The
+   frames sit over the pictures. #mv makes no stacking layer of its own, so in picture in picture the small
+   place (z-index 5) is on top whether it holds a tile or the main picture. */
+#mv { position: absolute; inset: 0; pointer-events: none; }
+.mv-f { position: absolute; z-index: 3; pointer-events: auto; border: 3px solid transparent; transition: all .25s ease; cursor: pointer; overflow: hidden; }
+.mv-f video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+.mv-f.focus { border-color: var(--hl); box-shadow: inset 0 0 0 1px #000a; }
+.mv-lab { position: absolute; left: .6em; bottom: .6em; max-width: calc(100% - 1.2em); background: var(--surface); backdrop-filter: blur(10px);
+  border: 1px solid var(--line); padding: .25em .75em; border-radius: .6em; font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-lab:empty, .mv-f:not(.focus) .mv-snd { display: none; }
+.mv-ch { font-weight: 700; }
+/* a picture's corner buttons: on mouse-over, or on the highlighted one while the on-screen controls are up (touch) */
+.mv-btns { position: absolute; right: .5em; top: .5em; display: flex; gap: .4em; opacity: 0; transition: opacity .15s; pointer-events: none; }
+.mv-f:hover .mv-btns, #tv:has(#remote:not(.hidden)) .mv-f.focus .mv-btns { opacity: 1; pointer-events: auto; }
+.mv-btns button { display: inline-flex; align-items: center; gap: .4em; height: 2.3em; padding: 0 .9em; border-radius: 2em; border: 1px solid var(--line);
+  background: var(--surface); backdrop-filter: blur(10px); color: var(--text); font: 600 .95em var(--font); cursor: pointer; }
+.mv-btns button.mv-x { width: 2.3em; padding: 0; justify-content: center; }
+/* a picture along the top of the screen: its buttons go below the on-screen controls' top bar (which is up
+   whenever they are), and in picture in picture the big one's go on the left, clear of the small picture */
+#tv[data-mv="pip"] .mv-f[data-pos="1"] .mv-btns, #tv[data-mv="grid"] .mv-f:is([data-pos="1"], [data-pos="2"]) .mv-btns { top: calc(2.5vh + 4.4em); }
+#tv[data-mv="pip"] .mv-f[data-pos="1"] .mv-btns { right: auto; left: 2.5vw; }
+#tv[data-mv="pip"] .mv-f[data-pos="2"] .mv-btns { top: auto; bottom: .5em; }    /* the small one: clear of the full-screen button */
+.mv-btns button:hover { background: var(--hl); color: var(--hl-text); border-color: var(--hl); }
+.mv-btns svg { width: 1.1em; height: 1.1em; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mv-now { color: var(--dim); }
+.mv-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 1em; background: #000c; font-size: 1.15em; color: var(--dim); }
+.mv-add { border: 2px dashed var(--line); display: flex; align-items: center; justify-content: center; text-align: center; color: var(--dim); }
+.mv-add:hover { border-color: var(--hl); color: var(--text); }
+.mv-plus { font-size: 3em; font-weight: 300; line-height: 1; }
+.mv-room { display: block; margin-top: .5em; font-size: .85em; }
+#tv[data-mv] :where(#video, #static):not(.pip) { inset: auto; }      /* :where: the places below override it */
+#tv[data-mv] #static .nosig { padding: 1.2em 2em; font-size: .8em; }
+/* side by side */
+#tv[data-mv="split"] [data-pos="1"]:not(.pip) { left: 0; top: 25%; width: 50%; height: 50%; }
+#tv[data-mv="split"] [data-pos="2"]:not(.pip) { left: 50%; top: 25%; width: 50%; height: 50%; }
+/* picture in picture: the small one in the top right corner (OK swaps the two) */
+#tv[data-mv="pip"] [data-pos="1"]:not(.pip) { left: 0; top: 0; width: 100%; height: 100%; }
+/* 16:9 whatever the window's shape, so a wide window doesn't give the small picture black bars */
+#tv[data-mv="pip"] [data-pos="2"]:not(.pip) { left: 67%; top: 4%; width: 30%; height: auto; aspect-ratio: 16 / 9; z-index: 5; box-shadow: 0 1em 3em #000c; }
+#tv[data-mv="pip"] .mv-f[data-pos="2"]:not(.focus) { border-color: var(--line); }
+/* one big, two small */
+#tv[data-mv="big"] [data-pos="1"]:not(.pip) { left: 0; top: 16.667%; width: 66.667%; height: 66.667%; }
+#tv[data-mv="big"] [data-pos="2"]:not(.pip) { left: 66.667%; top: 16.667%; width: 33.333%; height: 33.333%; }
+#tv[data-mv="big"] [data-pos="3"]:not(.pip) { left: 66.667%; top: 50%; width: 33.333%; height: 33.333%; }
+/* one big, three small (all 16:9) */
+#tv[data-mv="big3"] [data-pos="1"]:not(.pip) { left: 0; top: 12.5%; width: 75%; height: 75%; }
+#tv[data-mv="big3"] [data-pos="2"]:not(.pip) { left: 75%; top: 12.5%; width: 25%; height: 25%; }
+#tv[data-mv="big3"] [data-pos="3"]:not(.pip) { left: 75%; top: 37.5%; width: 25%; height: 25%; }
+#tv[data-mv="big3"] [data-pos="4"]:not(.pip) { left: 75%; top: 62.5%; width: 25%; height: 25%; }
+/* four squares */
+#tv[data-mv="grid"] [data-pos="1"]:not(.pip) { left: 0; top: 0; width: 50%; height: 50%; }
+#tv[data-mv="grid"] [data-pos="2"]:not(.pip) { left: 50%; top: 0; width: 50%; height: 50%; }
+#tv[data-mv="grid"] [data-pos="3"]:not(.pip) { left: 0; top: 50%; width: 50%; height: 50%; }
+#tv[data-mv="grid"] [data-pos="4"]:not(.pip) { left: 50%; top: 50%; width: 50%; height: 50%; }
+/* the Multiview button on the on-screen controls, and its dialog (above the controls): the layouts as a
+   row of cards (.mv-ico draws each one, its <i>s placed like the pictures), then a list of channels */
+#remote button.rm-mv { box-shadow: inset 0 0 0 2px var(--hl); color: var(--hl); }
+#remote button.rm-mv.on { background: var(--hl); color: var(--hl-text); box-shadow: none; }
+/* one column per layout card (--mv-n, set by mvOpen): the Leave row spans them all, so auto-fit columns
+   would leave empty ones beside the cards */
+#dialog.mv-dlg { top: auto; bottom: 8.5em; transform: translateX(-50%); min-width: min(max(40em, calc(var(--mv-n, 4) * 10.5em + 3em)), 94vw); }
+#dialog.mv-dlg:not(.mv-chans) #dlg-list { display: grid; grid-template-columns: repeat(var(--mv-n, 4), minmax(0, 1fr)); gap: .6em; }
+#dlg-list li.mv-lay { flex-direction: column; justify-content: center; gap: .6em; padding: 1em .6em .8em; font-size: 1.05em; font-weight: 600; text-align: center;
+  border: 1px solid var(--line); }
+#dlg-list li.mv-lay.cur:not(.sel) { border-color: var(--hl); }
+#dlg-list li.mv-row { grid-column: 1 / -1; justify-content: center; font-size: 1em; }
+.mv-ico { position: relative; display: block; width: 8em; height: 4.5em; flex: none; border-radius: .3em; background: var(--c-fg-0d); outline: 1px solid var(--line); }
+.mv-ico i { position: absolute; border-radius: .2em; background: var(--c-fg-40); }
+.mv-ico i:first-child { background: var(--a-sports); }
+li.sel .mv-ico { background: #00000014; outline-color: #00000040; }
+li.sel .mv-ico i { background: #00000040; }
+li.sel .mv-ico i:first-child { background: var(--hl-text); }
+.mv-ico[data-l="split"] i:nth-child(1) { left: 4%; top: 25%; width: 44%; height: 50%; }
+.mv-ico[data-l="split"] i:nth-child(2) { left: 52%; top: 25%; width: 44%; height: 50%; }
+.mv-ico[data-l="pip"] i:nth-child(1) { inset: 4%; }
+.mv-ico[data-l="pip"] i:nth-child(2) { left: 64%; top: 10%; width: 30%; height: 30%; background: var(--hl); outline: 2px solid var(--c-bg); }
+li.sel .mv-ico[data-l="pip"] i:nth-child(2) { background: var(--c-fg); }
+.mv-ico[data-l="big"] i:nth-child(1) { left: 4%; top: 18%; width: 62%; height: 64%; }
+.mv-ico[data-l="big"] i:nth-child(2) { left: 68%; top: 18%; width: 28%; height: 31%; }
+.mv-ico[data-l="big"] i:nth-child(3) { left: 68%; top: 51%; width: 28%; height: 31%; }
+.mv-ico[data-l="big3"] i:nth-child(1) { left: 4%; top: 13%; width: 66%; height: 74%; }
+.mv-ico[data-l="big3"] i:nth-child(2) { left: 72%; top: 13%; width: 24%; height: 23%; }
+.mv-ico[data-l="big3"] i:nth-child(3) { left: 72%; top: 38.5%; width: 24%; height: 23%; }
+.mv-ico[data-l="big3"] i:nth-child(4) { left: 72%; top: 64%; width: 24%; height: 23%; }
+.mv-ico[data-l="grid"] i:nth-child(1) { left: 4%; top: 6%; width: 44%; height: 42%; }
+.mv-ico[data-l="grid"] i:nth-child(2) { left: 52%; top: 6%; width: 44%; height: 42%; }
+.mv-ico[data-l="grid"] i:nth-child(3) { left: 4%; top: 52%; width: 44%; height: 42%; }
+.mv-ico[data-l="grid"] i:nth-child(4) { left: 52%; top: 52%; width: 44%; height: 42%; }
+/* a phone held upright: the two pictures one above the other */
+@media (orientation: portrait) {
+  .phone #tv[data-mv="split"] [data-pos="1"]:not(.pip) { left: 0; top: 12%; width: 100%; height: 36%; }
+  .phone #tv[data-mv="split"] [data-pos="2"]:not(.pip) { left: 0; top: 50%; width: 100%; height: 36%; }
+}
+
 /* power screen */
 .screen { position: absolute; inset: 0; z-index: 90; background: radial-gradient(ellipse at center, var(--c-s5) 0%, var(--c-bg0) 70%); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .power-box { text-align: center; }

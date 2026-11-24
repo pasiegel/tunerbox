@@ -130,6 +130,9 @@ DEFAULTS = {
     # the Home button opens the guide, and Home is left out of the menus. Each screen can still choose,
     # in its Menu, not to start on Home.
     "home_screen": True,
+    # Multiview: a TV screen watching two to four live channels at once (multiview.py). How many is
+    # worked out from the playlists' connections (multiview.capacity); off: one channel at a time.
+    "multiview_enabled": False,          # off until turned on in Settings › Screens
     # Home's rows top to bottom (ids in home.ROWS; a row missing here goes at the end, in its usual place),
     # and the ones switched off. Hidden rows come back from /api/home as empty lists.
     "home_order": [],
@@ -293,7 +296,7 @@ VOD_DETAILS = ("auto", "ask", "off")
 PC_ONLY = {"ffmpeg", "recordings_dir", "lineup_csv", "host", "port", "require_pairing",
            "https_enabled", "https_port", "https_hosts"}
 # Managed through their own API calls, never through /api/settings
-NOT_SETTABLE = {"devices", "hdhr_device_id", "vod_available"}
+NOT_SETTABLE = {"devices", "hdhr_device_id", "vod_available", "multiview_max"}
 
 
 def _is_num(v):

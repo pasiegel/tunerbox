@@ -129,9 +129,10 @@ function pbWithRemote() { clearTimeout(vodBarTimer); clearTimeout(pbTimer); }
 function hideRemote() { $("remote").classList.add("hidden"); $("rm-menu").classList.add("hidden"); }
 let rmSeq = 0;
 async function remoteSync() {
-  const vol = $("rm-volume");
-  vol.value = Math.round((video.muted ? 0 : video.volume) * 100);
-  $("rm-mute").querySelector("use").setAttribute("href", video.muted || video.volume === 0 ? "#i-mute" : "#i-vol");
+  mvBarSync();
+  const vol = $("rm-volume"), a = soundEl();
+  vol.value = Math.round((a.muted ? 0 : a.volume) * 100);
+  $("rm-mute").querySelector("use").setAttribute("href", a.muted || a.volume === 0 ? "#i-mute" : "#i-vol");
   const ch = curCh();
   if (S.mode !== "live" || !ch) { $("rm-now").innerHTML = ""; return; }
   const fav = S.favs.has(ch.number);
@@ -157,15 +158,16 @@ async function remoteSync() {
   } catch (_) {}
 }
 $("rm-volume").addEventListener("input", (e) => {
-  video.volume = +e.target.value / 100; video.muted = video.volume === 0;
-  try { localStorage.setItem("tb.vol", video.volume); } catch (_) {}
-  $("rm-mute").querySelector("use").setAttribute("href", video.muted ? "#i-mute" : "#i-vol");
+  const a = soundEl();
+  a.volume = +e.target.value / 100; a.muted = a.volume === 0;
+  try { localStorage.setItem("tb.vol", a.volume); } catch (_) {}
+  $("rm-mute").querySelector("use").setAttribute("href", a.muted ? "#i-mute" : "#i-vol");
 });
 $("remote").addEventListener("wheel", (e) => {          // the mouse wheel over the controls: volume
   if (!e.target.closest(".rm-vol")) return;
   e.preventDefault();
-  const v = Math.max(0, Math.min(1, video.volume + (e.deltaY < 0 ? 0.05 : -0.05)));
-  video.volume = v; video.muted = v === 0; $("rm-volume").value = Math.round(v * 100);
+  const a = soundEl(), v = Math.max(0, Math.min(1, a.volume + (e.deltaY < 0 ? 0.05 : -0.05)));
+  a.volume = v; a.muted = v === 0; $("rm-volume").value = Math.round(v * 100);
   try { localStorage.setItem("tb.vol", v); } catch (_) {}
 }, { passive: false });
 document.addEventListener("mousemove", () => {
@@ -195,6 +197,7 @@ $("remote").addEventListener("click", (e) => {
     $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return;
   }
   if (b.id === "rm-startover") { clearTimeout(idleTimer); hideRemote(); startOver(); return; }
+  if (b.id === "rm-mv") { clearTimeout(idleTimer); hideRemote(); mvOpen(); return; }
   if (!b.dataset.k) return;
   // CH up/down, favorite and mute keep the controls up (flipping through channels); others put them away
   const stay = ["ChannelUp", "ChannelDown", "*", "u"].includes(b.dataset.k);
