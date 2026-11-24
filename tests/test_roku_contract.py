@@ -26,6 +26,12 @@ ROKU_ROUTES = [
     ("GET", "/api/sports/group"),
     ("GET", "/api/sports/check"),
     ("GET", "/api/sports/stats"),
+    ("POST", "/api/mv/plan"),           # multiview (richakev's fork only: the Roku checks /api/mv/status first)
+    ("GET", "/api/mv/stream"),
+    ("GET", "/api/mv/status"),
+    ("POST", "/api/mv/sound"),
+    ("GET", "/api/mv/room"),
+    ("POST", "/api/stop"),             # leaving multiview frees every picture first
     ("POST", "/api/sports/check"),
     ("GET", "/api/vod"),
     ("GET", "/api/vod/categories"),

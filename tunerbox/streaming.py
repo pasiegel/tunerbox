@@ -221,6 +221,8 @@ def stop_client(client_id):
             _playing.pop(id(p), None)       # its connection is free now (connections.used)
     kill(p)
     tuner.stop_client(client_id)
+    from . import mvstream          # a screen's tiled multiview (the Roku's) stops with it
+    mvstream.stop_screen(client_id)
 
 
 def _pump(proc, q, stop, wake):
