@@ -138,6 +138,7 @@ def overview(recent=()):
     cont = [x for x in cont if ("cont" if x["type"] == "vod" else "contrec") in on]
     return {
         "rows": shown,
+        "dvr": dvr.enabled(),          # Setup › Settings › DVR › Recordings now, so an open TV can drop its Recordings shortcut
         "favorites": _on_now(_channels(favs)[:ROW], now, by_ch) if "fav" in on else [],
         "recent": _on_now(_channels(recent)[:ROW], now, by_ch) if "recent" in on else [],
         "continue": cont,

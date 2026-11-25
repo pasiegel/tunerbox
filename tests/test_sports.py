@@ -157,6 +157,18 @@ def test_game_matches_listing(home, away, title, subtitle, want):
     assert scoreboard.text_matches(keys, scoreboard.candidates(subtitle, title, f"{title} {subtitle}")) is want
 
 
+def test_shared_nickname_is_not_both_teams():
+    fdu = _team("Fairleigh Dickinson Knights", "Knights", "Fairleigh Dickinson", "FDU")
+    vtsu = _team("Vermont State Randolph Knights", "Knights", "Vermont State Randolph", "VTSU")
+    keys = scoreboard.event_keys(_game(1, "nfl", 0, fdu, vtsu))
+    for name in ("US| Dallas Stars vs Vegas Golden Knights @ Nov 19 7:00 PM :Disney+",
+                 "flohockey: 2026 Abbotsford Canucks vs Henderson Silver Knights", "Knights at Knights"):
+        assert not scoreboard.text_matches(keys, scoreboard.candidates(name)), name
+    assert scoreboard.text_matches(keys, scoreboard.candidates(
+        "NCAA | Vermont State Randolph Knights at Fairleigh Dickinson Knights"))
+    assert scoreboard.text_matches(keys, scoreboard.candidates("Vermont State Randolph at Fairleigh Dickinson"))
+
+
 def test_feed_names_match():
     keys = scoreboard.event_keys(_game(1, "nfl", 0, EAGLES, COWBOYS))
     assert scoreboard.text_matches(keys, scoreboard.candidates("NFL 03 | Dallas Cowboys vs Philadelphia Eagles @ 8:20 PM ET"))

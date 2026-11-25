@@ -367,7 +367,13 @@ def team_keys(t):
 
 
 def event_keys(ev):
-    return team_keys(ev["home"]), team_keys(ev["away"])
+    """Both teams' keys, less any name they share: for Fairleigh Dickinson Knights at Vermont State
+    Knights, "knights" says nothing about either side and would match every Knights game."""
+    home, away = team_keys(ev["home"]), team_keys(ev["away"])
+    for k in ("strong", "exact"):
+        both = home[k] & away[k]
+        home[k], away[k] = home[k] - both, away[k] - both
+    return home, away
 
 
 def candidates(*texts):

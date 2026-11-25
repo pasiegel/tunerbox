@@ -310,7 +310,8 @@ function openMenu() {
   l.scrollTop = 0;
   menuOnDemand();
 }
-// the show on now, in On Demand: its entries go into This channel (under Start over) once the server finds it
+// the show on now, in On Demand: its entries go into This channel (under Start over) once the server finds
+// it. The on-screen controls' On Demand button has the same choices, but keyboards and TV remotes need these.
 async function menuOnDemand() {
   const ch = S.mode === "live" && curCh(), shown = menuShown;
   if (!ch || ch.feed || !vodOn()) return;

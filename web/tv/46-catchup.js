@@ -58,14 +58,74 @@ function odFromProgram(m, at) {
   closeDialog(); closeMenu(); closeHome();
   playVod(m.id, at, false);                  // Back / Stop: back to the channel
 }
-// the dialog / menu entries for it ([] when it isn't in On Demand)
-function odProgramEntries(m, p) {
+// what can be done with it: open the show, or play from the start, from where the broadcast is, or
+// from where you stopped ([] when it isn't in On Demand). The guide's dialog and the on-screen controls word them.
+function odChoices(m, p) {
   if (!m) return [];
-  if (m.show) return [{ label: "▶ Find this show in On Demand", act: () => { closeDialog(); closeMenu(); if (top() === "guide") G.close(); openOD("series", m.show); } }];
-  const what = m.kind === "episode" ? `this episode (${(m.sub || "").split(" · ")[0]})` : "this movie";
-  const at = odSpot(m, p), out = [{ label: `▶ Watch ${what} On Demand from the beginning`, act: () => odFromProgram(m, 0) }];
-  if (at > 60) out.push({ label: `▶ Continue On Demand from here (about ${fmtDur(at)} in)`, act: () => odFromProgram(m, at) });
-  if (m.position > RESUME_MIN && Math.abs(m.position - at) > 120)
-    out.push({ label: `▶ Resume On Demand where you stopped (${fmtDur(m.position)})`, act: () => odFromProgram(m, m.position) });
-  return out;
+  if (m.show) return [{ id: "show", act: () => { closeDialog(); closeMenu(); if (top() === "guide") G.close(); openOD("series", m.show); } }];
+  const at = odSpot(m, p), out = [{ id: "start", at: 0 }];
+  if (at > 60) out.push({ id: "here", at });
+  if (m.position > RESUME_MIN && Math.abs(m.position - at) > 120) out.push({ id: "resume", at: m.position });
+  return out.map((c) => ({ ...c, act: () => odFromProgram(m, c.at) }));
 }
+// the guide dialog's entries for it
+function odProgramEntries(m, p) {
+  const what = m && m.kind === "episode" ? `this episode (${(m.sub || "").split(" · ")[0]})` : "this movie";
+  const label = (c) => ({
+    show: "▶ Find this show in On Demand",
+    start: `▶ Watch ${what} On Demand from the beginning`,
+    here: `▶ Continue On Demand from here (about ${fmtDur(c.at)} in)`,
+    resume: `▶ Resume On Demand where you stopped (${fmtDur(c.at)})`,
+  })[c.id];
+  return odChoices(m, p).map((c) => ({ label: label(c), act: c.act }));
+}
+
+// a choice's short label with its icon, and what's in On Demand (the on-screen controls' On Demand button)
+const OD_ICON = {
+  start: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"/></svg>',
+};
+const odShortLabel = (c) => ({
+  show: `${OD_ICON.play}Find this show`,
+  start: `${OD_ICON.start}Start from the beginning`,
+  here: `${OD_ICON.play}Continue · ${fmtDur(c.at)} in`,
+  resume: `${OD_ICON.play}Resume · ${fmtDur(c.at)}`,
+})[c.id];
+const odWhat = (m) => (m.show ? "This show is in On Demand" : `This ${m.kind === "episode" ? "episode" : "movie"} is in On Demand`);
+
+// ---------------------------------------------------------------- the same, on the on-screen controls
+// An "On Demand" button next to Multiview, only while the show on now is in On Demand; it opens its
+// choices above it (70-sleep-screensaver.js sends the clicks here). remoteSync calls rmOdFor.
+const RMOD = { tok: 0, choices: [] };
+function rmOdHide() {
+  RMOD.tok++; RMOD.choices = [];
+  $("rm-od").classList.add("hidden"); $("rm-odsep").classList.add("hidden"); rmOdClose();
+}
+function rmOdClose() { $("rm-odmenu").classList.add("hidden"); $("rm-od").classList.remove("on"); }
+async function rmOdFor(ch, p) {
+  if (RMOD.key === `${ch && ch.number}-${p && p.start}` && RMOD.choices.length) return;    // already up for it
+  rmOdHide(); RMOD.key = "";
+  const tok = RMOD.tok;
+  if (!ch || ch.feed || !p || !vodOn() || S.mode !== "live" || mvOn()) return;
+  const m = await odForProgram(ch, p);
+  if (tok !== RMOD.tok || curCh() !== ch || S.mode !== "live") return;
+  const choices = odChoices(m, p);
+  if (!choices.length) return;
+  Object.assign(RMOD, { choices, m, p, key: `${ch.number}-${p.start}` });
+  $("rm-od").classList.remove("hidden");
+  $("rm-odsep").classList.toggle("hidden", !$("rm-mv").classList.contains("hidden"));   // Multiview's own line does
+}
+function rmOdToggle() {
+  const menu = $("rm-odmenu");
+  if (!menu.classList.contains("hidden")) { rmOdClose(); return; }
+  RMOD.choices = odChoices(RMOD.m, RMOD.p);         // "Continue · 30:06 in": as of now
+  menu.innerHTML = `<div class="rm-odhead">${esc(odWhat(RMOD.m))}</div>`
+    + RMOD.choices.map((c, i) => `<button type="button" data-odi="${i}">${odShortLabel(c)}</button>`).join("");
+  $("rm-menu").classList.add("hidden");
+  menu.classList.remove("hidden"); $("rm-od").classList.add("on");
+  if (!isPhone()) {                                 // above the button, kept on screen
+    const b = $("rm-od").getBoundingClientRect(), w = menu.offsetWidth;
+    menu.style.left = `${Math.max(8, Math.min(b.left, innerWidth - w - 8))}px`;
+  } else menu.style.left = "";
+}
+function rmOdPick(i) { const c = RMOD.choices[i]; rmOdClose(); if (c) c.act(); }

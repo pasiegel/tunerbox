@@ -109,7 +109,8 @@ function hideRemoteLater(ms) {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     // not while the pointer rests on the controls or the More menu is open
-    if ($("remote").matches(":hover") || !$("rm-menu").classList.contains("hidden") || pbHeld()) { hideRemoteLater(1500); return; }
+    if ($("remote").matches(":hover") || !$("rm-menu").classList.contains("hidden") || !$("rm-odmenu").classList.contains("hidden")
+        || pbHeld()) { hideRemoteLater(1500); return; }
     $("tv").classList.add("idle"); hideRemote();
     // a movie's or recording's progress bar goes with the controls (a paused movie keeps it)
     if ((S.mode === "vod" && !(S.vod && S.vod.paused)) || S.mode === "playback") $("playback").classList.add("hidden");
@@ -126,7 +127,7 @@ function showRemote() {
 function pbHeld() { return !!pbScrub || $("playback").matches(":hover"); }
 // the progress bar is up with the controls: it hides when they do (hideRemoteLater), not on its own timer
 function pbWithRemote() { clearTimeout(vodBarTimer); clearTimeout(pbTimer); }
-function hideRemote() { $("remote").classList.add("hidden"); $("rm-menu").classList.add("hidden"); }
+function hideRemote() { $("remote").classList.add("hidden"); $("rm-menu").classList.add("hidden"); rmOdClose(); }
 let rmSeq = 0;
 async function remoteSync() {
   mvBarSync();
@@ -134,7 +135,7 @@ async function remoteSync() {
   vol.value = Math.round((a.muted ? 0 : a.volume) * 100);
   $("rm-mute").querySelector("use").setAttribute("href", a.muted || a.volume === 0 ? "#i-mute" : "#i-vol");
   const ch = curCh();
-  if (S.mode !== "live" || !ch) { $("rm-now").innerHTML = ""; return; }
+  if (S.mode !== "live" || !ch) { $("rm-now").innerHTML = ""; rmOdHide(); return; }
   const fav = S.favs.has(ch.number);
   $("rm-fav").classList.toggle("on", fav);
   $("rm-fav").querySelector("span").textContent = fav ? "Favorite" : "Favorite";
@@ -142,12 +143,13 @@ async function remoteSync() {
   const head = `<span class="rm-num">${esc(String(ch.badge || ch.number))}</span>`
     + (ch.logo ? `<img class="rm-logo" src="${esc(safePic(ch.logo))}" alt="" onerror="this.remove()">` : `<span class="rm-label">${esc(ch.label || ch.name)}</span>`);
   $("rm-now").innerHTML = `${head}<div class="rm-what"><div class="rm-title">${esc(ch.name)}</div></div>`;
-  if (ch.feed || !ch.epg) return;
+  if (ch.feed || !ch.epg) { rmOdHide(); return; }
   const seq = ++rmSeq;
   try {
     const d = await nowNext(ch.number);
     if (seq !== rmSeq || curCh() !== ch) return;
     const p = d.now;
+    rmOdFor(ch, p);                 // the On Demand button, when the show on now is in On Demand (46-catchup.js)
     if (!p) return;
     const pct = Math.min(100, Math.max(0, (now() - p.start) / (p.stop - p.start) * 100));
     const sub = [p.episode, p.subtitle].filter(Boolean).join(" · ");
@@ -192,7 +194,10 @@ $("power").addEventListener("click", () => powerOn());
 $("static").addEventListener("click", () => { if (S.mode === "empty" && !top()) openSetup(); });
 $("remote").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
+  if (b.id === "rm-od") { rmOdToggle(); hideRemoteLater(4000); return; }
+  if (b.dataset.odi) { clearTimeout(idleTimer); hideRemote(); rmOdPick(+b.dataset.odi); return; }
   if (b.id === "rm-more") {
+    rmOdClose();
     $("rm-startover").classList.toggle("hidden", !cuLive());        // only on channels with catch-up
     $("rm-menu").classList.toggle("hidden"); hideRemoteLater(4000); return;
   }

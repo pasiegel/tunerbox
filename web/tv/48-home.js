@@ -26,7 +26,7 @@ const HM_NAV = [
   { label: "Watch TV", info: "Back to full-screen TV", act: () => closeHome() },
   { label: "Guide", info: "What's on, channel by channel", act: () => G.open() },
   { label: "On Demand", feat: "vod", info: "Movies and TV shows from your playlists", act: () => openOD() },
-  { label: "Sports", info: "Games on now and coming up, scores and event feeds", act: () => openSports() },
+  { label: "Sports & Events", info: "Games on now and coming up, scores and event feeds", act: () => openSports() },
   { label: "Recordings", feat: "dvr", info: "Everything recorded or scheduled", act: () => openDvr() },
   { label: "Search", info: "Channels, shows, games, movies and TV shows", act: () => openSearch() },
   { label: "Menu", info: "Favorites, settings, sleep timer and more", act: () => openMenu() },
@@ -103,6 +103,8 @@ async function homeLoad(first) {
   }
   if (seq !== HM.seq || !S.layer.includes("home")) return;
   HM.state = "ok";
+  // Recordings turned on or off in Setup since this screen loaded its settings (older servers don't send it)
+  if (typeof d.dvr === "boolean" && d.dvr !== dvrOn()) { S.settings.dvr_enabled = d.dvr; homeButton(); }
   const row = HM.rows[HM.r], key = row && hmKey(row.items[HM.cols[row.id] || 0]);
   HM.rows = homeRows(d);
   if (first) HM.r = Math.min(1, HM.rows.length - 1);

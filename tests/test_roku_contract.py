@@ -155,6 +155,7 @@ def test_home_lists(client):
     for key in ("favorites", "teams", "recent", "continue", "library_new", "sports", "recorded", "coming"):   # HomeView.brs makeRow
         assert isinstance(d.get(key), list), key
     assert isinstance(d.get("rows"), list) and all(isinstance(r, str) for r in d["rows"])     # the order HomeView.brs draws
+    assert isinstance(d.get("dvr"), bool)       # added: Recordings on in Setup (older servers leave it out; clients fall back)
 
 
 def test_catchup_is_days_by_channel(client, monkeypatch):

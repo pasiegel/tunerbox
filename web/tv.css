@@ -100,7 +100,8 @@ body:has(#home:not(.hidden)) #video.pip { cursor: pointer; }     /* click it: fu
 #tv[data-mv="grid"] [data-pos="4"]:not(.pip) { left: 50%; top: 50%; width: 50%; height: 50%; }
 /* the Multiview button on the on-screen controls, and its dialog (above the controls): the layouts as a
    row of cards (.mv-ico draws each one, its <i>s placed like the pictures), then a list of channels */
-#remote button.rm-mv { box-shadow: inset 0 0 0 2px var(--hl); color: var(--hl); }
+#remote button.rm-mv, #remote button.rm-od { box-shadow: inset 0 0 0 2px var(--hl); color: var(--hl); }
+#remote button.rm-od.on { background: var(--hl); color: var(--hl-text); box-shadow: none; }   /* its choices are open */
 #remote button.rm-mv.on { background: var(--hl); color: var(--hl-text); box-shadow: none; }
 /* one column per layout card (--mv-n, set by mvOpen): the Leave row spans them all, so auto-fit columns
    would leave empty ones beside the cards */
@@ -417,6 +418,11 @@ li.sel .mv-ico[data-l="pip"] i:nth-child(2) { background: var(--c-fg); }
 #remote .rm-menu button { display: flex; width: 100%; justify-content: space-between; border-radius: .6em; font-weight: 500; color: var(--c-t1); }
 #remote .rm-menu button small { color: var(--dim); }
 #remote:not(.live) .rm-live { display: none; }
+/* the On Demand button's choices: above the button (left set by 46-catchup.js); phones: where More's menu goes */
+html:not(.phone) .rm-odmenu { right: auto; }
+.rm-odmenu .rm-odhead { padding: .5em .8em .35em; color: var(--hl); font-weight: 700; font-size: .8em; letter-spacing: .06em; text-transform: uppercase; }
+#remote .rm-odmenu button { justify-content: flex-start; gap: .6em; font-weight: 600; color: var(--text); }
+#remote .rm-odmenu button svg { width: 1.1em; height: 1.1em; }
 #remote:not(.live) .rm-bottom { background: none; padding-top: 0; bottom: auto; top: calc(2.5vh + 4em); }   /* movies and recordings have their own bar at the bottom */
 html:not(.phone) #tv:has(#remote.live:not(.hidden)) #banner { display: none; }                 /* the controls show what's on instead */
 

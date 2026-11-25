@@ -1,6 +1,6 @@
 """The guide's show in On Demand, in a real browser: a show or movie on now that's also in On Demand gets
-"from the beginning" and "continue from here" in its guide dialog and in the Menu, and a server without
-/api/vod/for-program (an older TunerBox) just leaves them out. The server is mocked.
+"from the beginning" and "continue from here" in its guide dialog, in the Menu and on the on-screen controls'
+On Demand button, and a server without /api/vod/for-program (an older TunerBox) just leaves them out. The server is mocked.
 
 Needs Playwright (see test_ui_gamestats.py); skipped when it isn't installed."""
 import json
@@ -24,7 +24,7 @@ ITEM = {"id": "1:e101", "title": "Dragnet", "sub": "S1 E1", "duration": 42 * 60,
 def _bundle():
     js = bundle.tv_js()
     end = js.rindex("})();")
-    return js[:end] + "window.__t = { S, tune, programDialog, openMenu };\n" + js[end:]
+    return js[:end] + "window.__t = { S, tune, programDialog, openMenu, showRemote };\n" + js[end:]
 
 
 def server(match=True):
@@ -79,6 +79,13 @@ def labels(pg, sel):
     return pg.evaluate(f"[...document.querySelectorAll('{sel} li')].map((li) => li.textContent)")
 
 
+def assert_seeks_to_the_broadcast(url):
+    """ss= is where the broadcast is when it was clicked: 30 minutes in at import (T0), then 42/60 of a
+    second per second since, so a long (parallel) run doesn't push it past a fixed bound."""
+    want = (time.time() - T0) * 42 / 60
+    assert abs(float(url.split("ss=")[1].split("&")[0]) - want) < 15
+
+
 def test_guide_dialog_offers_on_demand_from_the_start_or_from_here(browser):  # noqa: F811
     pg = open_tv(browser)
     pg.evaluate(f"window.__t.programDialog(window.__t.S.channels[0], {json.dumps(PROG)})")
@@ -92,7 +99,7 @@ def test_guide_dialog_offers_on_demand_from_the_start_or_from_here(browser):  # 
     pg.wait_for_function("window.__streams.some((u) => u.includes('/api/vod/stream/'))")
     url = next(u for u in pg.evaluate("window.__streams") if "/api/vod/stream/" in u)
     assert url.startswith("/api/vod/stream/1%3Ae101?ss=")
-    assert 1790 < float(url.split("ss=")[1].split("&")[0]) < 1820
+    assert_seeks_to_the_broadcast(url)
     assert pg.evaluate("window.__t.S.mode") == "vod" and pg.evaluate("window.__t.S.vod.back") is False
     pg.close()
 
@@ -114,4 +121,46 @@ def test_an_older_server_just_has_no_on_demand_entries(browser):  # noqa: F811
     pg.evaluate("window.__t.openMenu()")
     pg.wait_for_timeout(300)
     assert not any("On Demand" in x for x in labels(pg, "#dlg-list") + labels(pg, "#menu-list") if "▶" in x)
+    pg.close()
+
+
+# ---------------------------------------------------------------- the On Demand button on the on-screen controls
+def controls(pg):
+    pg.mouse.move(640, 300)                             # the mouse brings up the on-screen controls
+    pg.evaluate("window.__t.showRemote()")
+
+
+def test_controls_get_an_on_demand_button_with_its_choices(browser):  # noqa: F811
+    pg = open_tv(browser)
+    controls(pg)
+    pg.wait_for_selector("#rm-od:not(.hidden)", timeout=5000)
+    pg.click("#rm-od")
+    assert pg.is_visible("#rm-odmenu")
+    assert pg.text_content("#rm-odmenu .rm-odhead") == "This episode is in On Demand"
+    got = pg.evaluate("[...document.querySelectorAll('#rm-odmenu button')].map((b) => b.textContent)")
+    assert got[0] == "Start from the beginning" and got[1].startswith("Continue · 30:")
+    pg.click("#rm-odmenu button:nth-of-type(2)")       # Continue: from where the broadcast is
+    pg.wait_for_function("window.__streams.some((u) => u.includes('/api/vod/stream/'))")
+    url = next(u for u in pg.evaluate("window.__streams") if "/api/vod/stream/" in u)
+    assert_seeks_to_the_broadcast(url)
+    assert pg.evaluate("window.__t.S.mode") == "vod" and pg.is_hidden("#remote")
+    pg.close()
+
+
+def test_controls_on_demand_button_toggles_its_menu(browser):  # noqa: F811
+    pg = open_tv(browser)
+    controls(pg)
+    pg.wait_for_selector("#rm-od:not(.hidden)", timeout=5000)
+    pg.click("#rm-od")
+    assert pg.is_visible("#rm-odmenu")
+    pg.click("#rm-od")
+    assert pg.is_hidden("#rm-odmenu")
+    pg.close()
+
+
+def test_an_older_server_has_no_on_demand_button(browser):  # noqa: F811
+    pg = open_tv(browser, match=False)
+    controls(pg)
+    pg.wait_for_timeout(800)
+    assert pg.is_hidden("#rm-od")
     pg.close()
