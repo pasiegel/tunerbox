@@ -95,7 +95,9 @@ table.grid { width: 100%; border-collapse: collapse; }
 .src-card .u { margin: -6px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 .src-card.off > :not(.src-foot) { opacity: .5; }
 .src-st { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--dim); min-width: 0; }
-.src-st.bad { color: #ff8a95; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-st.bad { color: #ff8a95; }
+.src-st .src-why { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src-st .btn { flex: none; }
 .src-stats { display: flex; gap: 28px; }
 .src-stats div { display: flex; flex-direction: column; }
 .src-stats b { font-size: 22px; line-height: 1.1; font-variant-numeric: tabular-nums; }

@@ -47,6 +47,8 @@ ROKU_ROUTES = [
     ("POST", "/api/vod/forget"),
     ("GET", "/api/vod/tracks/{item_id}"),
     ("GET", "/api/vod/subs/{item_id}/{sub_id}"),
+    # the show on a channel in On Demand (richakev's fork only: the Roku takes a 404 as "not in On Demand")
+    ("GET", "/api/vod/for-program/{number}/{start}"),
     # catch-up TV (MainScene.brs: Start over, past shows in the Guide)
     ("GET", "/api/catchup"),
     ("GET", "/api/guide"),
@@ -169,6 +171,24 @@ def test_vod_tracks_shape(client):
     # MainScene.brs vodTracks: audio and subs lists (empty for a playlist title or a catch-up show)
     d = client.get("/api/vod/tracks/cu-5-1700000000").json()
     assert isinstance(d.get("audio"), list) and isinstance(d.get("subs"), list)
+
+
+def test_vod_for_program_shape(client, monkeypatch):
+    # MainScene.brs gotOdProg / odChoices / odChoiceLabel: match.show, or match.id, kind, sub, duration, position
+    from tunerbox import guide, vod
+    monkeypatch.setattr(guide, "channel", lambda n: {"number": n, "epg": "x:five"} if n == 5 else None)
+    monkeypatch.setattr(vod, "enabled", lambda: True)
+    db.run("INSERT INTO programs(channel, start, stop, title, subtitle, episode, category) VALUES "
+           "('x:five', 1000, 4600, 'Dragnet', 'The Human Bomb', 'S01E01', 'Series')")
+    monkeypatch.setattr(vod, "for_program", lambda *a: {"id": "1:e101", "kind": "episode", "title_id": "1:s7"})
+    monkeypatch.setattr(vod, "item", lambda i: {"title": "Dragnet", "sub": "S1 E1 · The Human Bomb",
+                                                "duration": 1500, "position": 400})
+    m = client.get("/api/vod/for-program/5/1000").json()["match"]
+    for key in ("id", "kind", "sub", "duration", "position"):
+        assert key in m, key
+    monkeypatch.setattr(vod, "for_program", lambda *a: {"show": "1:s7"})
+    assert client.get("/api/vod/for-program/5/1000").json()["match"] == {"show": "1:s7"}
+    assert client.get("/api/vod/for-program/6/1000").json()["match"] is None
 
 
 def test_home_rows_known_to_roku():

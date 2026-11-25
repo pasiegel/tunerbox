@@ -427,7 +427,8 @@ function srcAccount(s) {
 // the last scan: fine (green, when), failed (red, why), or not yet
 function srcStatus(s) {
   const st = s.status || "";
-  if (st.startsWith("error")) return `<div class="src-st bad" title="${esc(st)}"><span class="dot dead"></span>${esc(st.replace(/^error:\s*/, "Scan failed: "))}</div>`;
+  // failed (often an antenna tuner that was off, busy or slow to answer): offer to read just this one again
+  if (st.startsWith("error")) return `<div class="src-st bad"><span class="dot dead"></span><span class="src-why" title="${esc(st)}">${esc(st.replace(/^error:\s*/, "Scan failed: "))}</span>${s.enabled ? '<button class="btn small" data-a="rescan" title="Read this playlist again">Rescan</button>' : ""}</div>`;
   if (!st) return '<div class="src-st"><span class="dot unknown"></span>Not scanned yet</div>';
   return `<div class="src-st"><span class="dot ok"></span>Scanned${s.updated_at ? ` ${fmt(s.updated_at)}` : ""}</div>`;
 }
@@ -494,6 +495,7 @@ $("src-list").addEventListener("click", async (e) => {
   const card = b.closest(".card"), id = card.dataset.id;
   if (b.dataset.a === "edit") { openSrcDlg(srcList.find((s) => s.id === +id)); return; }
   if (b.dataset.a === "groups") { openGroups(+id); return; }
+  if (b.dataset.a === "rescan") { b.disabled = true; b.textContent = "Rescanning…"; startJob("scan", `?source=${id}`); return; }
   if (b.dataset.a === "del" && confirm("Delete this playlist?")) await api(`/api/sources/${id}`, { method: "DELETE" });
   if (b.dataset.a === "toggle") await api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: b.textContent === "Enable" ? 1 : 0 } });
   loaders.sources();
