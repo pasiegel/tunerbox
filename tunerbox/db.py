@@ -89,6 +89,17 @@ CREATE TABLE IF NOT EXISTS programs (
     PRIMARY KEY (channel, start)
 );
 CREATE INDEX IF NOT EXISTS ix_programs_time ON programs(channel, stop);
+-- Every category an XMLTV guide gives a listing, where it gives more than one ("Series|Pro wrestling"):
+-- programs.category keeps only the first. A table of its own (not a column) so an older TunerBox, which
+-- inserts programs rows by position, still works on this database.
+CREATE TABLE IF NOT EXISTS program_genres (
+    channel TEXT NOT NULL,
+    start INTEGER NOT NULL,
+    stop INTEGER NOT NULL,
+    genres TEXT NOT NULL,
+    PRIMARY KEY (channel, start)
+);
+CREATE INDEX IF NOT EXISTS ix_program_genres_stop ON program_genres(stop);
 CREATE TABLE IF NOT EXISTS epg_names (
     norm TEXT NOT NULL,            -- normalized XMLTV display-name
     channel TEXT NOT NULL,

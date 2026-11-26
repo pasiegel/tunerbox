@@ -118,7 +118,6 @@ def tv(browser):
         const m = window.__mv;
         document.querySelectorAll('#home,#dvr,#guide,#od,.screen,#welcome').forEach((e) => e.classList.add('hidden'));
         m.S.layer = [];
-        m.S.settings.multiview_enabled = true;      // off by default: these tests are about using it
         m.S.channels = {json.dumps(CHANNELS)};
         m.S.byNum = new Map(m.S.channels.map((c, i) => [c.number, i]));
         m.tune(0, 0, true);
@@ -210,7 +209,7 @@ def test_four_squares_and_leaving_keeps_the_highlighted_one(tv):
     assert tv.evaluate("document.getElementById('tv').dataset.mv") == "grid"
     assert tv.evaluate("!document.querySelector('#mv .mv-add').classList.contains('hidden')")   # the spare square
     add(tv, 3)
-    tv.wait_for_timeout(400)      # the tiles slide into place (.25 s): measure once they're there
+    tv.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")   # the pictures slide into place
     fr = frames(tv)
     assert sorted(p for _, p, _, _ in fr) == [1, 2, 3, 4]
     assert {tuple(r) for *_, r in fr} == {(0, 0, 640, 360), (640, 0, 640, 360), (0, 360, 640, 360), (640, 360, 640, 360)}

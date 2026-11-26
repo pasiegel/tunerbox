@@ -308,12 +308,20 @@ Neither happens while a recording is running or a phone remote is open. Turn eit
 * **Search** (`/`, Menu › Search, or **Search** on the on-screen controls) looks through channel names and numbers, the next 7 days of the guide (shows, teams, games), and event feeds.
   * Type on a keyboard, or use the on-screen keyboard with a remote: ◀ ▶ move between the keyboard and the results.
   * OK on a show that's on now tunes it. A later show opens the record options.
-* **Sports & Events** (`T`, Menu › Sports & Events, or **Sports & Events** on the on-screen controls) has four tabs:
-  * **On Now:** live games from the guide.
-  * **Coming Up:** the next 2 days. OK opens the record options.
-  * **Live games and scores.** Pick the leagues you follow in Setup › Settings › **Sports** (NFL, college football, NBA, college basketball, MLB and NHL to start with; WNBA and soccer leagues are there too). Their games come from ESPN's public scoreboard, which needs no account, and each one is matched to a guide listing or an event feed by team names and start time. Matched games show in On Now and Coming Up with the score, even when the guide doesn't label the listing as sports or the game runs past its slot. Games none of your channels carry are listed dimmed with where they air; turn that off with *List games you have no channel for*.
-  * **Sports Channels:** sports networks with what's on now.
-  * **Events:** event groups from your playlists, such as PPV, PLE, special events, ESPN+, Peacock events, and NFL/NBA/NHL team feeds.
+* **Sports & Events** (`T`, Menu › Sports & Events, or **Sports & Events** on the on-screen controls) comes in two layouts. Pick one in Setup › Settings › **Sports** › *Sports & Events layout*; it applies to every TV screen and the Roku app.
+  * **Basic** (the default) has four tabs:
+    * **On Now:** live games from the guide.
+    * **Coming Up:** the next 2 days. OK opens the record options.
+    * **Sports Channels:** sports networks with what's on now.
+    * **Events:** event groups from your playlists, such as PPV, PLE, special events, ESPN+, Peacock events, and NFL/NBA/NHL team feeds.
+  * **Enhanced** lists the sports down the left (▲ ▼ pick, ▶ goes in, ◀ comes back) and shows the one picked on the right:
+    * **Live now:** the most interesting game big (a favorite team's, then a close one late on), the other games as score cards with team logos, then the other live sports and what's starting soon. With more than six games, the last card jumps to that sport.
+    * **Your teams**, **Coming up** (by day), each **sport** (its live or next event big, the rest under Today, Tomorrow…), **Sports Channels** and **Event feeds**. Sports with nothing on today are under **More sports**.
+    * Replays, classic games and shows about sport (talk, pre- and postgame) are folded away under **Show replays and shows**. A close game late on, or one in overtime, is tagged **CLOSE GAME** or **OVERTIME**.
+* **What counts as sport:** a guide listing whose category says so (an XMLTV guide often puts it second: *Series, Pro wrestling*), or whose title can only be a sport, so wrestling (WWE, AEW, TNA…), fights (UFC, boxing, kickboxing) and rodeo show up even when the guide files them as *Series*. Shows about a sport (recaps, countdowns, documentaries) are left out.
+* **Live games and scores.** Pick the leagues you follow in Setup › Settings › **Sports** (NFL, college football, NBA, college basketball, MLB and NHL to start with; WNBA, soccer leagues, UFC and PFL are there too). Their games come from ESPN's public scoreboard, which needs no account, and each one is matched to a guide listing or an event feed by team names and start time. Matched games show with the score, even when the guide doesn't label the listing as sports or the game runs past its slot. Games none of your channels carry are listed dimmed with where they air; turn that off with *List games you have no channel for*.
+  * **UFC and PFL** are fight cards rather than games: a card is listed under its name (*UFC Fight Night: Procházka vs. Stirling*), matched by its main event's fighters, and on from the prelims until the main card ends. Its main-card feed comes first and the prelims feed second; press conferences and weigh-ins are left out.
+* **Favorite teams** (Setup › Settings › **Sports**): their games come first, and pop up on the TV when they start. A favorite team's game that turns close late on, or goes to overtime, pops up once more; turn that off with *Pop up when your team's game is close*.
 * **Event feeds only carry video while an event is on**, so the playlist scan usually marks them dead and they get no channel number.
   * Opening a group checks which feeds are live (if the last check is over 15 minutes old). Live feeds are listed first.
   * You can still try any feed. Last/Back returns to the channel you were watching.

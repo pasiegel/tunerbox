@@ -1003,3 +1003,49 @@ def test_pick_a_version_gives_each_versions_own_progress(labelled):
     assert by["1:m202"]["stopped"] > 0
     assert by["1:m302"]["watched"] and by["1:m302"]["position"] == 0
     assert (by["1:m102"]["position"], by["1:m102"]["watched"], by["1:m102"]["stopped"]) == (0, False, 0)
+
+
+# ------------------------------------------------------------------ the guide's show in On Demand
+def test_a_guide_listing_finds_its_movie_or_episode(xtream):
+    sid, calls = xtream
+    assert vod.for_program("Charade") == {"id": f"{sid}:m10", "kind": "movie", "title_id": f"{sid}:m10"}
+    assert vod.for_program("CHARADE (1963)", category="Movie")["id"] == f"{sid}:m10"
+    assert vod.for_program("Charade (1990)") is None                       # another film with the name
+    assert vod.for_program("Charades") is None and vod.for_program("") is None
+    # a show's episode: by season and episode (read from the provider the first time), else its episode title
+    assert vod.for_program("Dragnet", "The Human Bomb", "S01E01")["id"] == f"{sid}:e101"
+    assert calls.count("get_series_info") == 1
+    assert vod.for_program("Dragnet", "", "Season 2 Episode 1")["id"] == f"{sid}:e201"
+    assert vod.for_program("Dragnet", "", "2x01")["id"] == f"{sid}:e201"
+    assert vod.for_program("dragnet", "The Big Actor")["id"] == f"{sid}:e102"
+    assert calls.count("get_series_info") == 1                              # read once, today
+    # the show, but not that episode (or no way to tell which): the show, to open in On Demand
+    assert vod.for_program("Dragnet", "", "S09E09") == {"show": f"{sid}:s7"}
+    assert vod.for_program("Dragnet") == {"show": f"{sid}:s7"}
+
+
+def test_a_missing_episode_rereads_a_list_more_than_a_day_old(xtream):
+    sid, calls = xtream
+    vod.title(f"{sid}:s7")
+    db.run("UPDATE vod_titles SET info_at=? WHERE id=?", (NOW - 2 * 86400, f"{sid}:s7"))
+    assert vod.for_program("Dragnet", "", "S09E09") == {"show": f"{sid}:s7"}
+    assert calls.count("get_series_info") == 2
+    assert vod.for_program("Dragnet", "", "S09E09") == {"show": f"{sid}:s7"}
+    assert calls.count("get_series_info") == 2                              # just read: not again
+
+
+def test_for_program_endpoint(xtream, client, monkeypatch):
+    sid, _ = xtream
+    from tunerbox import guide
+    monkeypatch.setattr(guide, "channel", lambda n: {"number": n, "epg": "x:five"} if n == 5 else None)
+    db.run("INSERT INTO programs(channel, start, stop, title, subtitle, episode, category) VALUES "
+           "('x:five', ?, ?, 'Dragnet', 'The Human Bomb', 'S01E01', 'Series')", (NOW - 600, NOW + 1200))
+    vod.title(f"{sid}:s7")
+    vod.set_progress(f"{sid}:e101", 400, 1500)
+    d = client.get(f"/api/vod/for-program/5/{NOW - 600}").json()
+    assert d["slot"] == {"start": NOW - 600, "stop": NOW + 1200}
+    assert d["match"] == {"id": f"{sid}:e101", "kind": "episode", "title_id": f"{sid}:s7", "title": "Dragnet",
+                          "sub": "S1 E1 · The Human Bomb", "duration": 1500, "position": 400}
+    assert "url" not in d["match"]                                          # never the provider's address
+    assert client.get(f"/api/vod/for-program/5/{NOW + 5000}").json() == {"match": None, "slot": None}
+    assert client.get(f"/api/vod/for-program/6/{NOW}").json() == {"match": None, "slot": None}

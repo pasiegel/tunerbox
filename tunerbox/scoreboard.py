@@ -38,6 +38,9 @@ LEAGUES = {
     "ucl": ("Champions League", "UCL", "Soccer", "soccer/uefa.champions", {}),
     "laliga": ("La Liga", "La Liga", "Soccer", "soccer/esp.1", {}),
     "ligamx": ("Liga MX", "Liga MX", "Soccer", "soccer/mex.1", {}),
+    # fight cards: an event is a card of fights between two fighters, no teams (see _card)
+    "ufc": ("UFC", "UFC", "MMA", "mma/ufc", {}),
+    "pfl": ("PFL", "PFL", "MMA", "mma/pfl", {}),
 }
 
 # What the TV and phone head a game with, where the Settings name is longer than needed
@@ -50,8 +53,13 @@ RETRY = 2 * 60            # after a refresh that got nothing
 EARLY, LATE = 45 * 60, 5 * 60   # a listing counts if it's on air between 5 and 45 minutes after the start
 
 
+CARD_SPORTS = {"MMA"}       # leagues of fight cards: no teams to pick as favorites, no scores
+CARD_LONG = 3 * 3600        # a main card runs about this long
+
+
 def league_list():
-    return [{"key": k, "name": v[0], "sport": v[2]} for k, v in LEAGUES.items()]
+    # "teams": false for leagues with no teams to pick (fight cards)
+    return [{"key": k, "name": v[0], "sport": v[2], "teams": v[2] not in CARD_SPORTS} for k, v in LEAGUES.items()]
 
 
 def favorites():
@@ -94,7 +102,9 @@ def teams(key, now=None):
     if got and now - got["t"] < TEAMS_KEEP:
         _teams_mem[key] = got
         return got["teams"]
-    _, _, _, path, extra = LEAGUES[key]
+    _, _, sport, path, extra = LEAGUES[key]
+    if sport in CARD_SPORTS:
+        return []
     try:
         r = httpx.get(TEAMS_URL.format(path=path), params={"limit": 1000, **extra}, timeout=20,
                       follow_redirects=True, headers={"User-Agent": config.get("user_agent")})
@@ -157,8 +167,51 @@ def _sides(ev):
     return out
 
 
+def _fighter(t):
+    """A fighter, in the shape of a team: matching looks for the full name, or the last name on its
+    own ("UFC FIGHT NIGHT: PROCHAZKA VS STIRLING")."""
+    a = t.get("athlete") or {}
+    full = a.get("displayName") or a.get("fullName") or ""
+    last = full.split()[-1] if full else ""
+    return {"id": "", "name": full, "short": a.get("shortName") or full, "nick": last, "loc": "",
+            "abbr": last, "score": "", "logo": "", "color": "", "alt": ""}
+
+
+def _card(key, e):
+    """A fight card (UFC, PFL) as a game: its two sides are the main event's fighters (the last fight),
+    its name the card's ("UFC Fight Night: Procházka vs. Stirling"). It starts with the prelims;
+    "main" is when the main card starts (the last fights' start), when guides and feeds start it."""
+    comps = [c for c in e.get("competitions") or [] if len(c.get("competitors") or []) == 2]
+    start = _start(e.get("date"))
+    if not comps or not start:
+        return None
+    last = comps[-1]
+    a, b = sorted(last["competitors"], key=lambda t: t.get("order") or 0)
+    if not ((a.get("athlete") or {}).get("displayName") and (b.get("athlete") or {}).get("displayName")):
+        return None
+    main = max(_start(c.get("date")) or start for c in comps)
+    st = (e.get("status") or {}).get("type") or {}
+    state = st.get("state") or "pre"
+    if state == "pre" and last.get("timeValid") is False:      # "TBD": the date is a placeholder
+        return None
+    detail = ""
+    if state == "in":       # which part of the card is on: the first fight not over yet
+        nxt = next((c for c in comps if ((c.get("status") or {}).get("type") or {}).get("state") != "post"), last)
+        detail = "Main card" if (_start(nxt.get("date")) or start) >= main and main > start else "Prelims" if main > start else ""
+    elif state == "post":
+        detail = st.get("shortDetail") or "Final"
+    on = []
+    for b_ in last.get("broadcasts") or []:
+        on += [n for n in b_.get("names") or [] if n and n not in on]
+    return {"id": f"{key}:{e.get('id')}", "league": key, "start": start, "state": state, "detail": detail,
+            "away": _fighter(a), "home": _fighter(b), "on": on[:3],
+            "card": e.get("name") or "", "main": main, "end": main + CARD_LONG}
+
+
 def parse_event(key, e):
     """One scoreboard event as the dict TunerBox keeps, or None (no teams, no start time yet)."""
+    if LEAGUES[key][2] in CARD_SPORTS:
+        return _card(key, e)
     comp = (e.get("competitions") or [{}])[0]
     teams = {}
     for t in comp.get("competitors") or []:
@@ -178,9 +231,14 @@ def parse_event(key, e):
     on = []
     for b in comp.get("broadcasts") or []:
         on += [n for n in b.get("names") or [] if n and n not in on]
+    status = e.get("status") or {}
+    try:
+        period, clock = int(status.get("period") or 0), float(status.get("clock") or 0)
+    except (TypeError, ValueError):
+        period, clock = 0, 0.0
     return {"id": f"{key}:{e.get('id')}", "league": key, "start": start, "state": state,
             "detail": (st.get("shortDetail") or "") if state != "pre" else "",
-            "home": teams["home"], "away": teams["away"], "on": on[:3]}
+            "home": teams["home"], "away": teams["away"], "on": on[:3], "period": period, "clock": clock}
 
 
 def fetch(client, key, day):
@@ -309,7 +367,13 @@ def team_keys(t):
 
 
 def event_keys(ev):
-    return team_keys(ev["home"]), team_keys(ev["away"])
+    """Both teams' keys, less any name they share: for Fairleigh Dickinson Knights at Vermont State
+    Knights, "knights" says nothing about either side and would match every Knights game."""
+    home, away = team_keys(ev["home"]), team_keys(ev["away"])
+    for k in ("strong", "exact"):
+        both = home[k] & away[k]
+        home[k], away[k] = home[k] - both, away[k] - both
+    return home, away
 
 
 def candidates(*texts):
@@ -392,6 +456,8 @@ def match_programs(evs, epg_ids, lo, hi, cache_key=None, sport_of=None):
         return _match_cache["map"]
     starts = [e["start"] for e in evs]             # already sorted
     keys = [event_keys(e) for e in evs]
+    # a fight card's listing starts with its main card, hours after the card (its prelims) does
+    early = max([EARLY] + [e["main"] - e["start"] + EARLY for e in evs if e.get("main")])
     # Most listings name no team at all. A listing can only match if it has the last word of some
     # team name, which is cheap to check before the real (slow) comparison.
     last = {a.split()[-1] for home, away in keys for t in (home, away) for a in t["exact"] | t["strong"]}
@@ -402,7 +468,7 @@ def match_programs(evs, epg_ids, lo, hi, cache_key=None, sport_of=None):
                      (lo, hi)):
         if p["channel"] not in epg_ids:
             continue
-        i, j = bisect.bisect_right(starts, p["start"] - EARLY), bisect.bisect_left(starts, p["stop"] - LATE)
+        i, j = bisect.bisect_right(starts, p["start"] - early), bisect.bisect_left(starts, p["stop"] - LATE)
         if i >= j:
             continue
         raw = f"{p['title'] or ''} {p['subtitle'] or ''}".lower()
@@ -411,6 +477,8 @@ def match_programs(evs, epg_ids, lo, hi, cache_key=None, sport_of=None):
         texts = candidates(p["subtitle"], p["title"], f"{p['title'] or ''} {p['subtitle'] or ''}")
         sport = None
         for n in range(i, j):
+            if p["start"] >= evs[n].get("main", evs[n]["start"]) + EARLY:
+                continue
             if not text_matches(keys[n], texts):
                 continue
             if sport is None:
@@ -425,10 +493,57 @@ def match_programs(evs, epg_ids, lo, hi, cache_key=None, sport_of=None):
 
 
 # ------------------------------------------------------------------ what the Sports screen shows
+# A close game late on: the Sports screen puts it first and marks it, and a favorite team's pops up.
+# Regulation periods (men's college basketball plays halves), how close is close, and how late is late
+# (seconds left on the clock in the last period; soccer's clock counts up, baseball has none).
+REGULATION = {"Basketball": 4, "Football": 4, "Hockey": 3, "Soccer": 2, "Baseball": 9}
+REGULATION_LEAGUE = {"ncaab": 2}
+CLOSE_MARGIN = {"Basketball": 6, "Football": 8, "Hockey": 1, "Soccer": 1, "Baseball": 2}
+LATE_CLOCK = {"Basketball": 300, "Football": 480, "Hockey": 600}
+
+
+def overtime(ev):
+    sport = LEAGUES[ev["league"]][2]
+    reg = REGULATION_LEAGUE.get(ev["league"], REGULATION.get(sport))
+    return bool(reg and ev.get("state") == "in" and (ev.get("period") or 0) > reg)
+
+
+def is_close(ev):
+    sport = LEAGUES[ev["league"]][2]
+    if ev.get("state") != "in" or ev.get("card") or sport not in CLOSE_MARGIN:
+        return False
+    try:
+        margin = abs(float(ev["home"]["score"]) - float(ev["away"]["score"]))
+    except (TypeError, ValueError, KeyError):
+        return False
+    if margin > CLOSE_MARGIN[sport]:
+        return False
+    per, clock = ev.get("period") or 0, ev.get("clock") or 0
+    reg = REGULATION_LEAGUE.get(ev["league"], REGULATION[sport])
+    if per > reg:                       # overtime, extra innings
+        return True
+    if sport == "Baseball":
+        return per >= 7
+    if sport == "Soccer":
+        return per >= 2 and clock >= 70 * 60
+    return per == reg and 0 < clock <= LATE_CLOCK[sport]
+
+
 def title(ev):
+    if ev.get("card"):
+        return ev["card"]
     if LEAGUES[ev["league"]][2] == "Soccer":
         return f"{ev['home']['name']} vs {ev['away']['name']}"
     return f"{ev['away']['name']} at {ev['home']['name']}"
+
+
+def short_title(ev):
+    """title() with the teams' short names ("Texas at Texas A&M", "Cowboys at Eagles"): it has to
+    fit in a guide cell."""
+    if ev.get("card"):
+        return ev["card"]
+    away, home = (ev[s].get("short") or ev[s]["name"] for s in ("away", "home"))
+    return f"{home} vs {away}" if LEAGUES[ev["league"]][2] == "Soccer" else f"{away} at {home}"
 
 
 def public(ev):
@@ -439,4 +554,5 @@ def public(ev):
         score = f"{ev['away']['abbr']} {ev['away']['score']}, {ev['home']['abbr']} {ev['home']['score']}"
     return {"id": ev["id"], "league": tag, "league_name": name, "heading": HEADING.get(ev["league"], name),
             "sport": sport, "name": title(ev), "fav": favorite_teams(ev), "teams": _sides(ev),
-            "state": ev["state"], "detail": ev["detail"], "score": score, "on": ev["on"]}
+            "state": ev["state"], "detail": ev["detail"], "score": score, "on": ev["on"],
+            "close": is_close(ev), "ot": overtime(ev)}

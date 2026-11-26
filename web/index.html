@@ -126,10 +126,17 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
   </div>
 
   <!-- sports & events -->
+  <div id="sports-basic" class="panel xwide hidden">
+    <div class="p-title">Sports &amp; Events <span id="spb-status"></span></div>
+    <div class="tabs" id="spb-tabs"></div>
+    <ul class="list" id="spb-list"></ul>
+    <div class="p-foot" id="spb-foot"></div>
+  </div>
   <div id="sports" class="panel xwide hidden">
-    <div class="p-title">Sports &amp; Events <span id="sp-status"></span></div>
-    <div class="tabs" id="sp-tabs"></div>
-    <ul class="list" id="sp-list"></ul>
+    <div class="sp-body">
+      <nav class="sp-rail" id="sp-rail" aria-label="Sports"></nav>
+      <div class="sp-pane" id="sp-main"></div>
+    </div>
     <div class="p-foot" id="sp-foot"></div>
   </div>
 
@@ -253,6 +260,8 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
           <button data-k="r" class="rm-rec" title="Record (R)"><svg><use href="#i-rec"/></svg>Record</button>
           <span class="sep rm-mv hidden"></span>
           <button id="rm-mv" class="rm-mv hidden" title="Multiview: watch two or more channels at once"><svg><use href="#i-mv"/></svg><span>Multiview</span></button>
+          <span class="sep hidden" id="rm-odsep"></span>
+          <button id="rm-od" class="rm-od hidden" title="This show is in On Demand: watch it from the beginning, or carry on from here"><svg><use href="#i-od"/></svg><span>On Demand</span></button>
         </div>
         <span class="grow"></span>
         <div class="rm-pill rm-vol">
@@ -266,6 +275,8 @@ Settings are saved on this device. Arrow keys, Enter and Esc always work on this
         <button data-k="d">Recordings<small>D</small></button>
         <button data-k="v">Favorites guide<small>V</small></button>
       </div>
+      <!-- the On Demand button's choices (46-catchup.js), above the button -->
+      <div class="rm-menu rm-odmenu hidden" id="rm-odmenu"></div>
     </div>
   </div>
 

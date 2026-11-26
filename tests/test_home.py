@@ -124,3 +124,12 @@ def test_home_row_settings_are_checked():
     assert c.post("/api/settings", json={"home_order": "fav"}).status_code == 400
     # unnamed rows follow the row they usually come after (Recent channels follows Sports on now)
     assert c.get("/api/home").json()["rows"] == ["sports", "recent", "recorded", "coming", "fav", "cont", "contrec", "libnew"]
+
+
+def test_home_says_whether_recordings_are_on(monkeypatch):
+    _setup(monkeypatch)
+    db.run("INSERT INTO recordings(number, title, start, stop, status, file) VALUES (4, 'S', 1, 2, 'done', 'x.mp4')")
+    assert home.overview()["dvr"] is True
+    monkeypatch.setattr(config, "get", lambda k, d=None: False if k == "dvr_enabled" else d)
+    d = home.overview()
+    assert d["dvr"] is False and d["recorded"] == [] and d["continue"] == []

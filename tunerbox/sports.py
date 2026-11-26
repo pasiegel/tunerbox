@@ -8,6 +8,7 @@
   them dead; they are listed anyway, with an on-demand "which are live now" check.
 """
 import asyncio
+import bisect
 import functools
 import logging
 import re
@@ -23,7 +24,7 @@ log = logging.getLogger("tunerbox.sports")
 
 SPORT_CATEGORY = re.compile(
     r"^(sports?|sports? events?|sporting events?|football|american football|basketball|baseball|softball|"
-    r"hockey|ice hockey|soccer|golf|tennis|boxing|wrestling|pro wrestling|mixed martial arts|mma|"
+    r"hockey|ice hockey|soccer|golf|tennis|boxing|kickboxing|wrestling|pro wrestling|mixed martial arts|martial arts|mma|"
     r"multi-sport event|action sports|extreme sports|motorsports?|auto racing|racing|volleyball|lacrosse|"
     r"rugby|cricket|curling|cycling|athletics|track and field|swimming|skiing|figure skating|gymnastics|"
     r"horse racing|olympics|darts|snooker|billiards|bowling|bull riding|rodeo)$", re.I)
@@ -34,6 +35,20 @@ SPORTS_CHANNEL = re.compile(
     r"sportsnet|tsn|olympic|willow|stadium|red ?zone|nesn|yes network|sny|altitude|root sports|masn|"
     r"sportsman|tvg|fight|ufc|wwe|boxing|nascar|racing|f1|dazn|fubo sports|sports?|golazo|fifa|"
     r"bellator|draftkings|fanduel|billiard|lacrosse|outdoor channel)\b", re.I)
+
+# Sports the guide often files as "Series", "Special" or nothing (wrestling, fights, rodeo): the title decides.
+# Only names that can't be anything else: a bare "Raw" or "Impact" would catch talk and religious shows.
+SPORT_TITLE = re.compile(
+    r"\b(wwe|aew|all elite wrestling|nxt|smackdown|monday night raw|wwe raw|tna|ring of honor|roh wrestling|njpw|"
+    r"new japan pro.?wrestling|lucha libre|nwa powerrr?|wrestling|ufc|bellator|pfl|bkfc|kickboxing|"
+    r"boxing|premier boxing champions|top rank|pbr|professional bull riders|bull riding|rodeo|monster jam)\b", re.I)
+# ...unless it's a show about the sport, not the sport: recaps, countdowns, documentaries, movies
+NOT_SPORT_TITLE = re.compile(
+    r"\b(countdown|preview|recap|rewind|classics?|unleashed|highlights|best of|greatest|legends|top \d+|"
+    r"in 60|story|stories|documentary|biography|behind the|untold|uncut|vault)\b", re.I)
+NOT_SPORT_CATEGORY = re.compile(
+    r"movie|film|news|talk|shopping|paid|religio|documentar|kids|children|animat|cooking|sitcom|comedy|drama|"
+    r"reality|music", re.I)
 
 PPV_GROUP = re.compile(r"\bppv\b|pay.?per.?view|fight ?night", re.I)
 EVENT_GROUP = re.compile(
@@ -66,9 +81,9 @@ SPORT_TYPES = [(name, re.compile(rx, re.I)) for name, rx in [
     ("Tennis", r"\b(tennis|atp|wta|wimbledon|us open tennis)\b"),
     ("Motorsports", r"\b(nascar|f1|formula 1|formula one|indycar|motogp|imsa|motocross|supercross|"
                     r"auto racing|motorsports?|grand prix|drag racing)\b"),
-    ("MMA", r"\b(ufc|mma|mixed martial arts|bellator|pfl)\b"),
+    ("MMA", r"\b(ufc|mma|mixed martial arts|martial arts|bellator|pfl|bkfc|bare knuckle|kickboxing)\b"),
     ("Boxing", r"\bboxing\b"),
-    ("Wrestling", r"\b(wrestling|wwe|aew|raw|smackdown|nxt)\b"),
+    ("Wrestling", r"\b(wrestling|wwe|aew|raw|smackdown|nxt|tna|ring of honor|njpw|lucha libre)\b"),
     ("Volleyball", r"\bvolleyball\b"),
     ("Lacrosse", r"\blacrosse\b"),
     ("Rugby", r"\brugby\b"),
@@ -93,13 +108,43 @@ _GENERIC_SPORT = re.compile(r"^(sports?|sports? events?|sporting events?|multi-s
 
 def sport_type(p):
     """'Basketball', 'Football'... for a guide listing, or '' when it can't tell."""
-    cat = (p.get("category") or "").strip()
+    cats = [c.strip() for c in [p.get("category") or ""] + (p.get("genres") or "").split("|")]
+    cats = " | ".join(c for c in cats if c and not _GENERIC_SPORT.match(c))
     # title first: UK-style guides file soccer under "Football"
-    for text in (p.get("title") or "", (cat if not _GENERIC_SPORT.match(cat) else ""), p.get("subtitle") or ""):
+    for text in (p.get("title") or "", cats, p.get("subtitle") or ""):
         for name, rx in SPORT_TYPES:
             if text and rx.search(text):
                 return name
     return ""
+
+
+# What kind of sports listing a row is, for the Sports screen: a scoreboard "game", a "live" broadcast,
+# a "replay" (classic, rewind, an old event), a "show" about sport (talk, pre/postgame, highlights), or
+# "on" when the guide doesn't say. Replays and shows are kept out of the way unless asked for.
+REPLAY_TITLE = re.compile(r"\b(classics?|rewind|replay|encore|re-?airs?|from the vault|greatest games?|instant classics?)\b", re.I)
+SHOW_TITLE = re.compile(r"\b(pre-?game|post-?game|pre-?race|post-?race|pre-?fight|post-?fight|countdown|preview|recap|"
+                        r"highlights|magazine|insiders?|report|daily|uncut|in 60|press conference|weigh-?ins?|"
+                        r"sportscenter|central|talk|show)\b", re.I)
+SHOW_GENRE = re.compile(r"talk|news|magazine|documentar|non-event|interview|analysis", re.I)
+REPLAY_GENRE = re.compile(r"classic", re.I)
+_YEAR = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
+LIVE_TITLE = re.compile(r"^\W*live\b", re.I)
+
+
+def program_kind(p, genres="", now=None):
+    title = p.get("title") or ""
+    cats = " | ".join(c for c in [p.get("category") or "", genres or p.get("genres") or ""] if c)
+    if SHOW_TITLE.search(title) or SHOW_GENRE.search(cats):
+        return "show"
+    year = _YEAR.search(title)
+    this_year = time.localtime(now or time.time()).tm_year
+    # a year two or more back is an old event ("TNA No Surrender 2012"); last year's can still be live
+    # in January ("2026 College Football Playoff")
+    if REPLAY_TITLE.search(title) or REPLAY_GENRE.search(cats) or (year and int(year.group(1)) < this_year - 1):
+        return "replay"
+    if p.get("is_live") or LIVE_TITLE.search(title):
+        return "live"
+    return "on"
 
 
 def _natural(s):
@@ -107,7 +152,17 @@ def _natural(s):
 
 
 def is_sport_program(p):
-    return bool(p["category"] and SPORT_CATEGORY.match(p["category"].strip()))
+    """By the guide's categories (an XMLTV guide often puts the sport second: "Series|Pro wrestling"),
+    then, for guides that don't say (Gracenote only knows "Sports"), by a title that can only be a sport."""
+    cat = (p["category"] or "").strip()
+    if cat and SPORT_CATEGORY.match(cat):
+        return True
+    cats = [c.strip() for c in [cat] + (p.get("genres") or "").split("|") if c.strip()]
+    title = p["title"] or ""
+    # "Series|Football|Documentary", "Sports talk|Football", "IMPACT in 60": about the sport, not the sport
+    if any(NOT_SPORT_CATEGORY.search(c) for c in cats) or NOT_SPORT_TITLE.search(title):
+        return False
+    return any(SPORT_CATEGORY.match(c) for c in cats) or bool(SPORT_TITLE.search(title))
 
 
 def _regions():
@@ -174,8 +229,13 @@ def _sport_programs(start, stop, evs=(), later=True):
     matched = scoreboard.match_programs(evs, by_epg, lo, stop, sport_of=sport_type,
                                         cache_key=(id(_base()), db.get_meta("epg_updated", "")))
     by_id = {e["id"]: e for e in evs}
-    rows = db.rows("SELECT * FROM programs WHERE stop > ? AND start < ? AND category != '' ORDER BY start",
-                   (start, stop if later else start + 1))
+    # Every listing on a channel in the lineup, categories or not (wrestling is often filed under nothing):
+    # only the lineup's channels are read, a few hundred at a time, not the whole guide.
+    rows, keys = [], list(by_epg)
+    for i in range(0, len(keys), 400):
+        part = keys[i:i + 400]
+        rows += db.rows(f"SELECT * FROM programs WHERE channel IN ({','.join('?' * len(part))}) AND stop > ? AND start < ?",
+                        (*part, start, stop if later else start + 1))
     have = {(p["channel"], p["start"]) for p in rows}
     with db.conn() as con:          # the matched listings that query left out (no category, or already over)
         for k in matched.keys() - have:
@@ -183,14 +243,19 @@ def _sport_programs(start, stop, evs=(), later=True):
             if r:
                 rows.append(dict(r))
     rows.sort(key=lambda p: p["start"])
+    genres = {(g["channel"], g["start"]): g["genres"] for g in db.rows(
+        "SELECT channel, start, genres FROM program_genres WHERE stop > ? AND start < ?", (lo, stop if later else start + 1))}
     out = []
     for p in rows:
         c = by_epg.get(p["channel"])
         ev = by_id.get(matched.get((p["channel"], p["start"])))
-        if not c or not (ev or is_sport_program(p)):
+        g = {**p, "genres": genres.get((p["channel"], p["start"]), "")}
+        if not c or not (ev or is_sport_program(g)):
             continue
         q = dict(p)
         q.pop("channel", None)
+        q["sport"] = sport_type(g)
+        q["kind"] = program_kind(g)
         q["ch"] = _chan_out(c)
         q["game"] = ev
         out.append(q)
@@ -252,8 +317,16 @@ def _game_feeds(finder, ev):
     ("NFL PPV" for an NFL game) before the catch-all ones."""
     tag = re.compile(rf"\b{re.escape(scoreboard.LEAGUES[ev['league']][1])}\b", re.I)
     feeds = finder.find_all(scoreboard.event_keys(ev))
-    feeds.sort(key=lambda f: (f["status"] != "ok", not tag.search(f["group"] or "")))
+    if ev.get("card"):      # a fight card: not its press conference or weigh-ins, and its prelims after the main card
+        feeds = [f for f in feeds if not NOT_FIGHT_FEED.search(f["name"] or "")]
+    feeds.sort(key=lambda f: (f["status"] != "ok", bool(ev.get("card") and PRELIMS.search(f["name"] or "")),
+                              not tag.search(f["group"] or "")))
     return feeds[:MAX_FEEDS]
+
+
+NOT_FIGHT_FEED = re.compile(r"press conference|presser|weigh.?ins?|face.?offs?|countdown|embedded|post.?fight|pre.?fight|"
+                            r"media day|open workouts?|recap|highlights", re.I)
+PRELIMS = re.compile(r"\b(early )?prelim", re.I)
 
 
 def _game_items(evs, taken, now, finder):
@@ -272,7 +345,7 @@ def _game_items(evs, taken, now, finder):
             continue
         pub = scoreboard.public(ev)
         out.append({"title": pub["name"], "subtitle": pub["league_name"], "descr": "", "category": "Sports",
-                    "start": ev["start"], "stop": max(ev["start"] + 3 * 3600, now + 1800 if ev["state"] == "in" else 0),
+                    "start": ev["start"], "stop": max(ev.get("end") or ev["start"] + 3 * 3600, now + 1800 if ev["state"] == "in" else 0),
                     "is_live": int(ev["state"] == "in"), "is_new": 0, "ch": None, "feed": feeds[0] if feeds else None, "feeds": feeds, "event": pub})
     return out
 
@@ -350,7 +423,9 @@ def _games(now, later=True):
     upcoming = sorted((p for p in progs if p["start"] > now), key=lambda p: (p["start"], _ch_num(p)))[:300]
     for p in on_now + upcoming:
         e = p.get("event")
-        p["sport"] = e["sport"] if e else sport_type(p)
+        p["sport"] = e["sport"] if e else (p.get("sport") or sport_type(p))
+        # "game" for a scoreboard game, else what the listing looks like (see program_kind)
+        p["kind"] = "game" if e else (p.get("kind") or program_kind(p))
         p["heading"], p["matchup"] = heading(p)
     # favorite teams' games first (Settings › Favorite teams), then games nothing here carries go
     # last. Then LIVE broadcasts first, then the rest; within each: earliest start, sport (unknown last), name
@@ -438,6 +513,113 @@ def warm(now=None):
             _warm["running"] = False
     threading.Thread(target=work, daemon=True).start()
     return True
+
+
+# ------------------------------------------------------------------ team names in the guide
+# The guide often lists a game as just "College Football". The guide's subtitle, or the scoreboard
+# game it carries, says who is playing; the guide grid shows that after the title.
+MATCHUP_TEXT = re.compile(r"\w\.?\)?\s+(?:at|vs\.?|v\.?|versus|@)\s+\(?\w", re.I)
+# Network names as the scoreboard gives them and as lineups name channels (often a callsign,
+# "TNTP" for TNT's Pacific feed), squashed to one key. Local stations (KCBS for CBS) can't be told
+# apart this way and are left to the guide's own text.
+NETWORKS = {
+    "foxsports1": "fs1", "foxsports2": "fs2", "sec": "secn", "secnetwork": "secn", "acc": "accn",
+    "accnetwork": "accn", "bigtennetwork": "btn", "b1g": "btn", "cbssports": "cbssn", "cbssportsnetwork": "cbssn",
+    "nflnet": "nfln", "nflnetwork": "nfln", "nhlnet": "nhln", "nhlnetwork": "nhln", "mlbnet": "mlbn",
+    "mlbnetwork": "mlbn", "usanet": "usa", "usanetwork": "usa", "usap": "usa", "usae": "usa", "tntp": "tnt",
+    "tnte": "tnt", "tbsp": "tbs", "tbse": "tbs", "thecw": "cw", "golfchannel": "golf",
+}
+_NET_TAIL = re.compile(r"(?: (?:hd|fhd|uhd|4k|sd|east|west))+$")
+NET_SLACK = 30 * 60         # a listing found by its network starts within this long of the game
+# a listing that says which league it is: a game of another league isn't it
+_LEAGUE_HINTS = [(re.compile(r"\b(college|ncaa\w*)\b", re.I), lambda k: k.startswith("ncaa")),
+                 (re.compile(r"\bwomen'?s?\b", re.I), lambda k: k in ("ncaaw", "wnba")),
+                 (re.compile(r"\bnfl\b", re.I), lambda k: k == "nfl"), (re.compile(r"\bnba\b", re.I), lambda k: k == "nba"),
+                 (re.compile(r"\bwnba\b", re.I), lambda k: k == "wnba"), (re.compile(r"\bnhl\b", re.I), lambda k: k == "nhl"),
+                 (re.compile(r"\bmlb\b", re.I), lambda k: k == "mlb")]
+
+
+def _net(name):
+    n = _NET_TAIL.sub("", scoreboard._n(name)).replace(" ", "")
+    return NETWORKS.get(n, n)
+
+
+_MEN = re.compile(r"\bmen'?s\b", re.I)
+
+
+def _fits_league(p, league):
+    text = f"{p.get('title') or ''} {p.get('subtitle') or ''}"
+    if _MEN.search(text) and league == "ncaaw":
+        return False
+    return all(ok(league) for rx, ok in _LEAGUE_HINTS if rx.search(text))
+
+
+def _matchup_text(p, ev):
+    """The game's teams, without what the listing's title already says ("UFC Fight Night: ...")."""
+    text = scoreboard.short_title(ev)
+    title = (p.get("title") or "").strip()
+    if title and text.lower().startswith(title.lower()):
+        text = text[len(title):].lstrip(" :-|")
+    return text
+
+
+def guide_matchups(chans, progs):
+    """{(guide channel, start): "Texas at Texas A&M"} for the sports listings in `progs` (as
+    epg.programs gives them) whose title doesn't name the teams. From, in order: a scoreboard
+    game the listing names, a scoreboard game on that channel's network at that time, or the
+    listing's subtitle when it reads like a matchup."""
+    nets = {}
+    for c in chans:
+        if c["epg"] in progs:
+            nets.setdefault(c["epg"], set()).update(_net(n) for n in (c["name"], c["label"]) if n)
+    lists = [(k, p) for k in nets for p in progs[k] if _maybe_sport(p) and not MATCHUP_TEXT.search(p["title"] or "")]
+    if not lists:
+        return {}
+    lo, hi = min(p["start"] for _, p in lists), max(p["stop"] for _, p in lists)
+    evs = scoreboard.events(lo - EARLY_CARD, hi)
+    starts = [e["start"] for e in evs]
+    keys, out = {}, {}
+    for k, p in lists:
+        i, j = bisect.bisect_left(starts, p["start"] - EARLY_CARD), bisect.bisect_left(starts, p["stop"])
+        sport = sport_type(p) if i < j else ""
+        texts = None
+        found, near = None, []
+        for ev in evs[i:j]:
+            league_sport = scoreboard.LEAGUES[ev["league"]][2]
+            if sport and sport != league_sport:
+                continue
+            # on air by 45 minutes into the game (a fight card's main card) and still on 5 minutes in
+            if p["start"] >= (ev.get("main") or ev["start"]) + scoreboard.EARLY or p["stop"] <= ev["start"] + scoreboard.LATE:
+                continue
+            if texts is None:
+                texts = scoreboard.candidates(p["subtitle"], p["title"], f"{p['title'] or ''} {p['subtitle'] or ''}")
+            if ev["id"] not in keys:
+                keys[ev["id"]] = scoreboard.event_keys(ev)
+            if scoreboard.text_matches(keys[ev["id"]], texts):
+                found = ev
+                break
+            if (sport and abs(p["start"] - ev["start"]) <= NET_SLACK and _fits_league(p, ev["league"])
+                    and nets[k] & {_net(n) for n in ev.get("on") or []}):
+                near.append(ev)
+        if not found and len(near) == 1:          # two games on the network then: can't tell which
+            found = near[0]
+        text = _matchup_text(p, found) if found else ""
+        if not text and is_sport_program(p) and MATCHUP_TEXT.search(p["subtitle"] or ""):
+            text = p["subtitle"].strip()
+        if text:
+            out[(k, p["start"])] = text
+    return out
+
+
+EARLY_CARD = 6 * 3600       # a fight card's listing can start this long after the card (its prelims)
+
+
+# every SPORT_TYPES name in one pattern: most of a whole guide is checked against it, so one search, not 30
+_ANY_SPORT = re.compile("|".join(f"(?:{rx.pattern})" for _, rx in SPORT_TYPES), re.I)
+
+
+def _maybe_sport(p):
+    return is_sport_program(p) or any(_ANY_SPORT.search(p.get(k) or "") for k in ("title", "category", "subtitle"))
 
 
 # ------------------------------------------------------------------ event / PPV feeds

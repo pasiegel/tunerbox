@@ -427,7 +427,8 @@ function srcAccount(s) {
 // the last scan: fine (green, when), failed (red, why), or not yet
 function srcStatus(s) {
   const st = s.status || "";
-  if (st.startsWith("error")) return `<div class="src-st bad" title="${esc(st)}"><span class="dot dead"></span>${esc(st.replace(/^error:\s*/, "Scan failed: "))}</div>`;
+  // failed (often an antenna tuner that was off, busy or slow to answer): offer to read just this one again
+  if (st.startsWith("error")) return `<div class="src-st bad"><span class="dot dead"></span><span class="src-why" title="${esc(st)}">${esc(st.replace(/^error:\s*/, "Scan failed: "))}</span>${s.enabled ? '<button class="btn small" data-a="rescan" title="Read this playlist again">Rescan</button>' : ""}</div>`;
   if (!st) return '<div class="src-st"><span class="dot unknown"></span>Not scanned yet</div>';
   return `<div class="src-st"><span class="dot ok"></span>Scanned${s.updated_at ? ` ${fmt(s.updated_at)}` : ""}</div>`;
 }
@@ -494,6 +495,7 @@ $("src-list").addEventListener("click", async (e) => {
   const card = b.closest(".card"), id = card.dataset.id;
   if (b.dataset.a === "edit") { openSrcDlg(srcList.find((s) => s.id === +id)); return; }
   if (b.dataset.a === "groups") { openGroups(+id); return; }
+  if (b.dataset.a === "rescan") { b.disabled = true; b.textContent = "Rescanning…"; startJob("scan", `?source=${id}`); return; }
   if (b.dataset.a === "del" && confirm("Delete this playlist?")) await api(`/api/sources/${id}`, { method: "DELETE" });
   if (b.dataset.a === "toggle") await api(`/api/sources/${id}`, { method: "PATCH", body: { enabled: b.textContent === "Enable" ? 1 : 0 } });
   loaders.sources();
@@ -955,26 +957,54 @@ showSetCat(savedCat);
 
 const matchWord = (v) => v >= 98 ? "exact" : v >= 90 ? "strict" : v >= 78 ? "balanced" : "loose";
 
+// Sports & Events layout: two cards; what's saved is the hidden sports_layout field
+function renderSportsLayout() {
+  const v = $("set-form").elements.sports_layout.value || "basic";
+  for (const b of $("sports-layout").querySelectorAll(".layout-opt")) b.setAttribute("aria-checked", String(b.dataset.v === v));
+}
+$("sports-layout").addEventListener("click", (e) => {
+  const b = e.target.closest(".layout-opt"); if (!b) return;
+  $("set-form").elements.sports_layout.value = b.dataset.v;
+  renderSportsLayout(); syncSettings();
+});
+
 // Sports leagues: tick boxes grouped by sport. What's saved is the hidden sports_leagues field
 // (comma-separated here, sent as a list), so the form's load / save / unsaved-changes code covers it.
 let leagueList = null;
+// Each sport is a small card: its leagues as chips, how many are picked, and All / None.
+const SPORT_ICON = { Football: "🏈", Basketball: "🏀", Baseball: "⚾", Hockey: "🏒", Soccer: "⚽", MMA: "🥊" };
 function syncLeagues() {
   const want = new Set($("set-form").elements.sports_leagues.value.split(",").filter(Boolean));
   $("league-grid").querySelectorAll("input").forEach((b) => (b.checked = want.has(b.value)));
+  for (const card of $("league-grid").querySelectorAll(".league-card")) {
+    const boxes = [...card.querySelectorAll("input")], on = boxes.filter((b) => b.checked).length;
+    card.querySelector(".lc-n").textContent = `${on} of ${boxes.length}`;
+    card.querySelector(".lc-all").textContent = on === boxes.length ? "None" : "All";
+    card.classList.toggle("on", on > 0);
+  }
   $("league-count").innerHTML = want.size ? `<b>${want.size}</b> selected` : "Off · TV guide only";
+}
+function saveLeagues() {
+  $("set-form").elements.sports_leagues.value = [...$("league-grid").querySelectorAll("input:checked")].map((b) => b.value).sort().join(",");
+  syncLeagues();
 }
 async function loadLeagues() {
   if (!leagueList) {
     leagueList = await api("/api/sports/leagues");
     const sports = [...new Set(leagueList.map((l) => l.sport))];
-    $("league-grid").innerHTML = sports.map((s) => `<span class="sport">${esc(s)}</span><div class="chips">${leagueList.filter((l) => l.sport === s)
-      .map((l) => `<label class="chip"><input type="checkbox" value="${esc(l.key)}"><span>${esc(l.name)}</span></label>`).join("")}</div>`).join("");
+    $("league-grid").innerHTML = sports.map((s) => `<div class="league-card"><div class="lc-head"><span class="lc-ico" aria-hidden="true">${SPORT_ICON[s] || "🏅"}</span>`
+      + `<b>${esc(s)}</b><span class="lc-n"></span><button type="button" class="lc-all" aria-label="Pick all or none of ${esc(s)}"></button></div><div class="chips">`
+      + leagueList.filter((l) => l.sport === s).map((l) => `<label class="chip"><input type="checkbox" value="${esc(l.key)}"><span>${esc(l.name)}</span></label>`).join("")
+      + "</div></div>").join("");
   }
   syncLeagues();
 }
-$("league-grid").addEventListener("change", () => {      // runs before the form's own change handler
-  $("set-form").elements.sports_leagues.value = [...$("league-grid").querySelectorAll("input:checked")].map((b) => b.value).sort().join(",");
-  syncLeagues();
+$("league-grid").addEventListener("change", saveLeagues);     // runs before the form's own change handler
+$("league-grid").addEventListener("click", (e) => {
+  const b = e.target.closest(".lc-all"); if (!b) return;
+  const boxes = [...b.closest(".league-card").querySelectorAll("input")], all = boxes.every((x) => x.checked);
+  boxes.forEach((x) => (x.checked = !all));
+  saveLeagues(); syncSettings();
 });
 
 // Favorite teams: picked by sport, then league, from ESPN's team lists. Saved as the hidden
@@ -987,7 +1017,7 @@ async function leagueTeams(key) {
   if (!teamCache[key]) teamCache[key] = await api(`/api/sports/teams?league=${encodeURIComponent(key)}`);
   return teamCache[key];
 }
-const teamLogo = (t) => (t && t.logo ? `<img src="${esc(safePic(t.logo))}" alt="" loading="lazy">` : "");
+const teamLogo = (t) => (t && t.logo ? `<img src="${esc(safePic(t.logo))}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : "");
 function setFavs(keys) {
   favField().value = [...new Set(keys)].sort().join(",");
   renderFavs(); renderTeamList(); syncSettings();
@@ -1000,29 +1030,37 @@ function renderFavs() {
     return `<button type="button" class="fav-team" data-k="${esc(k)}" aria-label="Remove ${esc(t ? t.name : k)}">${teamLogo(t)}<span>${esc(t ? t.name : `Team ${id}`)}</span><small>${esc(tag(lg))}</small><span class="x" aria-hidden="true">✕</span></button>`;
   }).join("");
 }
+// the sport and league picked in the team picker (buttons, not lists)
+const TP = { sport: "", league: "" };
 async function renderTeamList() {
-  const lg = $("team-league").value, box = $("team-list");
+  const lg = TP.league, box = $("team-list");
   if (!lg) { box.innerHTML = ""; return; }
   let teams;
   try { teams = await leagueTeams(lg); } catch (e) { box.innerHTML = `<span class="note">${esc(e.message)}</span>`; return; }
-  if ($("team-league").value !== lg) return;          // changed while loading
+  if (TP.league !== lg) return;          // changed while loading
   const q = $("team-filter").value.trim().toLowerCase(), want = new Set(favKeys());
   const hits = teams.filter((t) => !q || t.name.toLowerCase().includes(q) || t.abbr.toLowerCase() === q);
   const shown = hits.slice(0, TEAM_SHOW);
-  box.innerHTML = shown.map((t) => `<label class="chip"><input type="checkbox" value="${esc(`${lg}:${t.id}`)}"${want.has(`${lg}:${t.id}`) ? " checked" : ""}><span>${teamLogo(t)}${esc(t.name)}</span></label>`).join("")
+  box.innerHTML = shown.map((t) => `<label class="team-tile"><input type="checkbox" value="${esc(`${lg}:${t.id}`)}"${want.has(`${lg}:${t.id}`) ? " checked" : ""}><span>${teamLogo(t) || `<i class="tt-abbr">${esc(t.abbr)}</i>`}<b>${esc(t.name)}</b></span></label>`).join("")
     + (!hits.length ? `<span class="note">No team matches “${esc(q)}”.</span>`
        : hits.length > shown.length ? `<span class="note">${hits.length - shown.length} more · type part of a name to find them</span>` : "");
 }
+// leagues with teams to pick: not fight cards (UFC, PFL). An older server sends no "teams": all have them
+const teamLeagues = () => (leagueList || []).filter((l) => l.teams !== false);
+const segBtn = (v, label, on) => `<button type="button" data-v="${esc(v)}" aria-pressed="${on}">${label}</button>`;
 function fillTeamLeagues() {
-  const sport = $("team-sport").value, ls = (leagueList || []).filter((l) => l.sport === sport);
-  $("team-league").innerHTML = ls.map((l) => `<option value="${esc(l.key)}">${esc(l.name)}</option>`).join("");
+  const ls = teamLeagues().filter((l) => l.sport === TP.sport);
+  if (!ls.some((l) => l.key === TP.league)) TP.league = ls.length ? ls[0].key : "";
+  $("team-sport").innerHTML = [...new Set(teamLeagues().map((l) => l.sport))]
+    .map((sp) => segBtn(sp, `<span aria-hidden="true">${SPORT_ICON[sp] || "🏅"}</span> ${esc(sp)}`, sp === TP.sport)).join("");
+  $("team-league").innerHTML = ls.map((l) => segBtn(l.key, esc(l.name), l.key === TP.league)).join("");
   $("team-league").classList.toggle("hidden", ls.length < 2);
   $("team-filter").value = "";
   renderTeamList();
 }
 async function loadTeams() {
-  if (!$("team-sport").options.length && leagueList) {
-    $("team-sport").innerHTML = [...new Set(leagueList.map((l) => l.sport))].map((s) => `<option>${esc(s)}</option>`).join("");
+  if (!TP.sport && leagueList) {
+    TP.sport = (teamLeagues()[0] || {}).sport || "";
     fillTeamLeagues();
   }
   renderFavs();
@@ -1030,8 +1068,14 @@ async function loadTeams() {
   await Promise.all([...new Set(favKeys().map((k) => k.split(":")[0]))].map((lg) => leagueTeams(lg).catch(() => null)));
   renderFavs();
 }
-$("team-sport").addEventListener("change", (e) => { e.stopPropagation(); fillTeamLeagues(); });
-$("team-league").addEventListener("change", (e) => { e.stopPropagation(); $("team-filter").value = ""; renderTeamList(); });
+$("team-sport").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  TP.sport = b.dataset.v; TP.league = ""; fillTeamLeagues();
+});
+$("team-league").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  TP.league = b.dataset.v; fillTeamLeagues();
+});
 $("team-filter").addEventListener("input", (e) => { e.stopPropagation(); renderTeamList(); });
 $("team-list").addEventListener("change", (e) => {
   const b = e.target.closest("input"); if (!b) return;
@@ -1137,6 +1181,7 @@ loaders.settings = async () => {
     el.value = String(shown);
   }
   renderHomeRows();
+  renderSportsLayout();
   try { await loadLeagues(); } catch (e) { $("league-grid").textContent = e.message; }
   loadTeams();
   rememberSaved(); syncSettings();

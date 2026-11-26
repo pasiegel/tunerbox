@@ -228,6 +228,8 @@ def summary(game_id, now=None):
     league, _, espn_id = game_id.partition(":")
     if league not in scoreboard.LEAGUES or not espn_id.isdigit():
         return None
+    if scoreboard.LEAGUES[league][2] in scoreboard.CARD_SPORTS:    # a fight card: no box score
+        return None
     now = now or time.time()
     with _lock:
         hit = _cache.get(game_id)
@@ -284,7 +286,8 @@ def others(game_id=None, now=None):
     sport, tag = (scoreboard.LEAGUES[league][2], scoreboard.LEAGUES[league][1]) if game_id else (None, None)
     games = list(_current(now)["games"])
     games = [g for g in games if g["event"]["id"] != game_id
-             and (g["event"].get("fav") or g["event"]["id"].partition(":")[0] not in SCORES_SKIP)]
+             and (g["event"].get("fav") or g["event"]["id"].partition(":")[0] not in SCORES_SKIP)
+             and g["event"].get("sport") not in scoreboard.CARD_SPORTS]      # a fight card has no score to show
     fresh = {}
     for lg in {g["event"]["id"].partition(":")[0] for g in games}:
         fresh.update(_live_scores(lg, now))

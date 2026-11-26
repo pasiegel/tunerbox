@@ -47,6 +47,8 @@ ROKU_ROUTES = [
     ("POST", "/api/vod/forget"),
     ("GET", "/api/vod/tracks/{item_id}"),
     ("GET", "/api/vod/subs/{item_id}/{sub_id}"),
+    # the show on a channel in On Demand (richakev's fork only: the Roku takes a 404 as "not in On Demand")
+    ("GET", "/api/vod/for-program/{number}/{start}"),
     # catch-up TV (MainScene.brs: Start over, past shows in the Guide)
     ("GET", "/api/catchup"),
     ("GET", "/api/guide"),
@@ -96,6 +98,23 @@ def test_guide_json_rows(client, monkeypatch):
     assert n.json() == {"programs": {"5": [[100, 200, "News", "", "", "News", "", "TV-G"]]}}
 
 
+def test_guide_json_teams(client, monkeypatch):
+    # LoadTask.brs guideJsonUrl asks teams=1 and reads "matchups": {"<number>": {"<start>": text}} beside the
+    # rows; the rows are the same with or without it, and without teams=1 the reply is as before
+    from tunerbox import epg, guide
+    monkeypatch.setattr(guide, "channels", lambda *a: [{"number": 5, "epg": "x:a"}, {"number": 6, "epg": "x:a"},
+                                                       {"number": 7, "epg": "x:b"}])
+    p = {"start": 100, "stop": 200, "title": "College Football", "subtitle": "", "descr": "", "category": "Sports",
+         "episode": "", "rating": ""}
+    monkeypatch.setattr(epg, "programs", lambda keys, a, b: {"x:a": [p], "x:b": [{**p, "start": 300}]})
+    monkeypatch.setattr(sports, "guide_matchups", lambda chans, progs: {("x:a", 100): "Texas at Texas A&M"})
+    plain = client.get("/guide.json?hours=12").json()
+    assert set(plain) == {"programs"}
+    r = client.get("/guide.json?hours=12&teams=1").json()
+    assert r["programs"] == plain["programs"]
+    assert r["matchups"] == {"5": {"100": "Texas at Texas A&M"}, "6": {"100": "Texas at Texas A&M"}}
+
+
 def test_channels_json_rows(client, monkeypatch):
     # LoadTask.brs loadBoot / rowsToChannels: {"channels": [[number, name, logo, group, url, tvg-id, tvg-name,
     # backups]]} (backups: feeds after the main one, for failover and Switch feed),
@@ -141,6 +160,7 @@ def test_home_lists(client):
     for key in ("favorites", "teams", "recent", "continue", "library_new", "sports", "recorded", "coming"):   # HomeView.brs makeRow
         assert isinstance(d.get(key), list), key
     assert isinstance(d.get("rows"), list) and all(isinstance(r, str) for r in d["rows"])     # the order HomeView.brs draws
+    assert isinstance(d.get("dvr"), bool)       # added: Recordings on in Setup (older servers leave it out; clients fall back)
 
 
 def test_catchup_is_days_by_channel(client, monkeypatch):
@@ -154,6 +174,24 @@ def test_vod_tracks_shape(client):
     # MainScene.brs vodTracks: audio and subs lists (empty for a playlist title or a catch-up show)
     d = client.get("/api/vod/tracks/cu-5-1700000000").json()
     assert isinstance(d.get("audio"), list) and isinstance(d.get("subs"), list)
+
+
+def test_vod_for_program_shape(client, monkeypatch):
+    # MainScene.brs gotOdProg / odChoices / odChoiceLabel: match.show, or match.id, kind, sub, duration, position
+    from tunerbox import guide, vod
+    monkeypatch.setattr(guide, "channel", lambda n: {"number": n, "epg": "x:five"} if n == 5 else None)
+    monkeypatch.setattr(vod, "enabled", lambda: True)
+    db.run("INSERT INTO programs(channel, start, stop, title, subtitle, episode, category) VALUES "
+           "('x:five', 1000, 4600, 'Dragnet', 'The Human Bomb', 'S01E01', 'Series')")
+    monkeypatch.setattr(vod, "for_program", lambda *a: {"id": "1:e101", "kind": "episode", "title_id": "1:s7"})
+    monkeypatch.setattr(vod, "item", lambda i: {"title": "Dragnet", "sub": "S1 E1 · The Human Bomb",
+                                                "duration": 1500, "position": 400})
+    m = client.get("/api/vod/for-program/5/1000").json()["match"]
+    for key in ("id", "kind", "sub", "duration", "position"):
+        assert key in m, key
+    monkeypatch.setattr(vod, "for_program", lambda *a: {"show": "1:s7"})
+    assert client.get("/api/vod/for-program/5/1000").json()["match"] == {"show": "1:s7"}
+    assert client.get("/api/vod/for-program/6/1000").json()["match"] is None
 
 
 def test_home_rows_known_to_roku():
@@ -227,3 +265,44 @@ def test_stream_takes_roku_client_and_name(path):
     route = next(r for r in api.app.routes if isinstance(r, Route) and r.path == path)
     params = {p.name for p in route.dependant.query_params}
     assert {"client", "name"} <= params
+
+
+def test_fight_card_rows_have_the_game_fields(client):
+    # a UFC / PFL card is a game like any other on the Roku's Sports and Home screens (SportsView.brs,
+    # HomeView.brs gameHeading): the same keys, an empty score, and no stats panel game
+    import time
+    from test_fight_cards import _raw, _store
+    from tunerbox import config, guide
+    now = int(time.time())
+    _store(scoreboard.parse_event("ufc", _raw(now - 3600, "in", 1)))
+    config.update({"sports_leagues": ["ufc"]})
+    guide.invalidate()
+    (p,) = [p for p in client.get("/api/sports").json()["on_now"] if p.get("event")]
+    for key in ("title", "start", "stop", "is_live", "ch", "heading", "matchup", "sport"):
+        assert key in p, key
+    for key in ("id", "league", "name", "score", "detail", "state", "teams"):
+        assert key in p["event"], key
+    assert p["event"]["score"] == "" and len(p["event"]["teams"]) == 2
+    assert client.get("/api/sports/stats", params={"id": p["event"]["id"]}).json()["game"] is None
+
+
+def test_sports_rows_have_a_kind(client):
+    # SportsView.brs: "kind" folds replays and shows away (absent on older servers: nothing is folded)
+    import time
+    from tunerbox import guide
+    now = int(time.time())
+    sid = db.run("INSERT INTO sources(name, type, url) VALUES ('p', 'm3u', 'http://x')")
+    db.run("INSERT INTO streams(key, source_id, name, url) VALUES ('k2', ?, 'CW', 'http://s')", (sid,))
+    db.run("INSERT INTO lineup(number, name) VALUES (2, 'CW')")
+    db.run("INSERT INTO mappings(number, stream_key, mode) VALUES (2, 'k2', 'manual')")
+    db.run("INSERT INTO programs(channel, start, stop, title, category, is_live) VALUES ('gn:2', ?, ?, 'WWE NXT', '', 1)",
+           (now - 600, now + 3600))
+    guide.invalidate()
+    (p,) = client.get("/api/sports").json()["on_now"]
+    assert p["kind"] == "live" and p["sport"] == "Wrestling"
+
+
+def test_settings_have_the_sports_layout(client):
+    # LoadTask.brs loadSports: "enhanced" picks SportsViewEnhanced; anything else (or none: an older
+    # TunerBox) is the Basic SportsView
+    assert client.get("/api/settings").json()["sports_layout"] == "basic"        # the default

@@ -230,7 +230,7 @@ const G = {
                    past ? "past" : "", cu ? "cu" : "", this.genre && !p.empty && p.genre !== this.genre ? "dim" : ""].join(" ");
         const pre = p.start < this.win ? "&#9664; " : "";
         const post = p.stop > this.win + this.span ? " &#9654;" : "";
-        const title = p.empty && !ch.epg ? ch.name : p.title;
+        const title = p.empty && !ch.epg ? ch.name : p.title + (p.matchup ? ": " + p.matchup : "");
         const dot = (p.rec ? '<span class="dot">&#9679;</span>' : (p.series ? '<span class="dot">&#9679;&#9679;</span>' : ""))
           + (cu ? '<span class="cu-i" title="Catch-up">&#8634;</span>' : "");
         html += `<div class="${c}" data-i="${i}" data-s="${p.start}" style="left:${(l - this.win) / this.span * 100}%;width:${(r - l) / this.span * 100}%">`
@@ -262,7 +262,9 @@ const G = {
       $("gi-meta").textContent = `Channel ${ch.number}`; $("gi-desc").textContent = ""; return;
     }
     $("gi-title").innerHTML = esc(p.title) + " " + flags(p);
-    $("gi-sub").textContent = [p.episode, p.subtitle].filter(Boolean).join("  ·  ");
+    // the game's teams, unless the subtitle already says them
+    const sub = p.matchup && p.matchup !== (p.subtitle || "").trim() ? [p.matchup, p.subtitle] : [p.subtitle];
+    $("gi-sub").textContent = [p.episode, ...sub].filter(Boolean).join("  ·  ");
     const n0 = now(), cu = cuAvailable(ch, p, n0);
     const cuNote = !cu ? "" : p.stop <= n0 ? "   ·   ↺ OK to watch (catch-up)" : "   ·   ↺ OK › Start over";
     $("gi-meta").textContent = `${fmtDay(p.start)}  ${fmtTime(p.start)} – ${fmtTime(p.stop)}   ·   ${ch.number} ${ch.label || ch.name}` + (p.category ? `   ·   ${p.category}` : "") + cuNote;

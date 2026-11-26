@@ -26,7 +26,7 @@ const HM_NAV = [
   { label: "Watch TV", info: "Back to full-screen TV", act: () => closeHome() },
   { label: "Guide", info: "What's on, channel by channel", act: () => G.open() },
   { label: "On Demand", feat: "vod", info: "Movies and TV shows from your playlists", act: () => openOD() },
-  { label: "Sports", info: "Games on now and coming up, scores and event feeds", act: () => openSports() },
+  { label: "Sports & Events", info: "Games on now and coming up, scores and event feeds", act: () => openSports() },
   { label: "Recordings", feat: "dvr", info: "Everything recorded or scheduled", act: () => openDvr() },
   { label: "Search", info: "Channels, shows, games, movies and TV shows", act: () => openSearch() },
   { label: "Menu", info: "Favorites, settings, sleep timer and more", act: () => openMenu() },
@@ -103,6 +103,8 @@ async function homeLoad(first) {
   }
   if (seq !== HM.seq || !S.layer.includes("home")) return;
   HM.state = "ok";
+  // Recordings turned on or off in Setup since this screen loaded its settings (older servers don't send it)
+  if (typeof d.dvr === "boolean" && d.dvr !== dvrOn()) { S.settings.dvr_enabled = d.dvr; homeButton(); }
   const row = HM.rows[HM.r], key = row && hmKey(row.items[HM.cols[row.id] || 0]);
   HM.rows = homeRows(d);
   if (first) HM.r = Math.min(1, HM.rows.length - 1);
@@ -178,7 +180,7 @@ function hmMatchup(e, p, noLogo = false) {
   const sc = (x, lead) => `<b class="${lead ? "lead" : ""}">${esc(x.score)}</b>`;
   const mid = scored
     ? `<span class="mu-sc">${sc(t[0], !(a < b))}<i>–</i>${sc(t[1], !(b < a))}</span>${e.detail ? `<small class="mu-clk">${esc(e.detail)}</small>` : ""}`
-    : `<span class="mu-vs">${e.sport === "Soccer" ? "vs" : "@"}</span>${p && p.start > now() ? `<small class="mu-clk">${esc(fmtTime(p.start))}</small>` : ""}`;
+    : `<span class="mu-vs">${e.sport === "Soccer" || e.sport === "MMA" ? "vs" : "@"}</span>${p && p.start > now() ? `<small class="mu-clk">${esc(fmtTime(p.start))}</small>` : ""}`;
   return `<div class="mu${scored ? " scored" : ""}" style="--l:${col(t[0], "#1d3a7a")};--r:${col(t[1], "#5a1f2a")}">${img(t[0], "l")}`
     + `<div class="mu-mid">${mid}</div>${img(t[1], "r")}</div>`;
 }
@@ -277,7 +279,7 @@ function homeAct(it) {
   if (it.t === "rec") { recDialog(it, () => homeLoad()); return; }
   if (it.t === "game") {                // more than one place: straight to the best, Switch feed lists the rest
     if (gameChans(it.p).length + gameFeeds(it.p).length > 1) { pickGame(it.p, true); return; }
-    const g = spGame(it.p, "", true); if (g.act) g.act(); return;
+    spAct(it.p)(); return;
   }
   const ch = S.channels[S.byNum.get(it.number)];
   const entries = [];
