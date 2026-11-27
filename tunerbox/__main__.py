@@ -10,7 +10,6 @@ import argparse
 import logging
 import logging.handlers
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -197,7 +196,8 @@ def main():
         return
 
     try:
-        lan = socket.gethostbyname(socket.gethostname())
+        from .remote import lan_ip       # skips the 169.254 / loopback addresses of virtual adapters (Npcap)
+        lan = lan_ip()
         print(f"\n  TunerBox: {url}   (other devices: http://{lan}:{port}/)\n  Setup:    {url}setup\n")
     except OSError:
         pass

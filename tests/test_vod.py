@@ -335,6 +335,35 @@ def test_search_typos_need_every_word(monkeypatch):
     assert "Hotel Rwanda" in names("hotel rwnda") and "Hostel" not in names("hotel rwnda")
 
 
+def test_typo_search_twice_at_once(monkeypatch):
+    # two searches at the same moment (fast typing) each built the typo list: four lists, and every typo search
+    # after that failed ("too many values to unpack") until TunerBox restarted
+    import threading
+    _titles(monkeypatch, MOVIES)
+    vod._changed()
+    real = db.rows
+
+    def slow(sql, *a, **kw):
+        if sql.startswith("SELECT t.id, t.search"):
+            time.sleep(0.2)                  # both searches are inside the build at once
+        return real(sql, *a, **kw)
+    monkeypatch.setattr(db, "rows", slow)
+    errors = []
+
+    def go():
+        try:
+            vod.search("samurai")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and len(vod._names) == 2
+    assert [r["name"] for r in vod.search("samurai")][:1] == ["FR - Le Samouraï"]
+
+
 def test_api_search_and_kinds(monkeypatch, client):
     _titles(monkeypatch, MOVIES)
     assert [r["name"] for r in client.get("/api/vod/search?q=boot").json()] == ["DE - Das Boot"]

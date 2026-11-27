@@ -87,6 +87,15 @@ def assert_seeks_to_the_broadcast(url):
     assert abs(float(url.split("ss=")[1].split("&")[0]) - want) < 15
 
 
+def near_broadcast(text, pattern):
+    """The label shows where the broadcast is now in the episode (min:sec), which moves on 42/60 of a second
+    per second after import (T0): a long run reaches these tests well past 30 minutes."""
+    m = re.match(pattern, text)
+    assert m, text
+    want = (time.time() - T0) * 42 / 60 / 60
+    assert abs(int(m.group(1)) - want) <= 1.5, text
+
+
 def test_guide_dialog_offers_on_demand_from_the_start_or_from_here(browser):  # noqa: F811
     pg = open_tv(browser)
     pg.evaluate(f"window.__t.programDialog(window.__t.S.channels[0], {json.dumps(PROG)})")
@@ -95,7 +104,7 @@ def test_guide_dialog_offers_on_demand_from_the_start_or_from_here(browser):  # 
     assert got[0] == "Watch now"
     assert got[1] == "▶ Watch this episode (S1 E1) On Demand from the beginning"
     # 43 minutes into an hour's slot is about 30 minutes into the 42-minute episode
-    assert re.match(r"▶ Continue On Demand from here \(about 3[0-2]:", got[2])   # T0 is set at import: later tests run a minute or two on
+    near_broadcast(got[2], r"▶ Continue On Demand from here \(about (\d+):")
     pg.click("#dlg-list li:nth-child(3)")
     pg.wait_for_function("window.__streams.some((u) => u.includes('/api/vod/stream/'))")
     url = next(u for u in pg.evaluate("window.__streams") if "/api/vod/stream/" in u)
@@ -139,7 +148,8 @@ def test_controls_get_an_on_demand_button_with_its_choices(browser):  # noqa: F8
     assert pg.is_visible("#rm-odmenu")
     assert pg.text_content("#rm-odmenu .rm-odhead") == "This episode is in On Demand"
     got = pg.evaluate("[...document.querySelectorAll('#rm-odmenu button')].map((b) => b.textContent)")
-    assert got[0] == "Start from the beginning" and re.match(r"Continue · 3[0-2]:", got[1])
+    assert got[0] == "Start from the beginning"
+    near_broadcast(got[1], r"Continue · (\d+):")
     pg.click("#rm-odmenu button:nth-of-type(2)")       # Continue: from where the broadcast is
     pg.wait_for_function("window.__streams.some((u) => u.includes('/api/vod/stream/'))")
     url = next(u for u in pg.evaluate("window.__streams") if "/api/vod/stream/" in u)

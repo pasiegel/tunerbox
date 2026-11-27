@@ -146,6 +146,7 @@ def init():
 
 
 _names = []          # ([ids], [folded names]) for typo-tolerant search; emptied on any change
+_names_lock = threading.Lock()
 _tag_rank = {}       # tag -> how many titles have it (picks which version leads a search result)
 
 
@@ -751,10 +752,15 @@ def _matches(words, limit):
 
 def _fuzzy(qf, limit):
     """Typos ('charad', 'samurai' for 'Le Samouraï'): the closest names, from a list kept in memory."""
-    if not _names:
-        rows = db.rows(f"SELECT t.id, t.search {_FROM}")
-        _names.extend(([r["id"] for r in rows], [r["search"] or "" for r in rows]))
-    ids, names = _names
+    # one search at a time builds it: two at once each added theirs (four lists, so every search that
+    # got this far failed until a restart). The copy stays whole even if a change empties _names meanwhile.
+    with _names_lock:
+        cur = _names[:]
+        if len(cur) != 2:
+            rows = db.rows(f"SELECT t.id, t.search {_FROM}")
+            cur = [[r["id"] for r in rows], [r["search"] or "" for r in rows]]
+            _names[:] = cur
+    ids, names = cur
     # scored against the best-matching part of each name
     hits = process.extract(qf, names, scorer=fuzz.partial_ratio, score_cutoff=85, limit=limit * 3)
     # partial_ratio finds "me" inside "oppenheimer": a name much shorter than what was typed isn't a typo of it.

@@ -264,7 +264,7 @@ function failOver(idx, alt) {
   else if (S.gameFeed && S.gameFeed.idx === idx && now() < S.gameFeed.until) {
     // tuned for a game that an event feed carries too (Sports screen): watch it there instead
     const f = S.gameFeed.feed; S.gameFeed = null;
-    toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); pplayFeed(f, true);
+    toast(`No signal on ${ch.number}. Trying ${f.group || "the event feed"}…`, 4000); playFeed(f, true);
   } else { destroyPlayer(); showStatic(ch.number, "No Signal", ch.name); explainBusy({ number: ch.number }, ch.number, () => S.idx === idx && !S.feedCh); }
 }
 
